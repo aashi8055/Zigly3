@@ -61,6 +61,15 @@ import {
   REPORT_ANNOUNCEMENTS,
 } from '../webview/headerBridge';
 import NetworkErrorScreen from '../components/NetworkErrorScreen';
+import SearchScreen from '../components/SearchScreen';
+import {
+  MIN_QUERY_LENGTH,
+  SUGGEST_DEBOUNCE_MS,
+  SUGGEST_TIMEOUT_MS,
+  suggestScript,
+} from '../webview/searchBridge';
+import {parseSuggestions, rememberSearch} from '../search/suggestions';
+import type {Suggestions} from '../search/suggestions';
 import {
   EMPTY_STACK,
   closeTopPage,
@@ -151,6 +160,26 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const [showCart, setShowCart] = useState(false);
   const [cart, setCart] = useState<CartData | null>(null);
 
+  /**
+   * Search. The screen is native, but the suggestions come from Shopify's own
+   * predictive search, fetched inside the dashboard WebView so the request
+   * carries the site's session -- see ../webview/searchBridge.
+   */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
+  const [searchBusy, setSearchBusy] = useState(false);
+  /** Session-scoped: this app adds no storage dependency for eight strings. */
+  const [recents, setRecents] = useState<string[]>([]);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Incremented per request and echoed back by the page. Replies do not arrive
+   * in the order they were asked for, so anything but the latest is discarded.
+   */
+  const searchToken = useRef(0);
+  const searchOpenRef = useRef(false);
+
   /** Inner pages. See ../navigation/pageStack for the rules. */
   const [stack, setStack] = useState<PageStack>(EMPTY_STACK);
   /** Mirrors `stack` for the native back handler, which reads a ref. */
@@ -189,6 +218,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   useEffect(() => {
     showCartRef.current = showCart;
   }, [showCart]);
+
+  useEffect(() => {
+    searchOpenRef.current = searchOpen;
+  }, [searchOpen]);
+
+  /** Stop both the pending request and the wait for one. */
+  const cancelSuggestTimers = useCallback(() => {
+    if (searchTimer.current) {
+      clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    }
+    if (searchTimeout.current) {
+      clearTimeout(searchTimeout.current);
+      searchTimeout.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelSuggestTimers, [cancelSuggestTimers]);
 
   /**
    * The search band describes whatever is on screen, so it opens when a
@@ -295,6 +342,95 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     return true;
   }, [injectInto]);
 
+  // ------------------------------------------------------------------ search
+  /**
+   * Ask the page for suggestions, debounced.
+   *
+   * Cancelling the timer is the whole of the "cancel in-flight" story: a
+   * request already sent cannot be recalled, so its reply is discarded by
+   * token instead. That is cheaper than aborting and behaves the same.
+   */
+  const requestSuggestions = useCallback(
+    (query: string) => {
+      cancelSuggestTimers();
+      const trimmed = query.trim();
+      if (trimmed.length < MIN_QUERY_LENGTH) {
+        // One or two letters match half the catalogue; the screen shows
+        // recents until there is enough to go on.
+        setSuggestions(null);
+        setSearchBusy(false);
+        return;
+      }
+      setSearchBusy(true);
+      searchTimer.current = setTimeout(() => {
+        searchTimer.current = null;
+        searchToken.current += 1;
+        const token = searchToken.current;
+        injectInto('home', suggestScript(trimmed, token));
+        searchTimeout.current = setTimeout(() => {
+          searchTimeout.current = null;
+          // Nothing came back. Stop the spinner rather than leaving it turning
+          // on a request that is not coming; the next keystroke asks again.
+          if (searchToken.current === token) {
+            warn('no suggestions returned for', trimmed);
+            setSearchBusy(false);
+          }
+        }, SUGGEST_TIMEOUT_MS);
+      }, SUGGEST_DEBOUNCE_MS);
+    },
+    [cancelSuggestTimers, injectInto],
+  );
+
+  const changeSearchQuery = useCallback(
+    (query: string) => {
+      setSearchQuery(query);
+      requestSuggestions(query);
+    },
+    [requestSuggestions],
+  );
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    // Cleared on the way out: reopening to a stale query and its results would
+    // look like the app had remembered a search the user abandoned.
+    setSearchQuery('');
+    setSuggestions(null);
+    setSearchBusy(false);
+    cancelSuggestTimers();
+  }, [cancelSuggestTimers]);
+
+  /**
+   * Hand a search to the website. The results page is SearchTap-rendered, so
+   * it carries Zigly's own ranking, facets and sort -- none of which this app
+   * reimplements.
+   */
+  const submitSearch = useCallback(
+    (query: string) => {
+      const trimmed = query.trim();
+      if (!trimmed) {
+        return;
+      }
+      setRecents(prev => rememberSearch(prev, trimmed));
+      closeSearch();
+      showPage(`${ZIGLY_ORIGIN}/search?q=${encodeURIComponent(trimmed)}`);
+    },
+    [closeSearch, showPage],
+  );
+
+  /** A product, collection or completion tapped in the suggestion list. */
+  const openFromSearch = useCallback(
+    (url: string) => {
+      setRecents(prev => rememberSearch(prev, searchQuery));
+      closeSearch();
+      showPage(url);
+    },
+    [closeSearch, searchQuery, showPage],
+  );
+
   const closeCart = useCallback(() => {
     setShowCart(false);
     // The badge may have changed while the cart was open.
@@ -310,6 +446,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   // ------------------------------------------------------------ back button
   useEffect(() => {
     const onBack = (): boolean => {
+      if (searchOpenRef.current) {
+        closeSearch();
+        return true;
+      }
       if (showCartRef.current) {
         closeCart();
         return true;
@@ -331,7 +471,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       onBack,
     );
     return () => subscription.remove();
-  }, [closeCart, stepBack]);
+  }, [closeCart, closeSearch, stepBack]);
 
   // ------------------------------------------------------------- url policy
   const handleShouldStart = useCallback(
@@ -487,7 +627,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         promotion the user has already scrolled past once.
       */}
       <AnnouncementBar
-        items={headerUrl === null && !showCart ? announcements : []}
+        items={
+          headerUrl === null && !showCart && !searchOpen ? announcements : []
+        }
       />
 
       {/*
@@ -499,18 +641,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         cartCount={cartCount}
         // Dashboard and shopping pages carry the search band; breed and content
         // pages show only the back arrow and the logo.
-        showSearch={(headerUrl === null || onShopPage) && !showCart}
+        // The search screen brings its own field, so the band stands down.
+        showSearch={(headerUrl === null || onShopPage) && !showCart && !searchOpen}
         // No wishlist on the dashboard -- that matches the reference too.
-        showWishlist={onShopPage && !showCart}
+        showWishlist={onShopPage && !showCart && !searchOpen}
         // The bag rides along on every page, so the cart is always one tap
-        // away; only the cart screen itself drops it.
-        showCartIcon={!showCart}
+        // away; only the cart and search screens drop it.
+        showCartIcon={!showCart && !searchOpen}
         searchCollapsed={searchCollapsed}
-        showBack={headerUrl !== null || showCart}
+        showBack={headerUrl !== null || showCart || searchOpen}
         onWishlistPress={() => showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)}
         onBackPress={() => {
           // Same rule as the hardware back button.
-          if (showCart) {
+          if (searchOpen) {
+            closeSearch();
+          } else if (showCart) {
             closeCart();
           } else if (!stepBack() && canGoBackRef.current) {
             webRef.current?.goBack();
@@ -519,9 +664,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         onMenuPress={() => injectInto('home', OPEN_MENU)}
         onCartPress={openCart}
         onLogoPress={dismissPages}
-        onSearchSubmit={q =>
-          showPage(`${ZIGLY_ORIGIN}/search?q=${encodeURIComponent(q)}`)
-        }
+        onSearchPress={openSearch}
       />
 
       {/*
@@ -603,6 +746,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 setCartToast(true);
               } else if (data && data.tag === 'announcements') {
                 setAnnouncements(Array.isArray(data.items) ? data.items : []);
+              } else if (data && data.tag === 'search-suggest') {
+                // Anything but the newest request is an answer to a keystroke
+                // the user has already typed past.
+                if (data.token === searchToken.current) {
+                  setSuggestions(parseSuggestions(data, ZIGLY_ORIGIN));
+                  setSearchBusy(false);
+                }
               }
             } catch {
               // Page scripts may postMessage for their own reasons. Not ours.
@@ -722,6 +872,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   url.indexOf('http') === 0 ? url : `${ZIGLY_ORIGIN}${url}`,
                 );
               }}
+            />
+          </View>
+        ) : null}
+
+        {searchOpen ? (
+          <View style={styles.pageLayer}>
+            <SearchScreen
+              query={searchQuery}
+              onQueryChange={changeSearchQuery}
+              onSubmit={submitSearch}
+              onOpenUrl={openFromSearch}
+              suggestions={suggestions}
+              busy={searchBusy}
+              recents={recents}
+              onClearRecents={() => setRecents([])}
             />
           </View>
         ) : null}

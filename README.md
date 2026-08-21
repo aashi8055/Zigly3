@@ -79,7 +79,7 @@ cd android
 gradlew.bat assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 ```
 
-Output: `androidppuild\outputspkeleasepp-release.apk`
+Output: `android/app/build/outputs/apk/release/app-release.apk`
 
 JavaScript is compiled in, so it needs no Metro, no cable and no dev machine.
 Installs on any Android 7+ ARM phone.
@@ -91,7 +91,7 @@ cd android
 gradlew.bat assembleDebug -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 ```
 
-Output: `androidppuild\outputspk\debugpp-debug.apk`
+Output: `android/app/build/outputs/apk/debug/app-debug.apk`
 
 ### Install straight onto a connected device
 
@@ -131,9 +131,11 @@ src/
 │   ├── urlUtils.ts             the URL policy — see below
 │   └── logger.ts               __DEV__-gated, never throws
 ├── navigation/pageStack.ts     the inner-page stack — see below
+├── search/suggestions.ts       parsing the suggest payload — see below
 ├── webview/webViewConfig.ts    WebView props
 ├── components/                 NativeHeader, AnnouncementBar, CartScreen,
-│                               CartToast, LoadingBar, NetworkErrorScreen
+│                               CartToast, SearchScreen, LoadingBar,
+│                               NetworkErrorScreen
 └── screens/                    SplashScreen, ZiglyWebViewScreen
 ```
 
@@ -183,6 +185,55 @@ all free; the costs are bounded and deliberate:
 Covered by `__tests__/pageStack.test.ts` — the module is pure, which is far
 easier to test than four WebViews.
 
+## Search
+
+The header's search bar is a button, not a field. Tapping it opens a native
+search screen: recents before you type, suggestions as you type, and the site's
+own results page when you commit.
+
+**Suggestions come from Shopify's own predictive search**, not from SearchTap:
+
+```
+GET /search/suggest.json?q=&resources[type]=product,query,collection
+    &resources[limit]=6&resources[options][unavailable_products]=last
+→ resources.results.{products,queries,collections}
+```
+
+Same origin, no key, one round trip for all three lists. The request is made
+*inside* the WebView (`src/webview/searchBridge.ts`), as the cart is, so it
+carries the page's own session and user agent.
+
+**Why not SearchTap.** zigly.com's search really is SearchTap, and it also feeds
+the PLP filter and sort controls. Its client config carries a search-only token,
+and building on it would mean depending on a credential lifted from Zigly's own
+app — rotatable without notice, against a collection id that changes when the
+index is rebuilt, on their quota and in their search analytics. It would also
+mean reimplementing their ranking, their baseline filter (`isSearchable`,
+`discounted_price > 0`, `isActive`), sixteen facets — two of which are duplicate
+pairs, `color`/`meta_color` and `meta_flavour`/`st_meta_flavor` — and five sort
+orders, then keeping all of it in step with whatever the merchandisers change.
+
+So the app does not own results. Submitting hands off to `/search?q=`, which is
+SearchTap-rendered and therefore carries Zigly's real ranking, facets and sort
+for free. The native list is a fast path over it, not a second search engine.
+
+Two things this trades away, both deliberate:
+
+- **Facets and sort inside a native results grid.** That needs the SearchTap
+  index, and it needs Zigly's own account access — which is required anyway to
+  manage the index and its Shopify sync. When that lands, only `searchBridge.ts`
+  changes; the screen above it does not.
+- **Identical ranking in the suggestion list.** Shopify's predictive index is
+  not SearchTap's, so the six suggested products may not be SearchTap's six.
+  The "See all results" row is always first for exactly that reason.
+
+Prices on this endpoint are **decimal strings** (`"2807.00"`), unlike the
+integer paise everywhere else. They are converted to paise at the boundary —
+`src/utils/money.ts` is the one formatter and the one unit. Recents are
+session-scoped: eight strings did not justify a storage dependency.
+
+Covered by `__tests__/search.test.ts`.
+
 ## The URL policy
 
 `src/utils/urlUtils.ts` runs two modes, because a strict allowlist would break
@@ -222,6 +273,7 @@ there -- so device testing is the only trustworthy signal.
 | No header on any page but the dashboard — inner pages covered it, leaving no back arrow | Fixed: header drawn outside the overlay container |
 | Spinner floating in the top-right of every page | Removed; replaced by the hairline under the header |
 | Every inner page reloaded on Back and on re-entry | Fixed by the keep-alive page stack |
+| Search did nothing until enter, and the pre-typing screen was blank | Fixed by the native search screen |
 | Some homepage sections not visible | Under investigation -- compare against zigly.com in mobile Chrome first; if absent there too it is the site's own mobile design, not an app defect |
 
 ## Known gaps (deliberate, scheduled)
@@ -233,3 +285,5 @@ there -- so device testing is the only trustworthy signal.
 | File chooser for `<input type=file>` | 6 |
 | Geolocation prompt for the site's pincode widget | 6 |
 | Cookie flush on background (session persistence) | validate in gate first |
+| Native facets and sort on search results | needs Zigly's SearchTap account |
+| Sort/filter bar on `/search` (it is pinned on `/collections` only) | next |

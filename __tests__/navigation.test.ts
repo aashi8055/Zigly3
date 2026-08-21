@@ -60,7 +60,9 @@ describe('header state follows which view is showing', () => {
       'src/screens/ZiglyWebViewScreen.tsx',
       'utf8',
     );
-    expect(src).toContain('showBack={headerUrl !== null || showCart}');
+    expect(src).toContain(
+      'showBack={headerUrl !== null || showCart || searchOpen}',
+    );
   });
 
   it('draws the header outside everything that can cover it', () => {

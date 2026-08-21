@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
+import {money, percentOff} from '../utils/money';
 
 export interface CartLine {
   key: string;
@@ -45,18 +46,6 @@ interface Props {
   onCheckout: () => void;
   onOpenItem: (url: string) => void;
 }
-
-/** Shopify reports money in minor units; trim a trailing .00 as the site does. */
-const money = (minor: number): string => {
-  const value = minor / 100;
-  const text = Number.isInteger(value) ? String(value) : value.toFixed(2);
-  return '₹' + text;
-};
-
-const percentOff = (original: number, current: number): number =>
-  original > current && original > 0
-    ? Math.round(((original - current) / original) * 100)
-    : 0;
 
 const CartScreen = ({cart, onChangeQty, onCheckout, onOpenItem}: Props) => {
   if (!cart) {

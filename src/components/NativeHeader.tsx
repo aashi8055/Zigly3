@@ -9,20 +9,20 @@
  * Every control drives the real website -- nothing here reimplements behaviour:
  *   hamburger -> clicks the site's own menu drawer
  *   logo      -> navigates to the site's homepage
- *   search    -> submits to the site's real /search endpoint
+ *   search    -> opens the search screen, which reads Shopify's own
+ *                predictive search and hands results to the site's /search
  *   cart      -> opens the site's own cart
  *
  * Icons are drawn with plain Views rather than pulling in an icon library, to
  * avoid a dependency for four glyphs.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Animated,
   Easing,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { COLORS, FONT_FAMILY } from '../constants/appConstants';
@@ -35,7 +35,8 @@ interface Props {
   onWishlistPress: () => void;
   onCartPress: () => void;
   onLogoPress: () => void;
-  onSearchSubmit: (query: string) => void;
+  /** Opens the search screen. The bar itself no longer accepts typing. */
+  onSearchPress: () => void;
   /** Item count read from the site's own cart bubble; 0 hides the badge. */
   cartCount: number;
   /** Whether the search band is shown beneath the bar. */
@@ -152,7 +153,7 @@ const NativeHeader = ({
   onWishlistPress,
   onCartPress,
   onLogoPress,
-  onSearchSubmit,
+  onSearchPress,
   cartCount,
   showSearch,
   searchCollapsed,
@@ -160,8 +161,6 @@ const NativeHeader = ({
   showWishlist,
   showCartIcon,
 }: Props) => {
-  const [query, setQuery] = useState('');
-
   /**
    * Height rather than translate: the band must give its space back so the page
    * moves up behind it, not merely slide out of sight leaving a gap. Height is
@@ -189,13 +188,6 @@ const NativeHeader = ({
       }),
     ]).start();
   }, [searchCollapsed, bandHeight, bandOpacity]);
-
-  const submit = () => {
-    const q = query.trim();
-    if (q.length > 0) {
-      onSearchSubmit(q);
-    }
-  };
 
   return (
     <View style={styles.root}>
@@ -268,19 +260,21 @@ const NativeHeader = ({
           pointerEvents={searchCollapsed ? 'none' : 'auto'}
         >
           <View style={styles.searchBandInner}>
-            <View style={styles.searchField}>
+            {/*
+              A button, not a field. Typing here used to submit straight to the
+              site's search page, so nothing happened until enter and there was
+              no room for suggestions. The real input lives on the search
+              screen, which opens from this.
+            */}
+            <Pressable
+              onPress={onSearchPress}
+              accessibilityRole="search"
+              accessibilityLabel="Search Zigly"
+              style={styles.searchField}
+            >
               <SearchIcon />
-              <TextInput
-                value={query}
-                onChangeText={setQuery}
-                onSubmitEditing={submit}
-                placeholder="Search For"
-                placeholderTextColor="#8C97A8"
-                returnKeyType="search"
-                style={styles.searchInput}
-                accessibilityLabel="Search Zigly"
-              />
-            </View>
+              <Text style={styles.searchPlaceholder}>Search For</Text>
+            </Pressable>
           </View>
         </Animated.View>
       ) : null}
@@ -431,12 +425,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     height: 44,
   },
-  searchInput: {
+  searchPlaceholder: {
     fontFamily: FONT_FAMILY,
     flex: 1,
     fontSize: 15,
-    color: COLORS.ink,
-    padding: 0,
+    color: '#8C97A8',
   },
 
   searchIcon: { width: 18, height: 18 },
