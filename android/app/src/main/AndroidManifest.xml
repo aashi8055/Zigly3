@@ -1,0 +1,75 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      Android 11+ package visibility.
+
+      Without these declarations Linking.canOpenURL always returns false and
+      implicit intents silently fail, which would break the UPI handoff that
+      GoKwik relies on to complete a payment. Each entry is scoped to a scheme
+      we actually forward from urlUtils.ts.
+    -->
+    <queries>
+        <!-- System browser, for external links. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <!-- UPI payment apps. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="upi" />
+        </intent>
+        <!-- Dialer, mail and SMS from footer contact links. -->
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <!-- WhatsApp: used by the site's OTP and support flows. -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+    </queries>
+
+    <application
+      android:name=".MainApplication"
+      android:label="@string/app_name"
+      android:icon="@mipmap/ic_launcher"
+      android:roundIcon="@mipmap/ic_launcher_round"
+      android:allowBackup="false"
+      android:theme="@style/AppTheme"
+      android:usesCleartextTraffic="${usesCleartextTraffic}"
+      android:supportsRtl="true"
+      android:enableOnBackInvokedCallback="false">
+      <!--
+        Opt out of predictive back.
+
+        We target SDK 36, where predictive back is on by default. That routes
+        back through OnBackInvokedCallback and bypasses the legacy KEYCODE_BACK
+        dispatch that React Native's BackHandler listens to, so our handler
+        never ran and Android simply finished the activity. The visible symptom
+        was the app closing instead of stepping back through WebView history.
+
+        Cost is the predictive back peek animation. Worth it: in a WebView app
+        the back button is the primary navigation control, and it must walk the
+        page history before it ever closes the app.
+      -->
+      <activity
+        android:name=".MainActivity"
+        android:label="@string/app_name"
+        android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+        android:launchMode="singleTask"
+        android:windowSoftInputMode="adjustResize"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+      </activity>
+    </application>
+</manifest>

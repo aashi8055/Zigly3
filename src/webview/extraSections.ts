@@ -1,0 +1,200 @@
+/**
+ * Transplant the rest of the dashboard onto the homepage.
+ *
+ * Zigly removed these sections from their homepage template, but the sections
+ * themselves are still live in the theme and render by id from any page. Their
+ * app still shows them, so this restores the dashboard from the reference
+ * video, section for section, using Zigly's own rendered markup.
+ *
+ * Order follows the reference. Placeholders are created synchronously in that
+ * order before any fetch resolves, so the network cannot shuffle them.
+ *
+ * Every entry self-disables if the site is already rendering that section --
+ * so if Zigly restores their homepage, these quietly stop doing anything and
+ * the page loads in a single request again, with no code change.
+ */
+
+/**
+ * The dashboard, in the order the reference recording shows it.
+ *
+ * `key` is what to fetch (numbered where a fragment repeats on the source
+ * page); `check` is the fragment used to detect that the site is already
+ * rendering that section, in which case the entry does nothing.
+ *
+ * Only the coupon strip loads eagerly -- everything else waits until it nears
+ * the viewport, so first paint stays cheap.
+ */
+const SECTIONS = [
+  {key: 'coupon_slider', check: 'coupon_slider', mark: 'zigly-x-coupon', eager: true},
+  // breed rails, hot picks and explore are placed by their own modules here
+  {key: 'offer_section#1', check: '', mark: 'zigly-x-offer1', eager: false},
+  {key: 'offer_section#2', check: '', mark: 'zigly-x-offer2', eager: false},
+  // Zigly Coins plus the discount offer cards. Despite the name, best_deals
+  // is not a product section -- it holds the coins banner and the category
+  // offer tiles, which is exactly this slot in the reference.
+  {key: 'best_deals', check: '', mark: 'zigly-x-coins', eager: false},
+  // Top Pets Brands is already on the homepage; move it, do not copy it.
+  {move: 'home_shop_by_brand_section'},
+  {key: 'shop_by_price', check: 'shop_by_price', mark: 'zigly-x-price', eager: false},
+  {key: 'custom_single_banner#2', check: '', mark: 'zigly-x-banner2', eager: false},
+  {key: 'shop_of_concern', check: 'shop_of_concern', mark: 'zigly-x-concern', eager: false},
+  {key: 'offer_section#3', check: '', mark: 'zigly-x-offer3', eager: false},
+  // Bestsellers. The homepage's own arrival section holds these products --
+  // the theme's best_deals section renders none at all -- so it is relocated
+  // rather than transplanted.
+  {move: 'home_arrival_section', index: 1, hideOthers: true},
+  // Slot only: everythingSection.ts fills this. Reserving it here keeps the
+  // order deterministic -- anchoring itself put it above Bestsellers.
+  {slot: 'zigly-x-everything'},
+  {key: 'redesign_custom_double_banner', check: 'redesign_custom_double_banner', mark: 'zigly-x-double', eager: false},
+  {move: 'helpful_tips'},
+  // The video. video_swiper renders "Shop from Feed", which the reference does
+  // not show; the video section is custom_video_text_banner, already on the
+  // homepage, so it is moved rather than transplanted.
+  {move: 'custom_video_text_banner'},
+  {move: 'about_our_communities'},
+  // The brand-claims strip (1680X324_BrandClaims) -- the logos. Last, so it
+  // sits directly above the footer as the reference shows.
+  {key: 'custom_single_banner#3', check: '', mark: 'zigly-x-logos', eager: false},
+];
+
+export const EXTRA_SECTIONS_SCRIPT = `
+(function () {
+  var SECTIONS = ${JSON.stringify(SECTIONS)};
+
+  function warn(msg) {
+    if (window.console && console.warn) { console.warn('[ZiglyWebView] ' + msg); }
+  }
+
+  function isHome() {
+    var p = window.location.pathname;
+    while (p.length > 1 && p.charAt(p.length - 1) === '/') { p = p.slice(0, -1); }
+    return p === '' || p === '/' || p === '/index';
+  }
+
+  if (!isHome()) { return; }
+
+  function whenNear(el, run) {
+    if (!window.IntersectionObserver) { run(); return; }
+    var io = new IntersectionObserver(function (entries) {
+      for (var i = 0; i < entries.length; i++) {
+        if (entries[i].isIntersecting) { io.disconnect(); run(); return; }
+      }
+    }, {rootMargin: '700px 0px'});
+    io.observe(el);
+  }
+
+  /**
+   * The coupon strip belongs directly under the banner; everything else goes
+   * after the last block we have already placed, keeping the reference order.
+   */
+  var banner = document.querySelector('[id*="homepage_banner"]');
+  if (!banner || !banner.parentNode) { warn('no anchor for extra sections'); return; }
+
+  var tail = document.getElementById('zigly-explore')
+          || document.getElementById('zigly-hot-picks')
+          || document.getElementById('zigly-breed-cats')
+          || banner;
+
+  for (var i = 0; i < SECTIONS.length; i++) {
+    (function (spec) {
+      // Sections the homepage already carries are relocated into the reference
+      // order rather than transplanted, so they never appear twice.
+      if (spec.move) {
+        var matches = document.querySelectorAll('[id*="' + spec.move + '"]');
+        // Some fragments match more than one section; index picks which.
+        var wanted = spec.index || 0;
+        var existing = matches.length > wanted ? matches[wanted] : matches[0];
+        if (existing && existing.parentNode && tail.parentNode) {
+          tail.parentNode.insertBefore(existing, tail.nextSibling);
+          tail = existing;
+
+          // The homepage carries another arrival section the reference does
+          // not show; mark the spares so CSS can hide them.
+          if (spec.hideOthers) {
+            for (var m = 0; m < matches.length; m++) {
+              if (matches[m] !== existing) {
+                matches[m].setAttribute('data-zigly-extra', 'true');
+              }
+            }
+          }
+        } else if (!existing) {
+          warn('cannot reorder, not on page: ' + spec.move);
+        }
+        return;
+      }
+
+      // A reserved slot: create the container and move on. Another module
+      // fills it, but its position in the order is fixed here.
+      if (spec.slot) {
+        if (document.getElementById(spec.slot)) { return; }
+        var reserved = document.createElement('div');
+        reserved.id = spec.slot;
+        if (tail.parentNode) {
+          tail.parentNode.insertBefore(reserved, tail.nextSibling);
+          tail = reserved;
+        }
+        return;
+      }
+
+      if (document.getElementById(spec.mark)) { return; }
+
+      // Already on the page: nothing to do, and never duplicate it. Banners and
+      // offer sections repeat, so those carry no check and are always placed.
+      if (spec.check && document.querySelector('[id*="' + spec.check + '"]')) { return; }
+
+      var slot = document.createElement('div');
+      slot.id = spec.mark;
+
+      var after = spec.key === 'coupon_slider' ? banner : tail;
+      after.parentNode.insertBefore(slot, after.nextSibling);
+      if (spec.key !== 'coupon_slider') { tail = slot; }
+
+      function load() {
+        window.__ziglyFetchSection('/', spec.key)
+          .then(function (sec) {
+            if (!sec) { warn('unavailable: ' + spec.key); return; }
+            var imported = document.importNode(sec, true);
+
+            var scripts = imported.querySelectorAll('script');
+            for (var k = 0; k < scripts.length; k++) {
+              scripts[k].parentNode.removeChild(scripts[k]);
+            }
+            var tracks = imported.querySelectorAll('.swiper-wrapper');
+            for (var t = 0; t < tracks.length; t++) {
+              tracks[t].removeAttribute('style');
+            }
+
+            // Several of these carry two .tab-content blocks and mark one
+            // 'active' -- not always the one with content.
+            var tabs = imported.querySelectorAll('.tab-content');
+            if (tabs.length > 1) {
+              var filled = null;
+              for (var f = 0; f < tabs.length; f++) {
+                if (tabs[f].querySelector('.swiper-slide')) { filled = tabs[f]; break; }
+              }
+              if (filled) {
+                for (var g = 0; g < tabs.length; g++) {
+                  var parts = tabs[g].className.split(' ');
+                  var kept = [];
+                  for (var h = 0; h < parts.length; h++) {
+                    if (parts[h] && parts[h] !== 'active') { kept.push(parts[h]); }
+                  }
+                  if (tabs[g] === filled) { kept.push('active'); }
+                  tabs[g].className = kept.join(' ');
+                }
+              }
+            }
+
+            slot.appendChild(imported);
+          })
+          .catch(function (e) { warn('failed ' + spec.key + ': ' + e); });
+      }
+
+      if (spec.eager) { load(); } else { whenNear(slot, load); }
+    })(SECTIONS[i]);
+  }
+
+})();
+true;
+`;

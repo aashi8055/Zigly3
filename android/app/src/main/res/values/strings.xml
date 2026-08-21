@@ -1,0 +1,5 @@
+<resources>
+    <!-- "Preview" is deliberate: this build is not sanctioned by Zigly yet and
+         must not be mistaken for the published com.zigly.app listing. -->
+    <string name="app_name">Zigly Preview</string>
+</resources>
