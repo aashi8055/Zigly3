@@ -132,10 +132,11 @@ src/
 │   └── logger.ts               __DEV__-gated, never throws
 ├── navigation/pageStack.ts     the inner-page stack — see below
 ├── search/suggestions.ts       parsing the suggest payload — see below
+├── utils/money.ts              one formatter, one unit (integer paise)
 ├── webview/webViewConfig.ts    WebView props
 ├── components/                 NativeHeader, AnnouncementBar, CartScreen,
-│                               CartToast, SearchScreen, LoadingBar,
-│                               NetworkErrorScreen
+│                               CartToast, SearchScreen, EmptyState,
+│                               LoadingBar, NetworkErrorScreen
 └── screens/                    SplashScreen, ZiglyWebViewScreen
 ```
 
@@ -188,6 +189,47 @@ all free; the costs are bounded and deliberate:
 
 Covered by `__tests__/pageStack.test.ts` — the module is pure, which is far
 easier to test than four WebViews.
+
+## The cart
+
+Native, and one card per line on a light ground, with a summary card and a
+sticky bar carrying the live item count. Empty is a separate screen: the
+reference app's wireframe box over "No items", with no call to action — the
+header's back arrow is the way out. `EmptyState` draws that box from geometry
+(an isometric cube's silhouette is a regular hexagon), so it needs no asset and
+no icon dependency.
+
+**The data layer is deliberately not the reference's.** That app drives
+Shopify's Storefront Cart API — `cartCreate`, `cartLinesAdd`, `checkoutUrl` into
+Checkout Sheet Kit — against a cart id it persists itself. This app must not.
+Its cart has to be the *same* cart the WebView has: the site's own PDP button
+adds to it, the site's badge counts it, and the site's checkout consumes it. A
+Storefront cart id would be a second, parallel cart, and adding from a product
+page would leave this screen showing empty. So it stays on `/cart.js` and
+`/cart/change.js`, executed inside the WebView, which is the one shared cart
+keyed by the session cookie — the same "one cookie jar" rule as everything else
+here. Checkout still ends up in Shopify's hands, just by navigation rather than
+by handing over a `checkoutUrl`.
+
+What the reference has and this does not, on purpose:
+
+| Block | Why not |
+| --- | --- |
+| Free-shipping progress meter | Threshold lives in server config we cannot read |
+| Free-gift tiers | Same — spend tiers are not in the app |
+| "Frequently bought" upsell rail | Product selection is server-side |
+| Membership card | Not a Shopify primitive we can source |
+| Coupon entry | The reference turns it off in-app too (`show_apply_coupon: "0"`); codes are entered in Shopify's checkout |
+| Shipping cost / method | Deferred, as the reference defers it — checkout quotes it once it knows the address |
+
+A cart screen is the one place where an invented number becomes a wrong promise,
+so these are absent rather than approximated. Two things from the reference's
+config *are* adopted: the header drops the bag on this screen and shows the
+wishlist instead, and totals stay fully visible.
+
+Covered by `__tests__/cart.test.tsx`, which renders the screen rather than
+grepping it — including that a not-yet-loaded cart waits instead of claiming to
+be empty, and that removing a line asks Shopify for quantity zero.
 
 ## Search
 

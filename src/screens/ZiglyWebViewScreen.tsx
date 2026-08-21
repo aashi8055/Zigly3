@@ -643,14 +643,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // pages show only the back arrow and the logo.
         // The search screen brings its own field, so the band stands down.
         showSearch={(headerUrl === null || onShopPage) && !showCart && !searchOpen}
-        // No wishlist on the dashboard -- that matches the reference too.
-        showWishlist={onShopPage && !showCart && !searchOpen}
+        // No wishlist on the dashboard -- that matches the reference too. The
+        // cart screen is the other place it appears: the reference drops the
+        // bag there (you are already in the bag) and shows the heart instead.
+        showWishlist={(onShopPage || showCart) && !searchOpen}
         // The bag rides along on every page, so the cart is always one tap
         // away; only the cart and search screens drop it.
         showCartIcon={!showCart && !searchOpen}
         searchCollapsed={searchCollapsed}
         showBack={headerUrl !== null || showCart || searchOpen}
-        onWishlistPress={() => showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)}
+        onWishlistPress={() => {
+          // Reachable from the cart now, and the cart overlays the page layers
+          // -- so it has to stand down or it would cover what it just opened.
+          setShowCart(false);
+          showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`);
+        }}
         onBackPress={() => {
           // Same rule as the hardware back button.
           if (searchOpen) {
