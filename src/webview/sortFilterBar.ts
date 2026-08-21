@@ -20,12 +20,35 @@ export const SORT_FILTER_SCRIPT = `
   var PINNED = 'zigly-sortfilter-pinned';
   var BAR_ID = 'zigly-sortfilter-bar';
   var BODY_FLAG = 'zigly-has-sortfilter';
+  var LISTING_FLAG = 'zigly-listing';
   function warn(msg) {
     if (window.console && console.warn) { console.warn('[ZiglyWebView] ' + msg); }
   }
 
-  function isCollection() {
-    return window.location.pathname.indexOf('/collections/') === 0;
+  /**
+   * A listing page: a product grid with Sort and Filter.
+   *
+   * '/collections/' with the slash on purpose -- bare '/collections' is the
+   * collection *list* (the cards module), which has no products to sort.
+   * '/search' is included because SearchTap powers that grid too, and the
+   * reference app pins the same bar there.
+   */
+  function isListing() {
+    var path = window.location.pathname;
+    return path.indexOf('/collections/') === 0 || path.indexOf('/search') === 0;
+  }
+
+  /**
+   * Marks the page for the listing-card CSS, whether or not the bar itself
+   * ever appears -- the card fixes are needed either way, and they must never
+   * reach a product page, where .mobile-atc-main is the site's own sticky
+   * Add to Bag bar and is supposed to float.
+   */
+  function flagListing() {
+    if (!isListing()) { return; }
+    if (document.body.className.indexOf(LISTING_FLAG) === -1) {
+      document.body.className = document.body.className + ' ' + LISTING_FLAG;
+    }
   }
 
   /**
@@ -52,8 +75,16 @@ export const SORT_FILTER_SCRIPT = `
    * SearchTap's own controls opening Zigly's real panels.
    */
   function pin() {
-    if (!isCollection()) { return; }
-    if (document.getElementById(BAR_ID)) { return; }
+    if (!isListing()) { return; }
+
+    /*
+     * A bar that exists but has been emptied is worse than no bar: SearchTap
+     * re-renders its controls on filter changes and on pagination, and when it
+     * replaces the nodes we moved, our container is left holding nothing. So
+     * the early-out tests for content, not just for the element.
+     */
+    var existing = document.getElementById(BAR_ID);
+    if (existing && existing.children.length > 0) { return; }
 
     var parts = [];
     var wrap = document.querySelector('.st-filter-count-sort-wrap');
@@ -68,26 +99,35 @@ export const SORT_FILTER_SCRIPT = `
     // Nothing to move yet: SearchTap has not rendered.
     if (!parts.length) { return; }
 
-    var bar = document.createElement('div');
-    bar.id = BAR_ID;
-    bar.className = PINNED;
+    var bar = existing;
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = BAR_ID;
+      bar.className = PINNED;
+      document.body.appendChild(bar);
+    }
     for (var i = 0; i < parts.length; i++) { bar.appendChild(parts[i]); }
 
-    document.body.appendChild(bar);
-    document.body.className = document.body.className + ' ' + BODY_FLAG;
+    if (document.body.className.indexOf(BODY_FLAG) === -1) {
+      document.body.className = document.body.className + ' ' + BODY_FLAG;
+    }
   }
 
-  // SearchTap renders after first paint, so retry briefly rather than assume
-  // the controls exist yet. Give up quietly instead of polling forever.
+  /*
+   * SearchTap renders after first paint, so retry rather than assume the
+   * controls exist yet. This keeps going for the whole window even after a
+   * successful pin, because a filter change re-renders the controls and the
+   * bar has to be refilled -- the old version stopped at the first success and
+   * left an empty bar behind. Bounded, so it never polls forever.
+   */
   var tries = 0;
   var timer = setInterval(function () {
     tries++;
     try { pin(); } catch (e) { warn('sort/filter pin failed: ' + e); }
-    if (tries > 12 || document.getElementById(BAR_ID)) {
-      clearInterval(timer);
-    }
+    if (tries > 40) { clearInterval(timer); }
   }, 500);
 
+  flagListing();
   pin();
 })();
 true;

@@ -4,7 +4,7 @@
  * Layout, from the outside in:
  *
  *   announcement bar   \  app chrome: drawn once, never covered
- *   native header      /  (the bar only while the dashboard is showing)
+ *   native header      /  (the bar stands down only on the search screen)
  *   ------------------ <- everything below is inside `body`
  *   dashboard WebView     mounted for the life of the app
  *   page layers           inner pages: one on screen, the rest parked off it
@@ -622,15 +622,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   return (
     <View style={styles.root}>
       {/*
-        Dashboard only. Now that the chrome is no longer covered by inner pages,
-        an always-on offer strip would cost 38px of every product page for a
-        promotion the user has already scrolled past once.
+        On every page, as the reference app has it -- its collection list and
+        its product grid both carry the offer strip above the header. An earlier
+        version showed it on the dashboard only, to save 38px on inner pages;
+        the reference says otherwise, and the reference is the brief.
+
+        The search screen is the exception: it is a keyboard-first screen, and
+        a scrolling promotion above the field is noise while typing.
       */}
-      <AnnouncementBar
-        items={
-          headerUrl === null && !showCart && !searchOpen ? announcements : []
-        }
-      />
+      <AnnouncementBar items={searchOpen ? [] : announcements} />
 
       {/*
         Drawn once, above `body`, so it survives every page, the cart and the

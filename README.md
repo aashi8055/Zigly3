@@ -151,7 +151,11 @@ layers are absolutely positioned, so while their container was the whole screen
 they covered the header along with the page, and every screen except the
 dashboard had no back arrow and no cart.
 
-The header is therefore on every page, and it is the way back from all of them.
+The header is therefore on every page, and so is the announcement bar — the
+reference app carries its offer strip above the header on the collection list
+and the product grid alike. Only the search screen stands the strip down, being
+keyboard-first. The header is the way back from all of them.
+
 There is no floating progress spinner — that used to sit in the top-right corner
 over whatever the page itself puts there. Progress is `LoadingBar`, a hairline
 under the header, drawn only for the view the user is actually looking at.
@@ -274,6 +278,8 @@ there -- so device testing is the only trustworthy signal.
 | Spinner floating in the top-right of every page | Removed; replaced by the hairline under the header |
 | Every inner page reloaded on Back and on re-entry | Fixed by the keep-alive page stack |
 | Search did nothing until enter, and the pre-typing screen was blank | Fixed by the native search screen |
+| Sort/Filter bar emptied itself after a filter change, and never appeared on `/search` | Fixed in sortFilterBar.ts |
+| Listing cards showed the compact variant picker, not the reference's full-width Add to Bag | Fixed via `body.zigly-listing` |
 | Some homepage sections not visible | Under investigation -- compare against zigly.com in mobile Chrome first; if absent there too it is the site's own mobile design, not an app defect |
 
 ## Known gaps (deliberate, scheduled)
@@ -286,4 +292,3 @@ there -- so device testing is the only trustworthy signal.
 | Geolocation prompt for the site's pincode widget | 6 |
 | Cookie flush on background (session persistence) | validate in gate first |
 | Native facets and sort on search results | needs Zigly's SearchTap account |
-| Sort/filter bar on `/search` (it is pinned on `/collections` only) | next |

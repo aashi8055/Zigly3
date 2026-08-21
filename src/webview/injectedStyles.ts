@@ -271,6 +271,83 @@ body.zigly-has-sortfilter .fixed-icons {
 body.zigly-has-sortfilter {
   padding-bottom: 70px !important;
 }
+/* The controls arrive as SearchTap's own pills -- rounded, bordered, inset.
+   Inside a full-width bar they read as two buttons floating in a strip rather
+   than as the strip itself, so their chrome is flattened and they are stretched
+   to fill their half. Only presentation: these are still SearchTap's elements,
+   with SearchTap's listeners, opening Zigly's real panels. */
+#zigly-sortfilter-bar button,
+#zigly-sortfilter-bar [role="button"] {
+  width: 100% !important;
+  min-height: 56px !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: #1B1B1B !important;
+}
+/* A count badge SearchTap renders on the filter control must not be stretched
+   along with the button it sits in. */
+#zigly-sortfilter-bar button > svg,
+#zigly-sortfilter-bar button > img {
+  width: auto !important;
+  min-height: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+/* ------------------------------------------------------------------
+   Listing pages: the product card as the reference draws it.
+
+   The reference app's collection and search grids show a plain full-width
+   "Add to Bag" under each card. The site's own grid instead shows the compact
+   variant picker ("+ Add", "+9 more"), and its cards carry .mobile-atc-main /
+   .atc-wrapper -- the same containers the theme uses for the *product page's*
+   floating sticky bar, so inside a card that styling escapes the card.
+
+   These are the same two fixes the transplanted dashboard sections already
+   carry (see Hot Picks above), against the same verified theme markup, applied
+   where the site draws the grid itself.
+
+   Scoped to body.zigly-listing, which sortFilterBar.ts sets on collection and
+   search pages only. It must never reach a product page: there,
+   .mobile-atc-main IS the site's sticky Add to Bag bar and is meant to float.
+   ------------------------------------------------------------------ */
+body.zigly-listing .mobile-atc-main,
+body.zigly-listing .atc-wrapper,
+body.zigly-listing .quick-add,
+body.zigly-listing .st-collection-atc {
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  z-index: auto !important;
+  transform: none !important;
+}
+body.zigly-listing .card--variant--main-wrapper,
+body.zigly-listing .mobile-compact-variant-display,
+body.zigly-listing .mobile-compact-variant-more,
+body.zigly-listing .card-variant-wrapper {
+  display: none !important;
+}
+body.zigly-listing .quick-add__submit {
+  display: block !important;
+  position: static !important;
+  width: 100% !important;
+}
+/* Cards clip their own contents, so nothing can paint over the row below. */
+body.zigly-listing .card-wrapper {
+  position: relative;
+  overflow: hidden;
+}
 
 /* ------------------------------------------------------------------
    The site's bottom navigation.
