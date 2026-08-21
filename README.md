@@ -4,13 +4,34 @@ A React Native container that hosts **https://zigly.com** and adds the things a
 website cannot do for itself: a splash, an offline screen, Android back
 navigation, and an OS-level URL policy that makes UPI payment handoff work.
 
-> **Status: Phase 4 — unmodified WebView.**
-> No CSS is injected. No DOM is rewritten. The site renders exactly as it would
-> in Chrome. This is deliberate; see *Why so little* below.
+> **Status: hybrid — native chrome over site-rendered sections.**
+> The "Phase 4 / no injection" description this file used to carry is long out of
+> date: the app now ships a native header, announcement bar and cart screen, and
+> ~5,000 lines under `src/webview/` restyle the page and reassemble the dashboard
+> from Zigly's own sections via Shopify's Section Rendering API. Content still
+> comes entirely from the website — see *Where the data comes from* below.
 >
 > **Not sanctioned by Zigly.** The application ID is
 > `com.zigly.webview.preview` and the launcher label is "Zigly Preview" so this
 > build can never be confused with the published `com.zigly.app` listing.
+
+## Where the data comes from
+
+Every URL the storefront uses, with verified payload shapes, is catalogued in
+[DATA-SOURCES.md](DATA-SOURCES.md). The short version: zigly.com is stock Shopify
+(Dawn 15.2.0), so the app needs no backend of its own — it reads the same
+endpoints the website reads, which is what keeps the two consistent.
+
+Three rules that document explains in full, repeated here because breaking any
+one of them desyncs the app from the site:
+
+- **One cookie jar.** Cart and login live in the `_shopify_*` cookies. Both
+  WebViews share the app's jar, so there is a single session and a single cart.
+  Section fetches use `credentials: 'same-origin'` for the same reason.
+- **Prices are integer paise.** `price: 39900` is ₹399.00. Divide once.
+- **Never hardcode a section id.** They carry a theme-generated suffix.
+  `pageCache.ts` seeds them only as a fast-path hint and rediscovers on a miss.
+  All 22 seeds were re-verified against the live site on 2026-08-21.
 
 ## Why so little
 
@@ -109,12 +130,58 @@ src/
 ├── utils/
 │   ├── urlUtils.ts             the URL policy — see below
 │   └── logger.ts               __DEV__-gated, never throws
-├── webview/webViewConfig.ts    WebView props (no injection)
-├── components/                 LoadingOverlay, NetworkErrorScreen, ZiglyWordmark
+├── navigation/pageStack.ts     the inner-page stack — see below
+├── webview/webViewConfig.ts    WebView props
+├── components/                 NativeHeader, AnnouncementBar, CartScreen,
+│                               CartToast, LoadingBar, NetworkErrorScreen
 └── screens/                    SplashScreen, ZiglyWebViewScreen
 ```
 
-There is no navigator: one WebView and one splash do not need a navigation graph.
+There is no navigator: React Navigation would want to mount and unmount
+screens, which is exactly what `pageStack` exists to avoid.
+
+## Screen structure
+
+The announcement bar and the native header are drawn **outside** the container
+that holds everything else, and every overlay — page layers, cart, offline
+screen — is positioned inside it. That is load-bearing rather than tidy: the
+layers are absolutely positioned, so while their container was the whole screen
+they covered the header along with the page, and every screen except the
+dashboard had no back arrow and no cart.
+
+The header is therefore on every page, and it is the way back from all of them.
+There is no floating progress spinner — that used to sit in the top-right corner
+over whatever the page itself puts there. Progress is `LoadingBar`, a hairline
+under the header, drawn only for the view the user is actually looking at.
+
+## The inner-page stack
+
+`src/navigation/pageStack.ts`. Zigly's pages carry no cache-control and
+Cloudflare reports them DYNAMIC, so mounting a page is always a full download —
+`/pages/dog` alone is ~2 MB. The dashboard was already exempt by being kept
+mounted; inner pages were mounted on entry and destroyed on Back, so walking
+home and tapping the same product again paid for it twice.
+
+So inner pages are kept alive: up to `MAX_LAYERS` of them stay mounted, parked
+off screen, and showing one again is a paint. Back, re-entry and the logo are
+all free; the costs are bounded and deliberate:
+
+- **Memory.** Three inner WebViews plus the dashboard. Each is a real Android
+  renderer, which is why the bound is small and why the deepest page is dropped
+  first — see the eviction order in that file.
+- **Parked, not `display: none`.** Taking an Android WebView through GONE and
+  back is the classic way to get one that returns blank, so hidden layers are
+  translated off screen and keep their native visibility.
+- **In-page navigation still reloads.** A tap inside a layer navigates that
+  layer, and its Back walks the WebView's own history. Pushing a layer per
+  navigation would be faster still, but on Android `navigationType` is always
+  `'other'` — a redirect and a form post are indistinguishable from a tapped
+  link, so checkout and login flows would fragment.
+- **Checkout is never cached.** Those layers are torn down on the way out; a
+  restored payment page would be showing a session that has moved on.
+
+Covered by `__tests__/pageStack.test.ts` — the module is pure, which is far
+easier to test than four WebViews.
 
 ## The URL policy
 
@@ -152,6 +219,9 @@ there -- so device testing is the only trustworthy signal.
 | --- | --- |
 | Content under status bar / gesture pill | Fixed in v2 via native safe-area insets |
 | Deprecated `SafeAreaView` warning toast | Fixed in v2 |
+| No header on any page but the dashboard — inner pages covered it, leaving no back arrow | Fixed: header drawn outside the overlay container |
+| Spinner floating in the top-right of every page | Removed; replaced by the hairline under the header |
+| Every inner page reloaded on Back and on re-entry | Fixed by the keep-alive page stack |
 | Some homepage sections not visible | Under investigation -- compare against zigly.com in mobile Chrome first; if absent there too it is the site's own mobile design, not an app defect |
 
 ## Known gaps (deliberate, scheduled)

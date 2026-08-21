@@ -4,6 +4,14 @@
  * Every value here was verified against the live site on 2026-08-20.
  * See the pre-implementation analysis for provenance.
  */
+import {Platform} from 'react-native';
+
+/** App-wide typeface. 'System' on iOS resolves to San Francisco; both are sans-serif. */
+export const FONT_FAMILY = Platform.select({
+  ios: 'System',
+  android: 'sans-serif',
+  default: 'sans-serif',
+});
 
 /** Canonical origin. The site is a Shopify storefront (Dawn 15.2.0). */
 export const ZIGLY_ORIGIN = 'https://zigly.com';

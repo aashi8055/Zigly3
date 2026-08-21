@@ -1,14 +1,25 @@
 /**
  * The application.
  *
- * Two WebViews: the dashboard, which is never navigated away from, and an
- * inner-page view layered over it. Plus a native cart screen, because the
- * reference app's cart is native -- though its figures and every change still
- * come from Shopify, executed inside the WebView.
+ * Layout, from the outside in:
  *
- * Remounting would drop the Shopify session cookie and the user's scroll
- * position, so navigation is always performed by driving this instance rather
- * than by swapping screens.
+ *   announcement bar   \  app chrome: drawn once, never covered
+ *   native header      /  (the bar only while the dashboard is showing)
+ *   ------------------ <- everything below is inside `body`
+ *   dashboard WebView     mounted for the life of the app
+ *   page layers           inner pages: one on screen, the rest parked off it
+ *   cart screen
+ *
+ * The header sits *outside* `body`, and every overlay is positioned inside it.
+ * That is load-bearing: the layers used to be absolutely positioned against the
+ * whole screen, so opening any inner page covered the header with it and left
+ * the user on a page with no back arrow and no cart.
+ *
+ * Remounting the dashboard would drop the Shopify session cookie and the user's
+ * place on the page, so navigation is performed by driving these WebViews
+ * rather than by swapping screens. Inner pages are managed by
+ * ../navigation/pageStack, which keeps recently visited pages mounted so that
+ * Back and re-entry are paints rather than 2 MB page loads.
  */
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
@@ -36,7 +47,7 @@ import {classifyUrl, isCheckoutUrl} from '../utils/urlUtils';
 import {getInjectionForUrl} from '../webview/injectedScripts';
 import {PREFETCH_SCRIPT} from '../webview/prefetch';
 import {log, warn} from '../utils/logger';
-import LoadingOverlay from '../components/LoadingOverlay';
+import LoadingBar from '../components/LoadingBar';
 import NativeHeader from '../components/NativeHeader';
 import AnnouncementBar from '../components/AnnouncementBar';
 import CartToast from '../components/CartToast';
@@ -50,6 +61,16 @@ import {
   REPORT_ANNOUNCEMENTS,
 } from '../webview/headerBridge';
 import NetworkErrorScreen from '../components/NetworkErrorScreen';
+import {
+  EMPTY_STACK,
+  closeTopPage,
+  goToDashboard,
+  noteNavigation,
+  onDashboard,
+  openPage,
+  visibleLayer,
+} from '../navigation/pageStack';
+import type {PageStack} from '../navigation/pageStack';
 
 interface Props {
   /** Fired once the first page has painted, so the splash can retire. */
@@ -57,11 +78,18 @@ interface Props {
 }
 
 /**
+ * Which WebView an injection is aimed at. 'home' is the dashboard; a number is
+ * a page layer's key. Resolved at the moment of injection, so a delayed pass
+ * into a layer that has since been evicted is a no-op rather than a warning.
+ */
+type Target = 'home' | number;
+
+/**
  * Whether a page is a shopping page.
  *
  * The reference app's collection, product and search screens carry the wishlist
- * heart, the cart and the search band; its breed and content pages show only a
- * back arrow and the logo.
+ * heart and the search band; its breed and content pages show only a back arrow
+ * and the logo.
  */
 export const isShopUrl = (url: string): boolean => {
   const path = url.split('?')[0].split('#')[0];
@@ -84,29 +112,29 @@ const isHomeUrl = (url: string): boolean => {
   return path === '' || path === '/' || path === '/index';
 };
 
+/** Injection is re-applied on this schedule; see applyStyles. */
+const RESTYLE_DELAYS = [0, 500, 1500, 3000, 6000, 10000];
 
 const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /**
-   * Two WebViews on purpose.
-   *
-   * The dashboard is expensive to assemble -- several section requests plus
-   * transplants -- and Zigly's pages carry no cache-control, so navigating back
-   * to '/' rebuilt it from scratch every time. Keeping it mounted and showing
-   * inner pages in a second view makes Back instant, matching the reference app.
-   *
-   * The cost is a second WebView in memory, which is a real trade against
-   * keeping one. Both share the app's cookie jar, so there is still a single
-   * session and a single cart.
+   * The dashboard, mounted once and never navigated away from: it is expensive
+   * to assemble (several section requests plus transplants) and Zigly's pages
+   * carry no cache-control, so navigating back to '/' rebuilt it from scratch.
    */
   const webRef = useRef<Web>(null);
-  const pageRef = useRef<Web>(null);
+  /** One entry per mounted page layer, keyed as pageStack keys them. */
+  const layerRefs = useRef<Map<number, Web>>(new Map());
 
   /** Read inside native callbacks, so it must be a ref, not state. */
   const canGoBackRef = useRef(false);
   const inCheckoutRef = useRef(false);
   const firstLoadDone = useRef(false);
 
-  const [loading, setLoading] = useState(false);
+  /**
+   * Which WebView is mid-navigation, or null. Only the visible one's progress
+   * is drawn -- a hidden layer finishing a load is not the user's business.
+   */
+  const [loadingTarget, setLoadingTarget] = useState<Target | null>(null);
   /** Mirrors the site's own cart bubble; never tracked independently. */
   const [cartCount, setCartCount] = useState(0);
   /** Offer strings mirrored from the site's own announcement bar. */
@@ -122,11 +150,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const [showCart, setShowCart] = useState(false);
   const [cart, setCart] = useState<CartData | null>(null);
-  /** Inner-page view: null while the dashboard is showing. */
-  const [pageUrl, setPageUrl] = useState<string | null>(null);
-  const pageCanGoBackRef = useRef(false);
-  /** Mirrors pageUrl for the native back handler, which reads a ref. */
-  const pageUrlRef = useRef<string | null>(null);
+
+  /** Inner pages. See ../navigation/pageStack for the rules. */
+  const [stack, setStack] = useState<PageStack>(EMPTY_STACK);
+  /** Mirrors `stack` for the native back handler, which reads a ref. */
+  const stackRef = useRef(stack);
   /** Mirrors showCart for the native back handler, which reads a ref. */
   const showCartRef = useRef(false);
   /**
@@ -136,6 +164,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const unmeteredRef = useRef(false);
   const [offline, setOffline] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const showing = visibleLayer(stack);
 
   // ---------------------------------------------------------------- network
   useEffect(() => {
@@ -153,49 +183,143 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   useEffect(() => {
-    pageUrlRef.current = pageUrl;
-  }, [pageUrl]);
+    stackRef.current = stack;
+  }, [stack]);
 
   useEffect(() => {
     showCartRef.current = showCart;
   }, [showCart]);
 
   /**
-   * Return to the dashboard. It is still mounted, so this is instant; the
-   * reference app also returns to the top rather than restoring scroll.
+   * The search band describes whatever is on screen, so it opens when a
+   * different page comes to the front instead of inheriting the collapsed state
+   * of the one that was scrolled.
    */
-  const dismissPage = useCallback(() => {
-    setPageUrl(null);
-    pageCanGoBackRef.current = false;
-    webRef.current?.injectJavaScript(
-      'window.scrollTo(0, 0); true;',
-    );
-    // The cart may have changed while away; re-read the site's own counter.
-    webRef.current?.injectJavaScript(REPORT_CART_COUNT);
+  useEffect(() => {
+    setSearchCollapsed(false);
+  }, [showing?.key]);
+
+  // ---------------------------------------------------------------- injection
+  /**
+   * Inject into one specific WebView.
+   *
+   * Everything went into the dashboard before, including the re-style passes
+   * fired after an inner page loaded -- so inner pages were styled exactly once,
+   * by their initial injectedJavaScript, and any late third-party script that
+   * restyled them afterwards won.
+   */
+  const injectInto = useCallback((target: Target, script: string) => {
+    const view =
+      target === 'home' ? webRef.current : layerRefs.current.get(target);
+    if (!view) {
+      return;
+    }
+    try {
+      view.injectJavaScript(script);
+    } catch (e) {
+      warn('inject failed', e);
+    }
   }, []);
+
+  /**
+   * Apply the mobile stylesheet. Runs on every completed navigation because a
+   * full page load discards the previously injected <style> node.
+   */
+  const applyStyles = useCallback(
+    (target: Target, url: string) => {
+      const script = getInjectionForUrl(url);
+      if (!script) {
+        log('injection skipped for', url);
+        return;
+      }
+      injectInto(target, REPORT_CART_COUNT);
+      if (target === 'home') {
+        // The bar mirrors the dashboard's own announcements; an inner page
+        // reporting its (possibly absent) bar would blank it.
+        injectInto(target, REPORT_ANNOUNCEMENTS);
+      }
+      // Re-apply on a short schedule. The page keeps loading images and
+      // third-party scripts well after onLoadEnd, and those late arrivals can
+      // restyle the header after a single pass. The script is idempotent, so
+      // repeating it is safe and cheap.
+      RESTYLE_DELAYS.forEach(ms => {
+        setTimeout(() => injectInto(target, script), ms);
+      });
+    },
+    [injectInto],
+  );
+
+  // -------------------------------------------------------------- page stack
+  /**
+   * Open an inner page. Re-shows it from the keep-alive stack when it is still
+   * mounted, so tapping the same product twice costs one page load, not two.
+   */
+  const showPage = useCallback((url: string) => {
+    setStack(prev => openPage(prev, url));
+  }, []);
+
+  /**
+   * Return to the dashboard. It is still mounted, so this is instant -- and its
+   * scroll position is left alone: the user asked not to be sent back to the
+   * top of a page they had already loaded.
+   */
+  const dismissPages = useCallback(() => {
+    if (onDashboard(stackRef.current)) {
+      // Tapping the logo while already home is the one place a jump to the top
+      // is being asked for. Returning from a page is not: that is somewhere the
+      // user already was, and it used to be reset to the top on every Back,
+      // which reads as a reload even though the page never left memory.
+      injectInto('home', 'window.scrollTo({top: 0, behavior: "smooth"}); true;');
+      return;
+    }
+    setStack(prev => goToDashboard(prev));
+    // The cart may have changed while away; re-read the site's own counter.
+    injectInto('home', REPORT_CART_COUNT);
+  }, [injectInto]);
+
+  /**
+   * One step back out of the inner pages: through the visible layer's own
+   * history first, then out of the layer itself.
+   */
+  const stepBack = useCallback(() => {
+    const current = visibleLayer(stackRef.current);
+    if (!current) {
+      return false;
+    }
+    if (current.canGoBack) {
+      layerRefs.current.get(current.key)?.goBack();
+      return true;
+    }
+    setStack(prev => closeTopPage(prev));
+    injectInto('home', REPORT_CART_COUNT);
+    return true;
+  }, [injectInto]);
+
+  const closeCart = useCallback(() => {
+    setShowCart(false);
+    // The badge may have changed while the cart was open.
+    injectInto('home', REPORT_CART_COUNT);
+  }, [injectInto]);
+
+  const openCart = useCallback(() => {
+    setCart(null);
+    setShowCart(true);
+    injectInto('home', READ_CART_SCRIPT);
+  }, [injectInto]);
 
   // ------------------------------------------------------------ back button
   useEffect(() => {
     const onBack = (): boolean => {
-      // Inner page first: stepping back through its history, then dismissing it
-      // reveals the dashboard immediately because it was never torn down.
       if (showCartRef.current) {
-        setShowCart(false);
-        // The badge may have changed while the cart was open.
-        webRef.current?.injectJavaScript(REPORT_CART_COUNT);
+        closeCart();
         return true;
       }
-      if (pageUrlRef.current !== null) {
-        if (pageCanGoBackRef.current) {
-          pageRef.current?.goBack();
-        } else {
-          dismissPage();
-        }
+      if (stepBack()) {
         return true;
       }
       if (canGoBackRef.current) {
         webRef.current?.goBack();
-        // Consumed: keep the app open while the WebView still has history.
+        // Consumed: keep the app open while the dashboard still has history.
         return true;
       }
       // No history left — let Android close the app.
@@ -207,7 +331,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       onBack,
     );
     return () => subscription.remove();
-  }, [dismissPage]);
+  }, [closeCart, stepBack]);
 
   // ------------------------------------------------------------- url policy
   const handleShouldStart = useCallback(
@@ -262,12 +386,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   );
 
   /**
-   * The dashboard's handler. Anything that is not the dashboard is handed to
-   * the page view, so the dashboard is never navigated away from and stays
-   * instant to return to.
+   * The dashboard's handler. Anything that is not the dashboard is handed to a
+   * page layer, so the dashboard is never navigated away from and stays instant
+   * to return to.
    *
-   * Only the dashboard diverts: the page view uses the shared policy directly,
-   * so its own taps navigate in place and it keeps a real back history.
+   * Only the dashboard diverts. A page layer navigates in place and keeps a
+   * real back history, because on Android `navigationType` is always 'other' --
+   * there is no way to tell a tapped link from a redirect or a form post, so
+   * pushing a layer per navigation would fragment checkout and login flows.
    */
   const handleHomeShouldStart = useCallback(
     (request: ShouldStartLoadRequest): boolean => {
@@ -276,12 +402,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         !isHomeUrl(request.url) &&
         classifyUrl(request.url).kind === 'allow'
       ) {
-        setPageUrl(request.url);
+        showPage(request.url);
         return false;
       }
       return handleShouldStart(request);
     },
-    [handleShouldStart],
+    [handleShouldStart, showPage],
   );
 
   // ------------------------------------------------------------- navigation
@@ -298,39 +424,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     }
   }, []);
 
-  /**
-   * Apply the mobile stylesheet. Runs on every completed navigation because a
-   * full page load discards the previously injected <style> node.
-   */
-  const applyStyles = useCallback((url: string) => {
-    const script = getInjectionForUrl(url);
-    if (!script) {
-      log('injection skipped for', url);
-      return;
-    }
-    // Re-apply on a short schedule. The page keeps loading images and
-    // third-party scripts well after onLoadEnd, and those late arrivals can
-    // restyle the header after a single pass. The script is idempotent, so
-    // repeating it is safe and cheap.
-    webRef.current?.injectJavaScript(REPORT_CART_COUNT);
-    webRef.current?.injectJavaScript(REPORT_ANNOUNCEMENTS);
-
-    const delays = [0, 500, 1500, 3000, 6000, 10000];
-    delays.forEach(ms => {
-      setTimeout(() => {
-        try {
-          webRef.current?.injectJavaScript(script);
-        } catch (e) {
-          warn('inject failed', e);
-        }
-      }, ms);
-    });
-  }, []);
-
   const handleLoadEnd = useCallback(
     (event: {nativeEvent: {url: string}}) => {
-      setLoading(false);
-      applyStyles(event.nativeEvent.url);
+      setLoadingTarget(prev => (prev === 'home' ? null : prev));
+      applyStyles('home', event.nativeEvent.url);
       if (!firstLoadDone.current) {
         firstLoadDone.current = true;
         onFirstLoad();
@@ -359,231 +456,307 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
   const retry = useCallback(() => {
     setLoadError(null);
+    const current = visibleLayer(stackRef.current);
+    if (current) {
+      layerRefs.current.get(current.key)?.reload();
+      return;
+    }
     webRef.current?.reload();
   }, []);
 
   // ------------------------------------------------------------------ render
   const showError = offline || loadError !== null;
+  /** Progress is only ever drawn for whatever the user is actually looking at. */
+  const busy =
+    !showCart &&
+    !showError &&
+    loadingTarget !== null &&
+    (showing ? loadingTarget === showing.key : loadingTarget === 'home');
+
+  /** The page the header is describing: an inner page, or the dashboard. */
+  const headerUrl = showing ? showing.url : null;
+  const onShopPage = headerUrl !== null && isShopUrl(headerUrl);
+  /** Keys are monotonic, so this is mount order: stable for the tree. */
+  const mountOrder = [...stack.layers].sort((a, b) => a.key - b.key);
 
   return (
     <View style={styles.root}>
-      <AnnouncementBar items={announcements} />
+      {/*
+        Dashboard only. Now that the chrome is no longer covered by inner pages,
+        an always-on offer strip would cost 38px of every product page for a
+        promotion the user has already scrolled past once.
+      */}
+      <AnnouncementBar
+        items={headerUrl === null && !showCart ? announcements : []}
+      />
 
+      {/*
+        Drawn once, above `body`, so it survives every page, the cart and the
+        offline screen -- no inner page can cover it, and the back arrow is
+        therefore always there.
+      */}
       <NativeHeader
         cartCount={cartCount}
         // Dashboard and shopping pages carry the search band; breed and content
         // pages show only the back arrow and the logo.
-        showSearch={(pageUrl === null || isShopUrl(pageUrl)) && !showCart}
+        showSearch={(headerUrl === null || onShopPage) && !showCart}
         // No wishlist on the dashboard -- that matches the reference too.
-        showWishlist={pageUrl !== null && isShopUrl(pageUrl) && !showCart}
-        showCartIcon={(pageUrl === null || isShopUrl(pageUrl)) && !showCart}
+        showWishlist={onShopPage && !showCart}
+        // The bag rides along on every page, so the cart is always one tap
+        // away; only the cart screen itself drops it.
+        showCartIcon={!showCart}
         searchCollapsed={searchCollapsed}
-        showBack={pageUrl !== null || showCart}
-        onWishlistPress={() => setPageUrl(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)}
+        showBack={headerUrl !== null || showCart}
+        onWishlistPress={() => showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)}
         onBackPress={() => {
           // Same rule as the hardware back button.
           if (showCart) {
-            setShowCart(false);
-            webRef.current?.injectJavaScript(REPORT_CART_COUNT);
-          } else if (pageUrl !== null) {
-            if (pageCanGoBackRef.current) {
-              pageRef.current?.goBack();
-            } else {
-              dismissPage();
-            }
-          } else if (canGoBackRef.current) {
+            closeCart();
+          } else if (!stepBack() && canGoBackRef.current) {
             webRef.current?.goBack();
           }
         }}
-        onMenuPress={() => webRef.current?.injectJavaScript(OPEN_MENU)}
-        onCartPress={() => {
-          setCart(null);
-          setShowCart(true);
-          webRef.current?.injectJavaScript(READ_CART_SCRIPT);
-        }}
-        onLogoPress={() => dismissPage()}
+        onMenuPress={() => injectInto('home', OPEN_MENU)}
+        onCartPress={openCart}
+        onLogoPress={dismissPages}
         onSearchSubmit={q =>
-          setPageUrl(`${ZIGLY_ORIGIN}/search?q=${encodeURIComponent(q)}`)
+          showPage(`${ZIGLY_ORIGIN}/search?q=${encodeURIComponent(q)}`)
         }
       />
 
-      <WebView<object>
-        {...baseWebViewProps}
-        ref={webRef}
-        source={{uri: START_URL}}
-        style={styles.web}
-        injectedJavaScript={getInjectionForUrl(START_URL) ?? undefined}
-        // Runs before the page's own scripts, so the site's header never
-        // flashes alongside ours.
-        injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
-        onShouldStartLoadWithRequest={handleHomeShouldStart}
-        onNavigationStateChange={handleNavStateChange}
-        onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
-          handleScroll(e.nativeEvent.contentOffset.y)
-        }
-        onLoadStart={() => {
-          setLoading(true);
-          // Hide the site's header as early as Android will let us.
-          //
-          // injectedJavaScriptBeforeContentLoaded is unreliable on Android
-          // WebView -- it frequently lands after first paint, which is why the
-          // site's own header still flashed alongside our native one. onLoadStart
-          // fires at the very beginning of the navigation, so injecting here as
-          // well gives the rule a second, earlier chance to land. It is
-          // idempotent, so running twice costs nothing.
-          webRef.current?.injectJavaScript(EARLY_HEADER_CSS);
-        }}
-        onLoadEnd={handleLoadEnd}
-        onError={({nativeEvent}) => {
-          warn('load error:', nativeEvent.description);
-          setLoadError(nativeEvent.description ?? 'Load failed');
-          // Still release the splash, otherwise it hides the error screen.
-          if (!firstLoadDone.current) {
-            firstLoadDone.current = true;
-            onFirstLoad();
+      {/*
+        Everything that can cover the page lives in here, so `top: 0` means
+        "under the header" rather than "over it".
+      */}
+      <View style={styles.body}>
+        <WebView<object>
+          {...baseWebViewProps}
+          ref={webRef}
+          source={{uri: START_URL}}
+          style={styles.web}
+          injectedJavaScript={getInjectionForUrl(START_URL) ?? undefined}
+          // Runs before the page's own scripts, so the site's header never
+          // flashes alongside ours.
+          injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
+          onShouldStartLoadWithRequest={handleHomeShouldStart}
+          onNavigationStateChange={handleNavStateChange}
+          onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
+            handleScroll(e.nativeEvent.contentOffset.y)
           }
-        }}
-        onHttpError={({nativeEvent}) => {
-          // Shopify serves a real 404 page; only surface server-side failures.
-          if (nativeEvent.statusCode >= 500) {
-            warn('http error:', nativeEvent.statusCode, nativeEvent.url);
-            setLoadError(`Server error ${nativeEvent.statusCode}`);
-          }
-        }}
-        onMessage={({nativeEvent}) => {
-          // Only diagnostics post messages today; ignore anything else.
-          try {
-            const data = JSON.parse(nativeEvent.data);
-            if (data && data.tag === 'search-diag') {
-              log('SEARCHDIAG', JSON.stringify(data));
-            } else if (data && data.tag === 'cart-count') {
-              setCartCount(typeof data.n === 'number' ? data.n : 0);
-            } else if (data && data.tag === 'dashboard-ready') {
+          onLoadStart={() => {
+            setLoadingTarget('home');
+            // Hide the site's header as early as Android will let us.
+            //
+            // injectedJavaScriptBeforeContentLoaded is unreliable on Android
+            // WebView -- it frequently lands after first paint, which is why the
+            // site's own header still flashed alongside our native one.
+            // onLoadStart fires at the very beginning of the navigation, so
+            // injecting here as well gives the rule a second, earlier chance to
+            // land. It is idempotent, so running twice costs nothing.
+            injectInto('home', EARLY_HEADER_CSS);
+          }}
+          onLoadEnd={handleLoadEnd}
+          onError={({nativeEvent}) => {
+            warn('load error:', nativeEvent.description);
+            setLoadError(nativeEvent.description ?? 'Load failed');
+            // Still release the splash, otherwise it hides the error screen.
+            if (!firstLoadDone.current) {
+              firstLoadDone.current = true;
               onFirstLoad();
-              // Warm the next pages, but only on an unmetered connection.
-              if (unmeteredRef.current) {
-                webRef.current?.injectJavaScript(PREFETCH_SCRIPT);
-              } else {
-                log('prefetch skipped: metered connection');
-              }
-            } else if (data && data.tag === 'cart-data') {
-              setCart(
-                data.error
-                  ? null
-                  : {
-                      itemCount: data.itemCount ?? 0,
-                      totalPrice: data.totalPrice ?? 0,
-                      originalTotalPrice: data.originalTotalPrice ?? 0,
-                      totalDiscount: data.totalDiscount ?? 0,
-                      items: Array.isArray(data.items) ? data.items : [],
-                    },
-              );
-            } else if (data && data.tag === 'cart-added') {
-              setCartToast(true);
-            } else if (data && data.tag === 'announcements') {
-              setAnnouncements(Array.isArray(data.items) ? data.items : []);
             }
-          } catch {
-            // Page scripts may postMessage for their own reasons. Not ours.
-          }
-        }}
-        onRenderProcessGone={() => {
-          // Android may kill the renderer under memory pressure. Recover in
-          // place rather than letting the screen go permanently blank.
-          warn('render process gone — reloading');
-          webRef.current?.reload();
-        }}
-      />
-
-      {pageUrl !== null ? (
-        <View style={styles.pageLayer}>
-          <WebView<object>
-            {...baseWebViewProps}
-            ref={pageRef}
-            source={{uri: pageUrl}}
-            style={styles.web}
-            injectedJavaScript={getInjectionForUrl(pageUrl) ?? undefined}
-            injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
-            onShouldStartLoadWithRequest={handleShouldStart}
-            onNavigationStateChange={nav => {
-              pageCanGoBackRef.current = nav.canGoBack;
-              const nowInCheckout = isCheckoutUrl(nav.url);
-              if (nowInCheckout !== inCheckoutRef.current) {
-                inCheckoutRef.current = nowInCheckout;
-              }
-            }}
-            onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
-              handleScroll(e.nativeEvent.contentOffset.y)
+          }}
+          onHttpError={({nativeEvent}) => {
+            // Shopify serves a real 404 page; only surface server-side failures.
+            if (nativeEvent.statusCode >= 500) {
+              warn('http error:', nativeEvent.statusCode, nativeEvent.url);
+              setLoadError(`Server error ${nativeEvent.statusCode}`);
             }
-            onLoadStart={() => {
-              setLoading(true);
-              pageRef.current?.injectJavaScript(EARLY_HEADER_CSS);
-            }}
-            onLoadEnd={e => {
-              setLoading(false);
-              applyStyles(e.nativeEvent.url);
-            }}
-            onMessage={({nativeEvent}) => {
-              try {
-                const data = JSON.parse(nativeEvent.data);
-                if (data && data.tag === 'cart-added') {
-                  setCartToast(true);
-                } else if (data && data.tag === 'cart-count') {
-                  setCartCount(typeof data.n === 'number' ? data.n : 0);
+          }}
+          onMessage={({nativeEvent}) => {
+            try {
+              const data = JSON.parse(nativeEvent.data);
+              if (data && data.tag === 'search-diag') {
+                log('SEARCHDIAG', JSON.stringify(data));
+              } else if (data && data.tag === 'cart-count') {
+                setCartCount(typeof data.n === 'number' ? data.n : 0);
+              } else if (data && data.tag === 'dashboard-ready') {
+                onFirstLoad();
+                // Warm the next pages, but only on an unmetered connection.
+                if (unmeteredRef.current) {
+                  injectInto('home', PREFETCH_SCRIPT);
+                } else {
+                  log('prefetch skipped: metered connection');
                 }
-              } catch {
-                // Page scripts may postMessage for their own reasons.
+              } else if (data && data.tag === 'cart-data') {
+                setCart(
+                  data.error
+                    ? null
+                    : {
+                        itemCount: data.itemCount ?? 0,
+                        totalPrice: data.totalPrice ?? 0,
+                        originalTotalPrice: data.originalTotalPrice ?? 0,
+                        totalDiscount: data.totalDiscount ?? 0,
+                        items: Array.isArray(data.items) ? data.items : [],
+                      },
+                );
+              } else if (data && data.tag === 'cart-added') {
+                setCartToast(true);
+              } else if (data && data.tag === 'announcements') {
+                setAnnouncements(Array.isArray(data.items) ? data.items : []);
               }
-            }}
-          />
-        </View>
-      ) : null}
-
-      {showCart ? (
-        <View style={styles.pageLayer}>
-          <CartScreen
-            cart={cart}
-            onChangeQty={(key, quantity) =>
-              webRef.current?.injectJavaScript(changeQtyScript(key, quantity))
+            } catch {
+              // Page scripts may postMessage for their own reasons. Not ours.
             }
-            onCheckout={() => {
-              // Checkout stays entirely on the website.
-              setShowCart(false);
-              setPageUrl(`${ZIGLY_ORIGIN}/checkout`);
-            }}
-            onOpenItem={url => {
-              setShowCart(false);
-              setPageUrl(url.indexOf('http') === 0 ? url : `${ZIGLY_ORIGIN}${url}`);
-            }}
-          />
-        </View>
-      ) : null}
+          }}
+          onRenderProcessGone={() => {
+            // Android may kill the renderer under memory pressure. Recover in
+            // place rather than letting the screen go permanently blank.
+            warn('render process gone — reloading');
+            webRef.current?.reload();
+          }}
+        />
 
+        {/*
+          Every visited page, still mounted: the one on top on screen, the rest
+          parked off it with their DOM, their scroll position and their session
+          intact.
+
+          Rendered in key order -- that is, mount order -- and never re-sorted.
+          `stack.layers` is kept in least-recently-shown order for eviction, but
+          following that order here would reorder the children on every
+          navigation, and RN implements a reorder as detach-then-attach on the
+          native view. Doing that to an Android WebView is asking for a blank
+          one. Paint order does not matter anyway: only ever one layer is on
+          screen, so nothing is stacked over anything.
+        */}
+        {mountOrder.map(layer => {
+          const isVisible = showing !== null && showing.key === layer.key;
+          return (
+            <View
+              key={layer.key}
+              style={[styles.pageLayer, isVisible ? null : styles.parked]}
+              pointerEvents={isVisible ? 'auto' : 'none'}>
+              <WebView<object>
+                {...baseWebViewProps}
+                ref={view => {
+                  if (view) {
+                    layerRefs.current.set(layer.key, view);
+                  } else {
+                    layerRefs.current.delete(layer.key);
+                  }
+                }}
+                // Never reassigned: `source` changing is what reloads a WebView.
+                source={{uri: layer.source}}
+                style={styles.web}
+                injectedJavaScript={
+                  getInjectionForUrl(layer.source) ?? undefined
+                }
+                injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
+                onShouldStartLoadWithRequest={handleShouldStart}
+                onNavigationStateChange={nav => {
+                  setStack(prev =>
+                    noteNavigation(prev, layer.key, nav.url, nav.canGoBack),
+                  );
+                  const nowInCheckout = isCheckoutUrl(nav.url);
+                  if (nowInCheckout !== inCheckoutRef.current) {
+                    inCheckoutRef.current = nowInCheckout;
+                  }
+                }}
+                onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
+                  handleScroll(e.nativeEvent.contentOffset.y)
+                }
+                onLoadStart={() => {
+                  setLoadingTarget(layer.key);
+                  injectInto(layer.key, EARLY_HEADER_CSS);
+                }}
+                onLoadEnd={e => {
+                  setLoadingTarget(prev =>
+                    prev === layer.key ? null : prev,
+                  );
+                  applyStyles(layer.key, e.nativeEvent.url);
+                }}
+                onError={({nativeEvent}) => {
+                  // Not promoted to the offline screen: the header's back arrow
+                  // is right there, so a failed inner page is escapable.
+                  warn('page load error:', nativeEvent.description);
+                  setLoadingTarget(prev =>
+                    prev === layer.key ? null : prev,
+                  );
+                }}
+                onMessage={({nativeEvent}) => {
+                  try {
+                    const data = JSON.parse(nativeEvent.data);
+                    if (data && data.tag === 'cart-added') {
+                      setCartToast(true);
+                    } else if (data && data.tag === 'cart-count') {
+                      setCartCount(typeof data.n === 'number' ? data.n : 0);
+                    }
+                  } catch {
+                    // Page scripts may postMessage for their own reasons.
+                  }
+                }}
+                onRenderProcessGone={() => {
+                  warn('page render process gone — reloading');
+                  layerRefs.current.get(layer.key)?.reload();
+                }}
+              />
+            </View>
+          );
+        })}
+
+        {showCart ? (
+          <View style={styles.pageLayer}>
+            <CartScreen
+              cart={cart}
+              onChangeQty={(key, quantity) =>
+                injectInto('home', changeQtyScript(key, quantity))
+              }
+              onCheckout={() => {
+                // Checkout stays entirely on the website.
+                setShowCart(false);
+                showPage(`${ZIGLY_ORIGIN}/checkout`);
+              }}
+              onOpenItem={url => {
+                setShowCart(false);
+                showPage(
+                  url.indexOf('http') === 0 ? url : `${ZIGLY_ORIGIN}${url}`,
+                );
+              }}
+            />
+          </View>
+        ) : null}
+
+        {busy ? <LoadingBar /> : null}
+
+        {/*
+          Inside `body` too, so the header stays reachable: the offline screen
+          used to cover it, leaving Retry as the only way out.
+        */}
+        {showError ? (
+          <NetworkErrorScreen
+            onRetry={retry}
+            detail={offline ? null : loadError}
+          />
+        ) : null}
+      </View>
+
+      {/* Outside `body`: a toast is the one thing allowed over everything. */}
       <CartToast
         visible={cartToast}
         onHidden={() => setCartToast(false)}
         onViewCart={() => {
           setCartToast(false);
-          setCart(null);
-          setShowCart(true);
-          webRef.current?.injectJavaScript(READ_CART_SCRIPT);
+          openCart();
         }}
       />
-
-      {loading && !showError ? <LoadingOverlay /> : null}
-
-      {showError ? (
-        <NetworkErrorScreen
-          onRetry={retry}
-          detail={offline ? null : loadError}
-        />
-      ) : null}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: COLORS.white},
+  /** Owns every overlay, so none of them can reach the header above it. */
+  body: {flex: 1, position: 'relative'},
   web: {flex: 1, backgroundColor: COLORS.white},
   /** Covers the dashboard, which stays mounted and ready underneath. */
   pageLayer: {
@@ -594,6 +767,16 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: COLORS.white,
   },
+  /**
+   * How a kept-alive page is hidden: parked off screen, not display:none.
+   *
+   * Deliberate. Taking an Android WebView through GONE and back is the classic
+   * way to get one that returns blank -- the very failure this whole
+   * arrangement exists to avoid, and one that would only show up on a device.
+   * A translated view keeps its native visibility, so nothing is torn down;
+   * Android clips children to the parent, so it is not drawn either.
+   */
+  parked: {transform: [{translateX: 10000}]},
 });
 
 export default ZiglyWebViewScreen;

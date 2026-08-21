@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
-import {COLORS} from '../constants/appConstants';
+import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 
 interface Props {
   onDark?: boolean;
@@ -25,6 +25,7 @@ const ZiglyWordmark = ({onDark = false}: Props) => (
 const styles = StyleSheet.create({
   row: {flexDirection: 'row', alignItems: 'center', gap: 8},
   word: {
+    fontFamily: FONT_FAMILY,
     fontSize: 40,
     fontWeight: '800',
     letterSpacing: -1.2,
@@ -38,6 +39,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   pillText: {
+    fontFamily: FONT_FAMILY,
     color: COLORS.white,
     fontSize: 15,
     fontWeight: '700',

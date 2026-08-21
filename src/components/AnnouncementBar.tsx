@@ -9,7 +9,7 @@
  */
 import React, {useEffect, useRef, useState} from 'react';
 import {Animated, Easing, StyleSheet, Text, View} from 'react-native';
-import {COLORS} from '../constants/appConstants';
+import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 
 interface Props {
   /** Offer strings read from the site's own announcement bar. */
@@ -76,6 +76,7 @@ const styles = StyleSheet.create({
   },
   track: {flexDirection: 'row'},
   text: {
+    fontFamily: FONT_FAMILY,
     color: COLORS.white,
     fontSize: 13.5,
     fontWeight: '500',

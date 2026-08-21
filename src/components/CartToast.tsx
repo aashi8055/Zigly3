@@ -6,6 +6,7 @@
  */
 import React, {useEffect, useRef} from 'react';
 import {Animated, Easing, Pressable, StyleSheet, Text} from 'react-native';
+import {FONT_FAMILY} from '../constants/appConstants';
 
 interface Props {
   visible: boolean;
@@ -82,8 +83,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
   },
-  text: {color: '#FFFFFF', fontSize: 15},
-  action: {color: '#FFFFFF', fontSize: 15, fontWeight: '700', letterSpacing: 0.4},
+  text: {fontFamily: FONT_FAMILY, color: '#FFFFFF', fontSize: 15},
+  action: {
+    fontFamily: FONT_FAMILY,
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
 });
 
 export default CartToast;

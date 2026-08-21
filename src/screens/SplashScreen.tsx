@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
-import {COLORS} from '../constants/appConstants';
+import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import ZiglyWordmark from '../components/ZiglyWordmark';
 
 const SplashScreen = () => (
@@ -33,6 +33,7 @@ const styles = StyleSheet.create({
   },
   center: {alignItems: 'center', gap: 14},
   tagline: {
+    fontFamily: FONT_FAMILY,
     color: 'rgba(255,255,255,0.72)',
     fontSize: 14,
     letterSpacing: 0.3,

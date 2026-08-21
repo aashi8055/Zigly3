@@ -38,8 +38,8 @@ describe('header state follows which view is showing', () => {
       'src/screens/ZiglyWebViewScreen.tsx',
       'utf8',
     );
-    expect(src).toContain('setPageUrl(`${ZIGLY_ORIGIN}/search?q=');
-    expect(src).toContain('setPageUrl(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)');
+    expect(src).toContain('showPage(`${ZIGLY_ORIGIN}/search?q=');
+    expect(src).toContain('showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)');
     expect(src).not.toContain('injectJavaScript(searchScript');
   });
 
@@ -60,13 +60,46 @@ describe('header state follows which view is showing', () => {
       'src/screens/ZiglyWebViewScreen.tsx',
       'utf8',
     );
-    expect(src).toContain('showBack={pageUrl !== null || showCart}');
+    expect(src).toContain('showBack={headerUrl !== null || showCart}');
+  });
+
+  it('draws the header outside everything that can cover it', () => {
+    // The page layers are positioned absolutely against their container. While
+    // that container was the whole screen, opening any inner page covered the
+    // header with it -- so every page but the dashboard had no back arrow and
+    // no cart. The layers now live in `body`, which starts below the header.
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    const header = src.indexOf('<NativeHeader');
+    const body = src.indexOf('<View style={styles.body}>');
+    expect(header).toBeGreaterThan(-1);
+    expect(body).toBeGreaterThan(header);
+    // Every overlay is inside that container, the offline screen included.
+    expect(src.indexOf('styles.pageLayer')).toBeGreaterThan(body);
+    expect(src.indexOf('<NetworkErrorScreen')).toBeGreaterThan(body);
+  });
+
+  it('has no floating spinner left to cover the page', () => {
+    // A spinner sat in the top-right corner of every page, over whatever the
+    // page itself puts there, and offered nothing to press. Progress is a
+    // hairline under the header now; getting back is the header's job.
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    expect(src).not.toContain('LoadingOverlay');
+    expect(src).toContain('<LoadingBar />');
+    expect(require('fs').existsSync('src/components/LoadingOverlay.tsx')).toBe(
+      false,
+    );
   });
 
   it('carries the header icons the reference carries, per page type', () => {
-    // Reference app: collection, product and search pages show the wishlist,
-    // the cart and the search band; breed and content pages show only the back
-    // arrow and the logo.
+    // Reference app: collection, product and search pages show the wishlist
+    // and the search band; breed and content pages show only the back arrow,
+    // the logo and the cart.
     const {isShopUrl} = require('../src/screens/ZiglyWebViewScreen');
     expect(isShopUrl('https://zigly.com/collections/wet-food')).toBe(true);
     expect(isShopUrl('https://zigly.com/products/sheba-tuna?variant=1')).toBe(
@@ -77,6 +110,49 @@ describe('header state follows which view is showing', () => {
       false,
     );
     expect(isShopUrl('https://zigly.com/pages/dog')).toBe(false);
+  });
+});
+
+describe('pages are kept alive rather than reloaded', () => {
+  it('drives inner pages through the keep-alive stack', () => {
+    // Zigly's pages carry no cache-control, so a re-mount is a full page load.
+    // See src/navigation/pageStack.ts and __tests__/pageStack.test.ts.
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    expect(src).toContain("from '../navigation/pageStack'");
+    // A layer's source is assigned once. Reassigning it is what reloads a
+    // WebView, which would defeat the entire arrangement.
+    expect(src).toContain('source={{uri: layer.source}}');
+  });
+
+  it('leaves the dashboard where the user left it', () => {
+    // Returning from an inner page used to scroll the dashboard back to the
+    // top, which reads as a reload even though the page never left memory. The
+    // jump to the top now happens only for a logo tap made while already home,
+    // which is a request rather than a side effect.
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    const scroll = src.indexOf('window.scrollTo');
+    expect(scroll).toBeGreaterThan(-1);
+    const guard = src.indexOf('if (onDashboard(stackRef.current))');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(scroll);
+  });
+
+  it('injects into the WebView it is aimed at', () => {
+    // Every injection went to the dashboard before, including the re-style
+    // passes fired after an inner page loaded -- so inner pages were styled
+    // once and any late third-party script that restyled them won.
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    expect(src).toContain('applyStyles(layer.key,');
+    expect(src).toContain("applyStyles('home',");
   });
 });
 

@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
-import {COLORS} from '../constants/appConstants';
+import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import ZiglyWordmark from './ZiglyWordmark';
 
 interface Props {
@@ -51,6 +51,7 @@ const styles = StyleSheet.create({
   },
   mark: {marginBottom: 40, opacity: 0.9},
   title: {
+    fontFamily: FONT_FAMILY,
     fontSize: 20,
     fontWeight: '700',
     color: COLORS.navy,
@@ -58,6 +59,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   body: {
+    fontFamily: FONT_FAMILY,
     fontSize: 15,
     lineHeight: 22,
     color: COLORS.inkMuted,
@@ -65,6 +67,7 @@ const styles = StyleSheet.create({
     maxWidth: 300,
   },
   detail: {
+    fontFamily: FONT_FAMILY,
     fontSize: 12,
     color: COLORS.inkMuted,
     marginTop: 12,
@@ -80,6 +83,7 @@ const styles = StyleSheet.create({
   },
   buttonPressed: {opacity: 0.85},
   buttonText: {
+    fontFamily: FONT_FAMILY,
     color: COLORS.white,
     fontSize: 16,
     fontWeight: '700',

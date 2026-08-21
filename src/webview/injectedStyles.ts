@@ -17,6 +17,22 @@ export const MOBILE_CSS = `
 ${HEADER_DRAWER_CSS}
 
 /* ------------------------------------------------------------------
+   App-wide typeface: sans-serif everywhere.
+
+   Dawn drives typography through CSS custom properties rather than
+   per-element font-family rules, so overriding the variables here covers
+   body text, headings and buttons alike without a "*" rule that would risk
+   clobbering icon fonts (wishlist heart, star ratings, swiper arrows, etc.).
+   ------------------------------------------------------------------ */
+:root {
+  --font-body-family: sans-serif !important;
+  --font-heading-family: sans-serif !important;
+}
+html, body {
+  font-family: sans-serif !important;
+}
+
+/* ------------------------------------------------------------------
    Header rules intentionally REMOVED.
 
    Device diagnostics showed the header is not hidden at all: it reports

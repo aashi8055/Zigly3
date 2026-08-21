@@ -25,7 +25,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { COLORS } from '../constants/appConstants';
+import { COLORS, FONT_FAMILY } from '../constants/appConstants';
 
 interface Props {
   onMenuPress: () => void;
@@ -352,6 +352,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logoWord: {
+    fontFamily: FONT_FAMILY,
     fontSize: 25,
     fontWeight: '800',
     letterSpacing: -0.9,
@@ -364,6 +365,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   logoPillText: {
+    fontFamily: FONT_FAMILY,
     color: COLORS.white,
     fontSize: 12.5,
     fontWeight: '700',
@@ -403,7 +405,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 3,
   },
-  badgeText: { color: COLORS.white, fontSize: 10, fontWeight: '700' },
+  badgeText: {
+    fontFamily: FONT_FAMILY,
+    color: COLORS.white,
+    fontSize: 10,
+    fontWeight: '700',
+  },
 
   // Pale blue band, matching the reference app.
   searchBand: {
@@ -425,6 +432,7 @@ const styles = StyleSheet.create({
     height: 44,
   },
   searchInput: {
+    fontFamily: FONT_FAMILY,
     flex: 1,
     fontSize: 15,
     color: COLORS.ink,

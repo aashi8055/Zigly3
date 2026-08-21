@@ -16,7 +16,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import {COLORS} from '../constants/appConstants';
+import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 
 export interface CartLine {
   key: string;
@@ -202,8 +202,9 @@ const CartScreen = ({cart, onChangeQty, onCheckout, onOpenItem}: Props) => {
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: COLORS.white},
   centre: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32},
-  emptyTitle: {fontSize: 18, fontWeight: '700', color: COLORS.navy},
+  emptyTitle: {fontFamily: FONT_FAMILY, fontSize: 18, fontWeight: '700', color: COLORS.navy},
   emptyBody: {
+    fontFamily: FONT_FAMILY,
     marginTop: 8,
     fontSize: 14,
     color: COLORS.inkMuted,
@@ -220,7 +221,7 @@ const styles = StyleSheet.create({
   },
   thumb: {width: 84, height: 84, borderRadius: 8, backgroundColor: '#F5F5F5'},
   details: {flex: 1},
-  title: {fontSize: 15, color: '#1B1B1B', lineHeight: 20, fontWeight: '500'},
+  title: {fontFamily: FONT_FAMILY, fontSize: 15, color: '#1B1B1B', lineHeight: 20, fontWeight: '500'},
   variantChip: {
     alignSelf: 'flex-start',
     backgroundColor: '#F1F1F1',
@@ -229,12 +230,12 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     marginTop: 8,
   },
-  variantText: {fontSize: 13, color: '#3A3A3A'},
+  variantText: {fontFamily: FONT_FAMILY, fontSize: 13, color: '#3A3A3A'},
   priceRow: {flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 8},
-  price: {fontSize: 15, fontWeight: '700', color: '#1B1B1B'},
-  was: {fontSize: 13.5, color: '#9A9A9A', textDecorationLine: 'line-through'},
-  off: {fontSize: 13.5, color: COLORS.red, fontWeight: '600'},
-  saved: {marginTop: 5, fontSize: 13.5, color: '#1B9C5D'},
+  price: {fontFamily: FONT_FAMILY, fontSize: 15, fontWeight: '700', color: '#1B1B1B'},
+  was: {fontFamily: FONT_FAMILY, fontSize: 13.5, color: '#9A9A9A', textDecorationLine: 'line-through'},
+  off: {fontFamily: FONT_FAMILY, fontSize: 13.5, color: COLORS.red, fontWeight: '600'},
+  saved: {fontFamily: FONT_FAMILY, marginTop: 5, fontSize: 13.5, color: '#1B9C5D'},
 
   stepper: {
     flexDirection: 'row',
@@ -246,13 +247,14 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   stepBtn: {paddingHorizontal: 14, paddingVertical: 6},
-  stepGlyph: {fontSize: 17, color: '#1B1B1B'},
-  qty: {minWidth: 26, textAlign: 'center', fontSize: 15, color: '#1B1B1B'},
+  stepGlyph: {fontFamily: FONT_FAMILY, fontSize: 17, color: '#1B1B1B'},
+  qty: {fontFamily: FONT_FAMILY, minWidth: 26, textAlign: 'center', fontSize: 15, color: '#1B1B1B'},
 
   remove: {paddingHorizontal: 4, paddingTop: 2},
-  removeGlyph: {fontSize: 22, color: '#1B1B1B', lineHeight: 24},
+  removeGlyph: {fontFamily: FONT_FAMILY, fontSize: 22, color: '#1B1B1B', lineHeight: 24},
 
   sectionTitle: {
+    fontFamily: FONT_FAMILY,
     fontSize: 18,
     fontWeight: '700',
     color: '#1B1B1B',
@@ -266,10 +268,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 7,
   },
-  summaryLabel: {fontSize: 15, color: '#1B1B1B'},
-  summaryValue: {fontSize: 15, color: '#1B1B1B'},
-  savingsLabel: {fontSize: 15, color: '#1B9C5D'},
-  savingsValue: {fontSize: 15, color: '#1B9C5D'},
+  summaryLabel: {fontFamily: FONT_FAMILY, fontSize: 15, color: '#1B1B1B'},
+  summaryValue: {fontFamily: FONT_FAMILY, fontSize: 15, color: '#1B1B1B'},
+  savingsLabel: {fontFamily: FONT_FAMILY, fontSize: 15, color: '#1B9C5D'},
+  savingsValue: {fontFamily: FONT_FAMILY, fontSize: 15, color: '#1B9C5D'},
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -279,8 +281,8 @@ const styles = StyleSheet.create({
     borderTopColor: '#EFEFEF',
     marginTop: 6,
   },
-  totalLabel: {fontSize: 16.5, fontWeight: '700', color: '#1B1B1B'},
-  totalValue: {fontSize: 16.5, fontWeight: '700', color: '#1B1B1B'},
+  totalLabel: {fontFamily: FONT_FAMILY, fontSize: 16.5, fontWeight: '700', color: '#1B1B1B'},
+  totalValue: {fontFamily: FONT_FAMILY, fontSize: 16.5, fontWeight: '700', color: '#1B1B1B'},
 
   savedBanner: {
     margin: 16,
@@ -289,7 +291,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
   },
-  savedBannerText: {fontSize: 15, color: '#1B1B1B'},
+  savedBannerText: {fontFamily: FONT_FAMILY, fontSize: 15, color: '#1B1B1B'},
 
   bar: {
     flexDirection: 'row',
@@ -301,8 +303,8 @@ const styles = StyleSheet.create({
     borderTopColor: '#EFEFEF',
     backgroundColor: COLORS.white,
   },
-  barCount: {fontSize: 13.5, color: '#5A5A5A'},
-  barTotal: {fontSize: 19, fontWeight: '700', color: '#1B1B1B'},
+  barCount: {fontFamily: FONT_FAMILY, fontSize: 13.5, color: '#5A5A5A'},
+  barTotal: {fontFamily: FONT_FAMILY, fontSize: 19, fontWeight: '700', color: '#1B1B1B'},
   checkout: {
     flex: 1,
     marginLeft: 20,
@@ -312,7 +314,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pressed: {opacity: 0.85},
-  checkoutText: {color: COLORS.red, fontSize: 16.5, fontWeight: '700'},
+  checkoutText: {fontFamily: FONT_FAMILY, color: COLORS.red, fontSize: 16.5, fontWeight: '700'},
 });
 
 export default CartScreen;
