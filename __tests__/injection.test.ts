@@ -95,70 +95,6 @@ describe('getInjectionForUrl', () => {
     it('is not injected into checkout', () => {
       expect(getInjectionForUrl('https://zigly.com/checkouts/c/x')).toBeNull();
     });
-
-    it('covers search results, not just collections', () => {
-      // SearchTap draws that grid too, and the reference app pins the same bar
-      // there. Bare /collections is excluded on purpose -- it is the card
-      // list, which has no products to sort.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
-      expect(script).toContain("path.indexOf('/collections/') === 0");
-      expect(script).toContain("path.indexOf('/search') === 0");
-    });
-
-    it('refills a bar that SearchTap has emptied', () => {
-      // SearchTap re-renders its controls on a filter change; when it replaces
-      // the nodes we moved, the container is left holding nothing. Testing for
-      // the element alone stopped at the first success and left an empty bar.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
-      expect(script).toContain('existing.children.length > 0');
-    });
-
-    it('flattens the pills into the bar without rebuilding them', () => {
-      // Presentation only: still SearchTap's elements and listeners.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
-      expect(script).toContain('#zigly-sortfilter-bar button');
-      expect(script).not.toContain('cloneNode');
-    });
-  });
-
-  describe('listing cards', () => {
-    it('shows the plain Add to Bag the reference shows', () => {
-      // The site's grid renders the compact variant picker ("+ Add", "+9
-      // more") where the reference has a full-width button. Same fix the
-      // transplanted dashboard sections already carry.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
-      expect(script).toContain('body.zigly-listing .card-variant-wrapper');
-      expect(script).toContain('body.zigly-listing .quick-add__submit');
-    });
-
-    it('keeps the card fixes off product pages', () => {
-      // There, .mobile-atc-main is the site's own sticky Add to Bag bar and is
-      // supposed to float. The flag is only set for listing paths.
-      const script = getInjectionForUrl(
-        'https://zigly.com/products/x',
-      ) as string;
-      expect(script).toContain('function isListing()');
-      expect(script).toContain("path.indexOf('/collections/') === 0");
-      // Nothing keys the card rules on a product path.
-      expect(script).not.toContain("indexOf('/products/') === 0");
-    });
-
-    it('flags the page whether or not the bar ever appears', () => {
-      // The card fixes are needed even if SearchTap never renders its controls.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
-      expect(script).toContain('flagListing()');
-      expect(script).toContain("var LISTING_FLAG = 'zigly-listing'");
-    });
   });
 
   describe('hot picks section', () => {
@@ -271,6 +207,91 @@ describe('getInjectionForUrl', () => {
 
     it('is not injected into checkout', () => {
       expect(getInjectionForUrl('https://zigly.com/checkouts/c/x')).toBeNull();
+    });
+
+    it('covers search results, not just collections', () => {
+      // SearchTap draws that grid too, and the reference app pins the same bar
+      // there. Bare /collections is excluded on purpose -- it is the card
+      // list, which has no products to sort.
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      expect(script).toContain("path.indexOf('/collections/') === 0");
+      expect(script).toContain("path.indexOf('/search') === 0");
+    });
+
+    it('refills a bar that SearchTap has emptied', () => {
+      // SearchTap re-renders its controls on a filter change; when it replaces
+      // the nodes we moved, the container is left holding nothing. Testing for
+      // the element alone stopped at the first success and left an empty bar.
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      expect(script).toContain('existing.children.length > 0');
+    });
+
+    it("clears SearchTap's paginating loader above the bar", () => {
+      // The loader draws at the foot of the grid, which is exactly where the
+      // pinned bar covers it -- the page then looks stuck rather than loading.
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      expect(script).toContain('padding-bottom: 96px');
+      // The CSS reaches the page through JSON.stringify, so its double quotes
+      // arrive escaped -- match the fragment, not the quoted selector.
+      expect(script).toContain('st-load');
+      // Margin only: a class-fragment match on third-party markup must not be
+      // able to break the grid if it hits something unintended.
+      const rule = script.slice(
+        script.indexOf('st-load'),
+        script.indexOf('st-load') + 200,
+      );
+      expect(rule).toContain('margin-bottom');
+      expect(rule).not.toContain('display: none');
+      expect(rule).not.toContain('position: fixed');
+    });
+
+    it('flattens the pills into the bar without rebuilding them', () => {
+      // Presentation only: still SearchTap's elements and listeners.
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      expect(script).toContain('#zigly-sortfilter-bar button');
+      expect(script).not.toContain('cloneNode');
+    });
+  });
+
+  describe('listing cards', () => {
+    it('shows the plain Add to Bag the reference shows', () => {
+      // The site's grid renders the compact variant picker ("+ Add", "+9
+      // more") where the reference has a full-width button. Same fix the
+      // transplanted dashboard sections already carry.
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      expect(script).toContain('body.zigly-listing .card-variant-wrapper');
+      expect(script).toContain('body.zigly-listing .quick-add__submit');
+    });
+
+    it('keeps the card fixes off product pages', () => {
+      // There, .mobile-atc-main is the site's own sticky Add to Bag bar and is
+      // supposed to float. The flag is only set for listing paths.
+      const script = getInjectionForUrl(
+        'https://zigly.com/products/x',
+      ) as string;
+      expect(script).toContain('function isListing()');
+      expect(script).toContain("path.indexOf('/collections/') === 0");
+      // Nothing keys the card rules on a product path.
+      expect(script).not.toContain("indexOf('/products/') === 0");
+    });
+
+    it('flags the page whether or not the bar ever appears', () => {
+      // The card fixes are needed even if SearchTap never renders its controls.
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      expect(script).toContain('flagListing()');
+      expect(script).toContain("var LISTING_FLAG = 'zigly-listing'");
     });
   });
 

@@ -268,8 +268,23 @@ html, body {
 body.zigly-has-sortfilter .fixed-icons {
   display: none !important;
 }
+/* Clearance for the pinned bar. 56px of bar plus room to breathe: at 70px the
+   foot of the document sat almost against the strip, which is where SearchTap
+   draws its paginating loader -- so the page looked stuck rather than loading.
+   scroll-padding too, so an anchored jump cannot land behind the bar either. */
 body.zigly-has-sortfilter {
-  padding-bottom: 70px !important;
+  padding-bottom: 96px !important;
+  scroll-padding-bottom: 96px;
+}
+/* And lift the loader itself clear, for the case where it is not the last
+   thing in the document. Matched by class fragment because it is SearchTap's
+   markup, not the theme's -- the same approach used for the Gorgias launcher,
+   and the reason this sets nothing but a margin: a false positive costs a gap,
+   never a broken grid. */
+body.zigly-has-sortfilter [class*="st-load"],
+body.zigly-has-sortfilter [class*="st-spinner"],
+body.zigly-has-sortfilter [class*="st-infinite"] {
+  margin-bottom: 72px !important;
 }
 /* The controls arrive as SearchTap's own pills -- rounded, bordered, inset.
    Inside a full-width bar they read as two buttons floating in a strip rather
