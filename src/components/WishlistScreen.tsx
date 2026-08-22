@@ -30,6 +30,7 @@ import {
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import {money} from '../utils/money';
 import EmptyState from './EmptyState';
+import {HeartShape} from './glyphs';
 import type {WishlistItem} from '../wishlist/wishlistItems';
 
 interface Props {
@@ -46,52 +47,6 @@ interface Props {
   /** Shown when a removal could not be confirmed, and the tile came back. */
   notice?: string | null;
 }
-
-const FilledHeart = ({size = 22}: {size?: number}) => {
-  // Same construction as the header's outline heart, left solid: two lobes on
-  // the top edge and a rotated square whose corner forms the point.
-  const lobe = size * 0.52;
-  const square = size * 0.7;
-  return (
-    <View style={{width: size, height: size}}>
-      <View
-        style={[
-          styles.lobe,
-          {
-            left: size * 0.02,
-            top: size * 0.08,
-            width: lobe,
-            height: lobe,
-            borderRadius: lobe / 2,
-          },
-        ]}
-      />
-      <View
-        style={[
-          styles.lobe,
-          {
-            right: size * 0.02,
-            top: size * 0.08,
-            width: lobe,
-            height: lobe,
-            borderRadius: lobe / 2,
-          },
-        ]}
-      />
-      <View
-        style={[
-          styles.heartSquare,
-          {
-            left: (size - square) / 2,
-            top: size * 0.22,
-            width: square,
-            height: square,
-          },
-        ]}
-      />
-    </View>
-  );
-};
 
 const Tile = ({
   item,
@@ -127,7 +82,7 @@ const Tile = ({
       accessibilityRole="button"
       accessibilityLabel={'Remove from wishlist: ' + item.title}
       style={styles.heart}>
-      <FilledHeart />
+      <HeartShape size={22} color='#1B1B1B' />
     </Pressable>
 
     <Pressable onPress={onOpen}>
@@ -261,12 +216,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   heart: {position: 'absolute', top: 6, right: 6, padding: 2},
-  lobe: {position: 'absolute', backgroundColor: '#1B1B1B'},
-  heartSquare: {
-    position: 'absolute',
-    backgroundColor: '#1B1B1B',
-    transform: [{rotate: '45deg'}],
-  },
 
   title: {
     fontFamily: FONT_FAMILY,

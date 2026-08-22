@@ -14,7 +14,8 @@
  *   cart      -> opens the site's own cart
  *
  * Icons are drawn with plain Views rather than pulling in an icon library, to
- * avoid a dependency for four glyphs.
+ * avoid a dependency for four glyphs. The wishlist heart is the one exception --
+ * it is a real path, and Zigly's own; see ./glyphs.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -34,7 +35,7 @@ import {
   TYPE_MS,
   type TypeFrame,
 } from '../search/placeholders';
-import { HeartShape } from './glyphs';
+import { HeartOutline } from './glyphs';
 
 interface Props {
   onMenuPress: () => void;
@@ -81,17 +82,10 @@ interface Props {
   searchTypeMs?: number;
 }
 
-const WishlistIcon = () => (
-  <View style={styles.wishlist}>
-    <HeartShape size={22} color="#1B1B1B" />
-    {/* Inset copy in the bar colour hollows the heart into an outline. The
-        4px difference leaves a 2px stroke, matching the bag and back icons;
-        the previous 6px gap made it noticeably heavier than the rest. */}
-    <View style={styles.wishlistInner}>
-      <HeartShape size={18} color={COLORS.white} />
-    </View>
-  </View>
-);
+// The shared outline heart -- Zigly's own path. This used to lay a smaller
+// white heart over a black one to hollow it out, which is a stroke only if the
+// two are exactly concentric; see ./glyphs.
+const WishlistIcon = () => <HeartOutline size={22} color="#1B1B1B" />;
 
 const BackIcon = () => (
   <View style={styles.back}>
@@ -348,15 +342,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  wishlist: {
-    width: 22,
-    height: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Centred on the outer heart so the stroke is even all the way round.
-  wishlistInner: { position: 'absolute', top: 2, left: 2 },
 
   hamburger: { width: 22, height: 15, justifyContent: 'space-between' },
 
