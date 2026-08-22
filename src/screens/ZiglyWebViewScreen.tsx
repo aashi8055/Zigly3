@@ -53,7 +53,15 @@ import AnnouncementBar from '../components/AnnouncementBar';
 import CartToast from '../components/CartToast';
 import CartScreen from '../components/CartScreen';
 import type {CartData} from '../components/CartScreen';
-import {READ_CART_SCRIPT, changeQtyScript} from '../webview/cartBridge';
+import {
+  READ_CART_SCRIPT,
+  addToCartScript,
+  changeQtyScript,
+} from '../webview/cartBridge';
+import WishlistScreen from '../components/WishlistScreen';
+import {WISHLIST_SCRIPT} from '../webview/wishlistBridge';
+import {parseWishlist} from '../wishlist/wishlistItems';
+import type {WishlistItem} from '../wishlist/wishlistItems';
 import {
   OPEN_MENU,
   REPORT_CART_COUNT,
@@ -91,7 +99,7 @@ interface Props {
  * a page layer's key. Resolved at the moment of injection, so a delayed pass
  * into a layer that has since been evicted is a no-op rather than a warning.
  */
-type Target = 'home' | number;
+type Target = 'home' | 'wishlist' | number;
 
 /**
  * Whether a page is a shopping page.
@@ -161,6 +169,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const [cart, setCart] = useState<CartData | null>(null);
 
   /**
+   * The wishlist. Native, but sourced from the site: a hidden WebView loads
+   * /pages/swym-wishlist so Swym can render, the bridge reads which products
+   * are on it, and Shopify prices them. See ../webview/wishlistBridge.
+   */
+  const [wishlistOpen, setWishlistOpen] = useState(false);
+  const [wishlist, setWishlist] = useState<WishlistItem[] | null>(null);
+  const wishlistRef = useRef<Web>(null);
+  const wishlistOpenRef = useRef(false);
+
+  /**
    * Search. The screen is native, but the suggestions come from Shopify's own
    * predictive search, fetched inside the dashboard WebView so the request
    * carries the site's session -- see ../webview/searchBridge.
@@ -223,6 +241,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     searchOpenRef.current = searchOpen;
   }, [searchOpen]);
 
+  useEffect(() => {
+    wishlistOpenRef.current = wishlistOpen;
+  }, [wishlistOpen]);
+
   /** Stop both the pending request and the wait for one. */
   const cancelSuggestTimers = useCallback(() => {
     if (searchTimer.current) {
@@ -256,8 +278,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * restyled them afterwards won.
    */
   const injectInto = useCallback((target: Target, script: string) => {
-    const view =
-      target === 'home' ? webRef.current : layerRefs.current.get(target);
+    let view: Web | null | undefined;
+    if (target === 'home') {
+      view = webRef.current;
+    } else if (target === 'wishlist') {
+      view = wishlistRef.current;
+    } else {
+      view = layerRefs.current.get(target);
+    }
     if (!view) {
       return;
     }
@@ -431,6 +459,19 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     [closeSearch, searchQuery, showPage],
   );
 
+  // ---------------------------------------------------------------- wishlist
+  const openWishlist = useCallback(() => {
+    // Re-read every time it opens: the shopper may have saved something on a
+    // product page since. The hidden WebView mounts with the screen.
+    setWishlist(null);
+    setShowCart(false);
+    setWishlistOpen(true);
+  }, []);
+
+  const closeWishlist = useCallback(() => {
+    setWishlistOpen(false);
+  }, []);
+
   const closeCart = useCallback(() => {
     setShowCart(false);
     // The badge may have changed while the cart was open.
@@ -448,6 +489,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     const onBack = (): boolean => {
       if (searchOpenRef.current) {
         closeSearch();
+        return true;
+      }
+      if (wishlistOpenRef.current) {
+        closeWishlist();
         return true;
       }
       if (showCartRef.current) {
@@ -471,7 +516,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       onBack,
     );
     return () => subscription.remove();
-  }, [closeCart, closeSearch, stepBack]);
+  }, [closeCart, closeSearch, closeWishlist, stepBack]);
 
   // ------------------------------------------------------------- url policy
   const handleShouldStart = useCallback(
@@ -630,7 +675,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         The search screen is the exception: it is a keyboard-first screen, and
         a scrolling promotion above the field is noise while typing.
       */}
-      <AnnouncementBar items={searchOpen ? [] : announcements} />
+      <AnnouncementBar
+        items={searchOpen || wishlistOpen ? [] : announcements}
+      />
 
       {/*
         Drawn once, above `body`, so it survives every page, the cart and the
@@ -642,26 +689,32 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // Dashboard and shopping pages carry the search band; breed and content
         // pages show only the back arrow and the logo.
         // The search screen brings its own field, so the band stands down.
-        showSearch={(headerUrl === null || onShopPage) && !showCart && !searchOpen}
+        showSearch={
+          (headerUrl === null || onShopPage) &&
+          !showCart &&
+          !searchOpen &&
+          !wishlistOpen
+        }
         // No wishlist on the dashboard -- that matches the reference too. The
         // cart screen is the other place it appears: the reference drops the
         // bag there (you are already in the bag) and shows the heart instead.
-        showWishlist={(onShopPage || showCart) && !searchOpen}
+        // And never on the wishlist itself, for the same reason.
+        showWishlist={(onShopPage || showCart) && !searchOpen && !wishlistOpen}
         // The bag rides along on every page, so the cart is always one tap
-        // away; only the cart and search screens drop it.
+        // away; only the cart and search screens drop it. On the wishlist it
+        // carries the count, exactly as the reference shows.
         showCartIcon={!showCart && !searchOpen}
         searchCollapsed={searchCollapsed}
-        showBack={headerUrl !== null || showCart || searchOpen}
-        onWishlistPress={() => {
-          // Reachable from the cart now, and the cart overlays the page layers
-          // -- so it has to stand down or it would cover what it just opened.
-          setShowCart(false);
-          showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`);
-        }}
+        showBack={
+          headerUrl !== null || showCart || searchOpen || wishlistOpen
+        }
+        onWishlistPress={openWishlist}
         onBackPress={() => {
           // Same rule as the hardware back button.
           if (searchOpen) {
             closeSearch();
+          } else if (wishlistOpen) {
+            closeWishlist();
           } else if (showCart) {
             closeCart();
           } else if (!stepBack() && canGoBackRef.current) {
@@ -884,6 +937,68 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 // there is nothing to come back to in an empty cart.
                 setShowCart(false);
                 dismissPages();
+              }}
+            />
+          </View>
+        ) : null}
+
+        {wishlistOpen ? (
+          <View style={styles.pageLayer}>
+            <WishlistScreen
+              items={wishlist}
+              onOpenItem={item => {
+                closeWishlist();
+                showPage(item.url);
+              }}
+              onAddToBag={item => {
+                if (item.variantId === null) {
+                  // More than one variant: the customer picks, not us.
+                  closeWishlist();
+                  showPage(item.url);
+                  return;
+                }
+                // Into the same cart as everything else, via the dashboard
+                // WebView. The toast and the badge follow from its reply.
+                injectInto('home', addToCartScript(item.variantId));
+              }}
+            />
+          </View>
+        ) : null}
+
+        {/*
+          The wishlist's source, parked off screen. It exists because
+          /pages/swym-wishlist ships no items -- Swym fills the page in
+          client-side, so the page has to actually run for there to be anything
+          to read. Mounted only while the screen is open, and torn down with it,
+          because the answer is stale as soon as the shopper saves something.
+        */}
+        {wishlistOpen ? (
+          <View style={[styles.pageLayer, styles.parked]} pointerEvents="none">
+            <WebView<object>
+              {...baseWebViewProps}
+              ref={wishlistRef}
+              source={{uri: `${ZIGLY_ORIGIN}/pages/swym-wishlist`}}
+              style={styles.web}
+              onShouldStartLoadWithRequest={handleShouldStart}
+              onLoadEnd={() => injectInto('wishlist', WISHLIST_SCRIPT)}
+              onMessage={({nativeEvent}) => {
+                try {
+                  const data = JSON.parse(nativeEvent.data);
+                  if (data && data.tag === 'wishlist') {
+                    const read = parseWishlist(data, ZIGLY_ORIGIN);
+                    log(
+                      'wishlist read from',
+                      read.root,
+                      '-',
+                      read.items.length,
+                      'of',
+                      data.found,
+                    );
+                    setWishlist(read.items);
+                  }
+                } catch {
+                  // The page posts for its own reasons too.
+                }
               }}
             />
           </View>

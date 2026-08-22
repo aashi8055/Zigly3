@@ -83,3 +83,47 @@ export const changeQtyScript = (key: string, quantity: number): string => `
 })();
 true;
 `;
+
+/**
+ * Add one variant to the bag, then report the new count.
+ *
+ * /cart/add.js is the endpoint the theme's own Add to Bag button posts to, so
+ * the line lands in the same cart with the same discounts applied. Only ever
+ * called with a variant id read from `/products/{handle}.js` — never a guess,
+ * and never for a product with more than one variant, where choosing on the
+ * customer's behalf could add the wrong size.
+ */
+export const addToCartScript = (
+  variantId: number,
+  quantity: number = 1,
+): string => `
+(function () {
+  function send(payload) {
+    try {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+      }
+    } catch (e) {}
+  }
+
+  fetch('/cart/add.js', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+    body: JSON.stringify({id: ${JSON.stringify(variantId)}, quantity: ${quantity}})
+  })
+    .then(function (r) {
+      if (!r.ok) { send({tag: 'cart-add-failed'}); return null; }
+      // Ask Shopify for the count rather than incrementing ours: the line may
+      // have merged with one already in the bag.
+      return fetch('/cart.js', {credentials: 'same-origin'})
+        .then(function (c) { return c.ok ? c.json() : null; })
+        .then(function (cart) {
+          send({tag: 'cart-added'});
+          if (cart) { send({tag: 'cart-count', n: cart.item_count || 0}); }
+        });
+    })
+    .catch(function () { send({tag: 'cart-add-failed'}); });
+})();
+true;
+`;

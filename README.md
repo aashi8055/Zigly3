@@ -132,11 +132,12 @@ src/
 │   └── logger.ts               __DEV__-gated, never throws
 ├── navigation/pageStack.ts     the inner-page stack — see below
 ├── search/suggestions.ts       parsing the suggest payload — see below
+├── wishlist/wishlistItems.ts   parsing the wishlist payload — see below
 ├── utils/money.ts              one formatter, one unit (integer paise)
 ├── webview/webViewConfig.ts    WebView props
 ├── components/                 NativeHeader, AnnouncementBar, CartScreen,
-│                               CartToast, SearchScreen, EmptyState,
-│                               LoadingBar, NetworkErrorScreen
+│                               CartToast, SearchScreen, WishlistScreen,
+│                               EmptyState, LoadingBar, NetworkErrorScreen
 └── screens/                    SplashScreen, ZiglyWebViewScreen
 ```
 
@@ -245,6 +246,49 @@ Covered by `__tests__/cart.test.tsx`, which renders the screen rather than
 grepping it — including that a not-yet-loaded cart waits instead of claiming to
 be empty, and that removing a line asks Shopify for quantity zero.
 
+## The wishlist
+
+Native: a two-column grid of saved products, an empty screen, and a wait. The
+half-filled screen needs no special case — a grid two tiles long *is* that
+screen, and the same grid scrolls once it outgrows the viewport.
+
+**Sourcing it is the hard part, and worth knowing about.** Verified on
+2026-08-22: `/pages/swym-wishlist` ships no items. The served HTML carries the
+theme's heading and "You haven't saved any products yet."; Swym fills the page in
+client-side from its own backend, keyed to a shopper id in page storage. So
+
+- there is **no server-side endpoint** this app can ask what is saved, and
+- Swym's own API would mean building on a key lifted out of the storefront —
+  the same objection that kept search off SearchTap.
+
+So the page is loaded in a WebView parked off screen, purely so Swym runs, and
+the bridge reads the one thing that holds whatever Swym's markup turns out to
+be: **the product links inside the wishlist container**, in order. No class name
+of Swym's is required, no price is scraped, and no rendered money string is
+parsed. Every figure then comes from `/products/{handle}.js` — integer paise,
+compare-at price, image, variants — which is the difference between reading the
+site and guessing at it: the page says *which* products, Shopify says everything
+*about* them.
+
+Two consequences worth stating plainly:
+
+- **The container is preferred, not assumed.** It looks for a Swym element,
+  falls back to Dawn's `main` / `#MainContent`, and never reads the whole
+  document — the header and footer link to products too, and those are not
+  saved. Which root it used is reported in the reply and logged, so one device
+  run confirms it.
+- **Removing from the wishlist is not implemented.** That is a write to Swym,
+  and this app has no sanctioned way to make one. The heart is filled, because
+  everything on the screen is saved by definition, and tapping it opens the
+  product — where Zigly's own wishlist control lives.
+
+Add to Bag posts to `/cart/add.js`, the same endpoint the theme's own button
+uses, so the line lands in the one shared cart. It is only offered for
+single-variant products; with several variants the tile opens the product page
+instead, because adding the wrong size is worse than one extra tap.
+
+Covered by `__tests__/wishlist.test.tsx`.
+
 ## Search
 
 The header's search bar is a button, not a field. Tapping it opens a native
@@ -348,3 +392,5 @@ there -- so device testing is the only trustworthy signal.
 | Geolocation prompt for the site's pincode widget | 6 |
 | Cookie flush on background (session persistence) | validate in gate first |
 | Native facets and sort on search results | needs Zigly's SearchTap account |
+| Removing an item from the wishlist | needs Zigly's Swym account; the heart opens the product, where their own control is |
+| Wishlist count badge on the header heart | that total lives in Swym, not Shopify |

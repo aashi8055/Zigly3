@@ -31,7 +31,7 @@ describe('dashboard is never navigated away from', () => {
 });
 
 describe('header state follows which view is showing', () => {
-  it('routes search and wishlist to the page view, not the dashboard', () => {
+  it('routes search to the page view, not the dashboard', () => {
     // Injecting a navigation into the dashboard left it on a non-home URL with
     // the hamburger still showing and no way back.
     const src = require('fs').readFileSync(
@@ -39,8 +39,24 @@ describe('header state follows which view is showing', () => {
       'utf8',
     );
     expect(src).toContain('showPage(`${ZIGLY_ORIGIN}/search?q=');
-    expect(src).toContain('showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)');
     expect(src).not.toContain('injectJavaScript(searchScript');
+  });
+
+  it('opens the wishlist as its own screen, over a hidden source page', () => {
+    // It used to be the site's page in a layer. It is native now, and
+    // /pages/swym-wishlist is loaded off screen purely so Swym renders and the
+    // bridge has something to read -- see webview/wishlistBridge.
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    expect(src).toContain('onWishlistPress={openWishlist}');
+    expect(src).toContain('<WishlistScreen');
+    expect(src).toContain('styles.parked');
+    expect(src).toContain('`${ZIGLY_ORIGIN}/pages/swym-wishlist`');
+    expect(src).not.toContain(
+      'showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)',
+    );
   });
 
   it('gives each WebView its own navigation handler', () => {
@@ -60,9 +76,11 @@ describe('header state follows which view is showing', () => {
       'src/screens/ZiglyWebViewScreen.tsx',
       'utf8',
     );
-    expect(src).toContain(
-      'showBack={headerUrl !== null || showCart || searchOpen}',
-    );
+    // Every screen that overlays a page owes the customer a way back.
+    const back = src.slice(src.indexOf('showBack={'), src.indexOf('showBack={') + 120);
+    for (const state of ['headerUrl !== null', 'showCart', 'searchOpen', 'wishlistOpen']) {
+      expect(back).toContain(state);
+    }
   });
 
   it('draws the header outside everything that can cover it', () => {
