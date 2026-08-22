@@ -11,11 +11,11 @@
  * this screen is computed locally except the discount percentage.
  *
  * The heart is filled because everything here is, by definition, saved. Tapping
- * it removes the item, and the tile goes at once: the write itself belongs to
- * Swym and is performed by pressing the site's own control off screen, which
- * takes a moment, so waiting for it would make the tap feel broken. If that
- * write turns out not to have happened, the tile comes back and the screen says
- * so — see the notice strip below.
+ * it removes the item, and the tile goes at once: the write is a press of the
+ * site's own control inside the dashboard WebView, which is quick but not
+ * instant, so waiting for it would make the tap feel broken. If the write turns
+ * out not to have happened, the tile comes back and the screen says so — see the
+ * notice strip below.
  */
 import React from 'react';
 import {
@@ -126,7 +126,8 @@ const WishlistScreen = ({
   notice,
 }: Props) => {
   if (items === null) {
-    // Swym renders client-side, so there is a real wait here. Showing the empty
+    // Not yet read. Short now that the read is a storage lookup plus one
+    // request per saved product, but not nothing -- and showing the empty
     // screen during it would tell the customer their saved items were gone.
     return (
       <View style={styles.centre}>

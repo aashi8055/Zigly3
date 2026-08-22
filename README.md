@@ -269,46 +269,72 @@ Native: a two-column grid of saved products, an empty screen, and a wait. The
 half-filled screen needs no special case — a grid two tiles long *is* that
 screen, and the same grid scrolls once it outgrows the viewport.
 
-**Sourcing it is the hard part, and worth knowing about.** Verified on
-2026-08-22: `/pages/swym-wishlist` ships no items. The served HTML carries the
-theme's heading and "You haven't saved any products yet."; Swym fills the page in
-client-side from its own backend, keyed to a shopper id in page storage. So
+**Swym is gone from this store, and that is the whole story of this screen.**
+Verified on 2026-08-22 across the dashboard, a product page and
+`/pages/swym-wishlist`: there is no Swym snippet anywhere, and none of the four
+app embeds the pages load is Swym's — they are Judge.me, Selleasy, PageFly and
+SimplyOTP. The theme still carries Swym's markup (the `swym-add-to-wishlist`
+buttons, `#swym-wishlist-render-container`, a `window.SwymCallbacks` array
+nothing ever drains), which is what made it look like Swym was still in play.
 
-- there is **no server-side endpoint** this app can ask what is saved, and
-- Swym's own API would mean building on a key lifted out of the storefront —
-  the same objection that kept search off SearchTap.
+What implements the wishlist is Zigly's own `assets/wishlist.js`, loaded on
+every page. It is short and unambiguous:
 
-So the page is loaded in a WebView parked off screen, purely so Swym runs, and
-the bridge reads the one thing that holds whatever Swym's markup turns out to
-be: **the product links inside the wishlist container**, in order. No class name
-of Swym's is required, no price is scraped, and no rendered money string is
-parsed. Every figure then comes from `/products/{handle}.js` — integer paise,
-compare-at price, image, variants — which is the difference between reading the
-site and guessing at it: the page says *which* products, Shopify says everything
-*about* them.
+```
+STORAGE_KEY     = 'zigly_wishlist_handles'   // comma-separated, localStorage
+BUTTON_SELECTOR = '.swym-button.swym-add-to-wishlist[data-product-handle]'
+document.addEventListener('click', handleClick)   // one delegated listener
+window.ziglyWishlist = { getWishlist, syncAllButtons }
+```
 
-Two consequences worth stating plainly:
+and, for a signed-in customer, every toggle is mirrored to Zigly's own wishlist
+API, with the local list merged into the server's on first load after login.
 
-- **The container is preferred, not assumed.** It looks for a Swym element,
-  falls back to Dawn's `main` / `#MainContent`, and never reads the whole
-  document — the header and footer link to products too, and those are not
-  saved. Which root it used is reported in the reply and logged, so one device
-  run confirms it.
-- **Removing works by pressing Zigly's own control.** There is no endpoint to
-  call — the write belongs to Swym and this app holds no Swym credential — but
-  the page has the remove control Swym renders next to each saved item, so the
-  bridge finds that control and clicks it. The real write, with the site's own
-  shopper id. The control is located *outwards from the link to that product*,
-  which is what stops it pressing a neighbour's button, and by attribute
-  fragment rather than one release of Swym's class names.
+So the wishlist is a list of product handles in the page's own localStorage,
+with a public reader and a delegated click handler. That makes this screen much
+simpler than it was:
 
-  The tile disappears the moment the heart is tapped, because the click happens
-  in an off-screen page and waiting for it would make the tap feel broken. Then
-  the removal is **verified**: the bridge re-reads the product links and reports
-  whether the handle actually left. If it did not, the tile returns to the
-  position it held and the screen says why. A removal that silently failed would
-  leave the app showing a wishlist that is not the customer's, which is worse
-  than saying so.
+- **The read is instant.** There used to be a WebView parked off screen on
+  `/pages/swym-wishlist` — an ~850 KB page — mounted on every open purely so
+  that Swym would render something, then polled for up to twelve seconds. It was
+  waiting for markup that was never coming. The read is now a question put to the
+  dashboard WebView, which is already loaded: one storage read, then one
+  `/products/{handle}.js` per saved product. No page load and no polling.
+- **The read is exact.** Scraping links out of a container meant guessing which
+  were saved products and which were the theme's own; the reply even carried a
+  `root` field so a device run could confirm which container it had guessed at.
+  There is nothing left to guess.
+
+Every figure still comes from `/products/{handle}.js` — integer paise,
+compare-at price, image, variants. That is unchanged and is the point: their
+storage says *which* products, Shopify says everything *about* them. No price is
+scraped and no rendered money string is parsed.
+
+**Removing presses their control rather than writing their storage.** Their one
+delegated listener does more than toggle the list: it re-syncs every button on
+the page, updates the header counters, publishes the theme's own
+`wishlistUpdate` event, and posts the change to Zigly's API for a signed-in
+customer. Writing the storage key directly would do the first of those and skip
+the rest, leaving the customer's wishlist right on this device and wrong
+everywhere else. So the bridge dispatches a click at a button carrying that
+handle — a real one when the page is showing it, otherwise one created with the
+single attribute their selector requires, appended, clicked and removed. It has
+to be in the document for the event to reach `document`.
+
+The tile disappears the moment the heart is tapped, because the press is quick
+but not instant and waiting for it would make the tap feel broken. Then the
+removal is **verified**: the list is re-read and the reply says whether the
+handle actually left. If it did not, the tile returns to the position it held and
+the screen says why. A removal that silently failed would leave the app showing a
+wishlist that is not the customer's, which is worse than saying so.
+
+**One thing the site gets wrong and the app fixes.** Their `wishlist.js` marks a
+saved button with `.is-wishlisted` and `aria-pressed="true"`, and the theme ships
+no rule for either — not in the section styles, not in `base.css`, not in
+`product-card.css`. So a saved product's heart looked exactly like an unsaved
+one, and the only way to find out whether a tap had registered was to open this
+screen. The injected stylesheet supplies the missing rule and nothing else: their
+state, their class, their path, and a fill in their own accent red.
 
 Add to Bag posts to `/cart/add.js`, the same endpoint the theme's own button
 uses, so the line lands in the one shared cart. It is only offered for
@@ -650,6 +676,6 @@ there -- so device testing is the only trustworthy signal.
 | Geolocation prompt for the site's pincode widget | 6 |
 | Cookie flush on background (session persistence) | validate in gate first |
 | Native facets and sort on search results | needs Zigly's SearchTap account |
-| Wishlist count badge on the header heart | that total lives in Swym, not Shopify |
+| Wishlist count badge on the header heart | no longer blocked. The reason recorded here was that the total lived in Swym; it lives in the page's own localStorage, and the bridge already reads it. Not built yet, but it is now a small piece of work rather than an impossible one |
 | Email and phone on the account profile | the theme does not render them and classic accounts expose no customer JSON; needs Zigly's own API |
 | Edit Profile, Change Password, Delete Account | no storefront endpoint for any of the three — see *The account section* |

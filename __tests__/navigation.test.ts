@@ -42,21 +42,25 @@ describe('header state follows which view is showing', () => {
     expect(src).not.toContain('injectJavaScript(searchScript');
   });
 
-  it('opens the wishlist as its own screen, over a hidden source page', () => {
-    // It used to be the site's page in a layer. It is native now, and
-    // /pages/swym-wishlist is loaded off screen purely so Swym renders and the
-    // bridge has something to read -- see webview/wishlistBridge.
+  it('opens the wishlist as its own screen, and loads no page for it', () => {
+    // It used to be the site's page in a layer, then a native screen over an
+    // off-screen /pages/swym-wishlist loaded purely so Swym would render
+    // something to scrape. Swym is not on this store: the saved handles are in
+    // the page's own localStorage, which the dashboard already has, so no page
+    // is loaded for the wishlist at all -- see webview/wishlistBridge.
     const src = require('fs').readFileSync(
       'src/screens/ZiglyWebViewScreen.tsx',
       'utf8',
     );
     expect(src).toContain('onWishlistPress={openWishlist}');
     expect(src).toContain('<WishlistScreen');
-    expect(src).toContain('styles.parked');
-    expect(src).toContain('`${ZIGLY_ORIGIN}/pages/swym-wishlist`');
-    expect(src).not.toContain(
-      'showPage(`${ZIGLY_ORIGIN}/pages/swym-wishlist`)',
-    );
+    // The read is asked of the dashboard, on open.
+    expect(src).toContain("injectInto('home', WISHLIST_SCRIPT)");
+    // And nothing navigates to, or mounts, the wishlist page. Matched on the
+    // code form rather than the bare path, which still appears in the comments
+    // that explain why the off-screen WebView is gone.
+    expect(src).not.toContain('ZIGLY_ORIGIN}/pages/swym-wishlist');
+    expect(src).not.toContain('wishlistRef');
   });
 
   it('gives each WebView its own navigation handler', () => {

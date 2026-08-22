@@ -1,16 +1,16 @@
 /**
  * The wishlist.
  *
- * Verified on 2026-08-22: /pages/swym-wishlist ships no items — the served HTML
- * carries the theme's heading and "You haven't saved any products yet.", and
- * Swym fills the page in client-side. So there is no endpoint that lists what is
- * saved, and the bridge reads the one thing that holds whatever Swym's markup
- * turns out to be: the product links inside the wishlist container. Every
- * figure then comes from /products/{handle}.js.
+ * Verified on 2026-08-22: Swym is not on this store. No snippet, no app embed,
+ * and none of the four extensions the pages load is theirs. The theme still
+ * carries Swym's markup, but what implements the wishlist is Zigly's own
+ * assets/wishlist.js -- the saved handles live in localStorage under
+ * 'zigly_wishlist_handles', with a public reader (window.ziglyWishlist) and one
+ * delegated click listener that does the toggling.
  *
- * These tests pin both halves of that: the bridge must not scrape prices or
- * wander outside the container, and the screen must not render a product it
- * only half knows.
+ * So these tests pin three things: the bridge reads their list rather than
+ * scraping a page, it presses their control rather than writing their storage,
+ * and the screen never renders a product it only half knows.
  */
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
@@ -19,7 +19,6 @@ import WishlistScreen from '../src/components/WishlistScreen';
 import {
   WISHLIST_LIMIT,
   WISHLIST_SCRIPT,
-  WISHLIST_TRIES,
   removeFromWishlistScript,
 } from '../src/webview/wishlistBridge';
 import {httpsUrl, parseWishlist} from '../src/wishlist/wishlistItems';
@@ -173,8 +172,7 @@ describe('reading the wishlist reply', () => {
 });
 
 describe('the bridge that reads the page', () => {
-  it('reads product links, and does not scrape prices or titles', () => {
-    expect(WISHLIST_SCRIPT).toContain('a[href*="/products/"]');
+  it('reads handles, and does not scrape prices or titles', () => {
     expect(WISHLIST_SCRIPT).toContain('/products/');
     // No money parsing anywhere: prices come from the documented endpoint.
     expect(WISHLIST_SCRIPT).not.toContain('₹');
@@ -188,23 +186,38 @@ describe('the bridge that reads the page', () => {
     expect(WISHLIST_SCRIPT).toContain('compare_at_price');
   });
 
-  it('never reads the whole document', () => {
-    // The header and footer link to products too, and those are not saved.
-    expect(WISHLIST_SCRIPT).toContain('main, #MainContent');
-    expect(WISHLIST_SCRIPT).toContain('swym');
-    expect(WISHLIST_SCRIPT).not.toContain('document.querySelectorAll(\'a[href');
+  it("asks Zigly's own reader for the list, and their key as a fallback", () => {
+    // window.ziglyWishlist.getWishlist() is the documented surface of their
+    // assets/wishlist.js. The raw key is the same string, only available
+    // earlier -- so the fallback cannot disagree with them.
+    expect(WISHLIST_SCRIPT).toContain('window.ziglyWishlist.getWishlist');
+    expect(WISHLIST_SCRIPT).toContain('zigly_wishlist_handles');
   });
 
-  it('waits for Swym before concluding the wishlist is empty', () => {
-    // Client-side rendering means an early look finds nothing; concluding
-    // "empty" then would tell the customer their saved items were gone.
-    expect(WISHLIST_TRIES).toBeGreaterThanOrEqual(10);
-    expect(WISHLIST_SCRIPT).toContain('if (!done) { send(');
+  it('scrapes no page and polls for nothing', () => {
+    // It used to mount an ~850 KB page off screen and poll the DOM for up to
+    // twelve seconds waiting for Swym to render. There is nothing to wait for:
+    // the list is in storage the dashboard already has.
+    expect(WISHLIST_SCRIPT).not.toContain('setInterval');
+    expect(WISHLIST_SCRIPT).not.toContain('main, #MainContent');
+    expect(WISHLIST_SCRIPT).not.toContain('a[href*="/products/"]');
+  });
+
+  it('never writes the list while reading it', () => {
+    expect(WISHLIST_SCRIPT).not.toContain('localStorage.setItem');
+    expect(WISHLIST_SCRIPT).not.toContain('.click()');
+  });
+
+  it('answers even when the list is empty, so the screen can settle', () => {
+    // Saying "empty" is what lets the screen show the empty state instead of a
+    // spinner that never stops.
+    expect(WISHLIST_SCRIPT).toContain('if (!capped.length)');
+    expect(WISHLIST_SCRIPT).toContain("send({items: [], root: 'storage'");
   });
 
   it('bounds how many products it will fetch', () => {
     expect(WISHLIST_LIMIT).toBeGreaterThan(0);
-    expect(WISHLIST_SCRIPT).toContain('handles.slice(0, LIMIT)');
+    expect(WISHLIST_SCRIPT).toContain('saved.slice(0, LIMIT)');
   });
 
   it('parses as valid JavaScript', () => {
@@ -217,47 +230,54 @@ describe('the bridge that reads the page', () => {
 describe('removing from the wishlist', () => {
   const script = removeFromWishlistScript('zl-bobo-bear-squeaker-dog-toy');
 
-  it("presses the site's own control instead of calling an API", () => {
-    // The write belongs to Swym and this app has no Swym credential; the page
-    // has the control, so the control is what gets pressed.
+  it("presses the site's own control instead of writing their storage", () => {
+    // Their one delegated listener does the toggle, the button sync, the header
+    // counters, the theme's wishlistUpdate event and -- for a signed-in
+    // customer -- the post to Zigly's wishlist API. A direct write to the key
+    // would do the first and skip the rest, leaving the customer's wishlist
+    // right on this device and wrong everywhere else.
     expect(script).toContain('.click()');
-    expect(script).not.toContain('swymcdn');
+    expect(script).not.toContain('localStorage.setItem');
     expect(script).not.toContain('api-key');
-    expect(script).not.toContain('regid');
   });
 
-  it('finds the control from the tile that links to that product', () => {
-    // Searching outwards from the link is what stops it pressing a
-    // neighbour's remove button.
+  it('presses a control carrying exactly that handle', () => {
+    // Matched on the attribute their selector keys off, so it can never be a
+    // neighbour's button.
     expect(script).toContain('zl-bobo-bear-squeaker-dog-toy');
-    expect(script).toContain('node.parentElement');
-    expect(script).toContain('depth < 6');
+    expect(script).toContain('data-product-handle');
+    expect(script).toContain('.swym-button.swym-add-to-wishlist');
+  });
+
+  it('supplies a control when the page is not showing one', () => {
+    // The dashboard may hold no card for a saved product. Their handler reads
+    // event.target.closest(...) from document, so the element has to be in the
+    // document for the click to reach it -- appended, clicked, removed.
+    expect(script).toContain('document.createElement');
+    expect(script).toContain('document.body.appendChild');
+    expect(script).toContain('removeChild');
+  });
+
+  it('does nothing when the product is already gone', () => {
+    expect(script).toContain("send(true, 'already removed')");
   });
 
   it('verifies the removal rather than trusting the click', () => {
     // A removal that silently failed would leave the app showing a wishlist
-    // that is not the customer's.
-    expect(script).toContain('stillListed');
-    expect(script).toContain("send(false, 'still-listed')");
-    expect(script).toContain("send(false, 'no-control')");
-    expect(script).toContain('setInterval');
+    // that is not the customer's. So the list is re-read after the press and
+    // the reply says what it found.
+    expect(script).toContain("send(false, 'still saved after pressing the control')");
+    expect(script).toContain("send(false, 'storage unreadable')");
+    expect(script).toContain('tag: \'wishlist-removed\'');
   });
 
-  it('treats an item already gone as success', () => {
-    // It may have been removed on the product page; the app is right to have
-    // dropped the tile either way.
-    expect(script).toContain("send(true, 'already-absent')");
-  });
-
-  it('stubs confirm only for the click, and touches nothing else', () => {
-    // The page is parked off screen, so a native dialog would appear over the
-    // app with no context -- and the customer already asked for the removal.
-    expect(script).toContain('var realConfirm = window.confirm');
-    expect(script).toContain('window.confirm = realConfirm');
-    // The rules that matter: never the page's network, storage or cookies.
+  it('patches nothing of the page’s', () => {
+    // Reading their storage to verify is fine. Writing it, or standing in for
+    // their network or their cookies, is not.
     expect(script).not.toContain('window.fetch =');
-    expect(script).not.toContain('localStorage');
+    expect(script).not.toContain('localStorage.setItem');
     expect(script).not.toContain('document.cookie');
+    expect(script).not.toContain('window.confirm =');
   });
 
   it('parses as valid JavaScript', () => {

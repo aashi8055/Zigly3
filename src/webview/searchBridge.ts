@@ -28,7 +28,7 @@
 export const SUGGEST_LIMIT = 6;
 
 /** Below this, suggestions are noise; the screen shows recents instead. */
-export const MIN_QUERY_LENGTH = 2;
+export const MIN_QUERY_LENGTH = 1;
 
 /** Long enough that a fast typist makes one request, not eight. */
 export const SUGGEST_DEBOUNCE_MS = 300;

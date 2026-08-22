@@ -1,42 +1,71 @@
 /**
- * Read the wishlist out of the page, then price it from Shopify.
+ * Read the wishlist from where Zigly actually keeps it, then price it from
+ * Shopify.
  *
- * The wishlist is the hardest screen in this app to source, and it is worth
- * being precise about why. Verified on 2026-08-22: /pages/swym-wishlist ships
- * no items in its HTML — the served page carries only the theme's heading and
- * "You haven't saved any products yet." Swym fills it in client-side from its
- * own backend, keyed to a shopper id in the page's storage. So there is no
- * server-side endpoint this app can ask "what is on the wishlist", and Swym's
- * own API would mean building on a key lifted out of Zigly's storefront — the
- * same objection that kept search off SearchTap.
+ * THIS FILE USED TO BE ABOUT SWYM, AND SWYM IS GONE. It is worth writing down
+ * what changed, because the old approach was slow and empty for a reason that
+ * no longer exists.
  *
- * What is certain, whatever Swym's markup turns out to be, is that a wishlist
- * links to products. So this reads exactly that and nothing else: the product
- * links inside the wishlist container, in the order they appear. No class name
- * of Swym's is required, no price is scraped, and no rendered money string is
- * parsed.
+ * Verified on 2026-08-22, on the dashboard, a product page and
+ * /pages/swym-wishlist alike: there is no Swym snippet on this store, and none
+ * of the four app embeds the pages load is Swym's (they are Judge.me,
+ * Selleasy, PageFly and SimplyOTP). The theme still carries Swym's markup --
+ * the `swym-add-to-wishlist` buttons, `#swym-wishlist-render-container`, a
+ * `window.SwymCallbacks` array nothing ever drains -- but nothing implements it.
  *
- * Every figure then comes from `/products/{handle}.js`, which DATA-SOURCES.md
- * verifies and which returns integer paise, the compare-at price, the image and
- * the variant list. That is the difference between reading the site and guessing
- * at it: the page says *which* products, Shopify says everything *about* them.
+ * What implements it now is Zigly's own `assets/wishlist.js`, loaded on every
+ * page. It is short and it is unambiguous:
  *
- * The reply reports which container it read from, so one run on a device
- * confirms the root rather than leaving it assumed.
+ *   STORAGE_KEY     = 'zigly_wishlist_handles'   // comma-separated, localStorage
+ *   BUTTON_SELECTOR = '.swym-button.swym-add-to-wishlist[data-product-handle]'
+ *   document.addEventListener('click', handleClick)   // delegated, one listener
+ *   window.ziglyWishlist = { getWishlist, syncAllButtons }
+ *
+ * and, when a customer is signed in, each toggle is mirrored to Zigly's own API
+ * and the local list is merged into the server's on first load after login.
+ *
+ * So the wishlist is a list of product handles in the page's own localStorage,
+ * with a public accessor for reading it and a delegated click handler for
+ * changing it. That changes this file in three ways:
+ *
+ *   1. THE READ IS INSTANT. The old bridge mounted an off-screen WebView on
+ *      /pages/swym-wishlist -- an ~850 KB page -- purely so Swym would run, then
+ *      polled the DOM for up to twelve seconds waiting for markup that was never
+ *      coming, and finally scraped product links out of whatever it found. Now
+ *      it asks for the list and gets it in the same tick, from the dashboard
+ *      WebView that is already loaded. Same origin, same storage, no page load,
+ *      no polling.
+ *
+ *   2. THE READ IS EXACT. Scraping links out of a container meant guessing which
+ *      links were saved products and which were the theme's own; the reply even
+ *      carried a `root` field so a device run could confirm which container it
+ *      had guessed at. There is nothing to guess now.
+ *
+ *   3. THE WRITE IS THEIRS, PRESSED RATHER THAN REIMPLEMENTED. See the removal
+ *      script below.
+ *
+ * Every figure still comes from `/products/{handle}.js` -- integer paise, the
+ * compare-at price, the image, the variant list. That is unchanged and is the
+ * whole point: their storage says *which* products, Shopify says everything
+ * *about* them. No price is scraped and no rendered money string is parsed.
  */
 
 /** Most wishlists are short; this is a bound, not an expectation. */
 export const WISHLIST_LIMIT = 40;
 
-/** Swym renders after first paint, so the page is polled rather than trusted. */
-export const WISHLIST_POLL_MS = 500;
-export const WISHLIST_TRIES = 24;
-
+/**
+ * Read the saved handles and price them.
+ *
+ * Deliberately NOT idempotent, and deliberately not guarded against running
+ * twice: it is injected every time the screen opens, because the shopper may
+ * have saved something from a product page since the last read.
+ *
+ * Runs in the dashboard WebView. localStorage is per-origin, so the list it sees
+ * is the same one the site's own pages see -- there is no second copy and
+ * nothing to keep in step.
+ */
 export const WISHLIST_SCRIPT = `
 (function () {
-  if (window.__ziglyWishlist) { return; }
-  window.__ziglyWishlist = true;
-
   var LIMIT = ${WISHLIST_LIMIT};
   var sent = false;
 
@@ -52,41 +81,59 @@ export const WISHLIST_SCRIPT = `
   }
 
   /**
-   * Where to look. Swym's own container first, then the theme's main content —
-   * never the whole document, because the header and footer link to products
-   * too and those are not on anyone's wishlist. \`main\` / #MainContent is Dawn's
-   * documented wrapper, which the rest of this app already relies on.
+   * The saved handles, in the order Zigly stores them.
+   *
+   * Their own accessor first: window.ziglyWishlist.getWishlist() is the
+   * documented surface of assets/wishlist.js and it already trims and drops
+   * blanks. Reading the key directly is the fallback for the case where their
+   * script has not run yet -- the value is the same string either way, so the
+   * fallback cannot disagree with them, only be earlier.
    */
-  function root() {
-    var swym = document.querySelector(
-      '[class*="swym-wishlist"], [id*="swym-wishlist"], [class*="swym"]'
-    );
-    if (swym) { return {node: swym, name: 'swym'}; }
-    var main = document.querySelector('main, #MainContent');
-    if (main) { return {node: main, name: 'main'}; }
-    return {node: null, name: 'none'};
+  function handles() {
+    try {
+      if (window.ziglyWishlist && window.ziglyWishlist.getWishlist) {
+        var theirs = window.ziglyWishlist.getWishlist();
+        if (Object.prototype.toString.call(theirs) === '[object Array]') {
+          return theirs;
+        }
+      }
+    } catch (e) {}
+
+    try {
+      var raw = window.localStorage.getItem('zigly_wishlist_handles') || '';
+      var parts = raw.split(',');
+      var out = [];
+      for (var i = 0; i < parts.length; i++) {
+        var trimmed = trim(parts[i]);
+        if (trimmed) { out.push(trimmed); }
+      }
+      return out;
+    } catch (e) {
+      // A WebView with storage disabled is not an empty wishlist, but it is
+      // indistinguishable from one from here, and saying "empty" is the only
+      // answer that lets the screen finish.
+      return [];
+    }
   }
 
-  /** Product handles, in the order the page lists them, deduplicated. */
-  function handlesIn(node) {
-    var out = [];
-    var seen = {};
-    var links = node.querySelectorAll('a[href*="/products/"]');
-    for (var i = 0; i < links.length; i++) {
-      var href = links[i].getAttribute('href') || '';
-      var match = /\\/products\\/([^\\/?#]+)/.exec(href);
-      if (!match) { continue; }
-      var handle = match[1];
-      if (seen[handle]) { continue; }
-      seen[handle] = true;
-      out.push(handle);
-    }
-    return out;
+  /** Trim without a regex: escapes inside this template literal get eaten. */
+  function trim(str) {
+    var a = 0;
+    var b = str.length;
+    function ws(c) { return c === 32 || c === 9 || c === 10 || c === 13; }
+    while (a < b && ws(str.charCodeAt(a))) { a++; }
+    while (b > a && ws(str.charCodeAt(b - 1))) { b--; }
+    return str.slice(a, b);
   }
 
   /** One documented request per product. Order is preserved by index. */
-  function price(handles, rootName) {
-    var capped = handles.slice(0, LIMIT);
+  function price(saved) {
+    var capped = saved.slice(0, LIMIT);
+    if (!capped.length) {
+      send({items: [], root: 'storage', found: saved.length});
+      return;
+    }
+
     var items = new Array(capped.length);
     var pending = capped.length;
 
@@ -97,7 +144,7 @@ export const WISHLIST_SCRIPT = `
       for (var i = 0; i < items.length; i++) {
         if (items[i]) { clean.push(items[i]); }
       }
-      send({items: clean, root: rootName, found: handles.length});
+      send({items: clean, root: 'storage', found: saved.length});
     }
 
     capped.forEach(function (handle, index) {
@@ -133,59 +180,45 @@ export const WISHLIST_SCRIPT = `
     });
   }
 
-  var tries = 0;
-  function look() {
-    var found = root();
-    if (!found.node) { return false; }
-    var handles = handlesIn(found.node);
-    if (handles.length) {
-      price(handles, found.name);
-      return true;
-    }
-    return false;
+  try {
+    price(handles());
+  } catch (e) {
+    send({items: [], root: 'error', found: 0});
   }
-
-  var timer = setInterval(function () {
-    tries++;
-    var done = false;
-    try { done = look(); } catch (e) { done = false; }
-    if (done || tries >= ${WISHLIST_TRIES}) {
-      clearInterval(timer);
-      // Nothing after the whole window: the wishlist really is empty. Saying so
-      // is what lets the app show the empty screen instead of a spinner.
-      if (!done) { send({items: [], root: root().name, found: 0}); }
-    }
-  }, ${WISHLIST_POLL_MS});
-
-  try { if (look()) { clearInterval(timer); } } catch (e) {}
 })();
 true;
 `;
 
 /**
- * Remove one product from the wishlist, by driving the site's own control.
+ * Un-save one product, by pressing Zigly's own control.
  *
- * There is no endpoint to call: the write belongs to Swym, and this app has no
- * Swym credential. What the page does have is the remove control Swym renders
- * next to each saved item — so this finds that control and clicks it, which
- * performs the real write with the site's own session and its own shopper id.
- * The same principle as the sort and filter bar: relocate or press Zigly's
- * controls, never reimplement what is behind them.
+ * Their `assets/wishlist.js` binds ONE click listener, on `document`, and looks
+ * for `.swym-button.swym-add-to-wishlist[data-product-handle]` in the event's
+ * ancestry. Everything else follows from that one handler: it toggles the
+ * handle in localStorage, re-syncs every button on the page, updates the header
+ * counters, publishes the theme's own `wishlistUpdate` event, and -- for a
+ * signed-in customer -- posts the change to Zigly's wishlist API.
  *
- * Two things keep this honest rather than hopeful:
+ * So the write is done by dispatching a click at a button carrying this handle.
+ * Not by writing their storage key: a direct write would toggle the list and
+ * skip the counters, the event and, for anyone signed in, the server. The
+ * customer's wishlist would then be right on this device and wrong everywhere
+ * else, which is worse than not removing it at all.
  *
- *   - the control is found structurally, from the tile that links to this
- *     product, and by fragment on the attributes a remove control carries.
- *     Nothing is hardcoded to one release of Swym's markup.
- *   - the result is *verified*. After the click it re-reads the product links
- *     and reports whether the handle actually left the list. A removal that
- *     silently failed would leave the app showing a wishlist that is not the
- *     customer's, which is worse than saying so.
+ * A real button is used when the page has one -- the dashboard is full of
+ * product cards. When it does not, a button is created with the one attribute
+ * their selector requires, clicked, and removed. It has to be in the document
+ * for the event to reach `document`, so it is appended and taken away again
+ * rather than clicked while detached.
+ *
+ * The result is still verified. After the click the list is re-read and the
+ * reply says whether the handle actually left it. A removal that silently
+ * failed would leave the app showing a wishlist that is not the customer's.
  */
 export const removeFromWishlistScript = (handle: string): string => `
 (function () {
   var handle = ${JSON.stringify(handle)};
-  var MARK = '/products/';
+  var SELECTOR = '.swym-button.swym-add-to-wishlist[data-product-handle]';
   var sent = false;
 
   function send(ok, reason) {
@@ -203,110 +236,110 @@ export const removeFromWishlistScript = (handle: string): string => `
     } catch (e) {}
   }
 
-  function root() {
-    var swym = document.querySelector(
-      '[class*="swym-wishlist"], [id*="swym-wishlist"], [class*="swym"]'
-    );
-    if (swym) { return swym; }
-    return document.querySelector('main, #MainContent') || document;
+  /** Trim without a regex, as above. */
+  function trim(str) {
+    var a = 0;
+    var b = str.length;
+    function ws(c) { return c === 32 || c === 9 || c === 10 || c === 13; }
+    while (a < b && ws(str.charCodeAt(a))) { a++; }
+    while (b > a && ws(str.charCodeAt(b - 1))) { b--; }
+    return str.slice(a, b);
   }
 
-  /** Every link in the container that points at this product. */
-  function linksFor(node) {
-    var out = [];
-    var links = node.querySelectorAll('a[href*="/products/"]');
-    for (var i = 0; i < links.length; i++) {
-      // Split rather than a regex: a backslash inside a template literal is
-      // eaten before the page ever sees it, which is exactly how this shipped
-      // broken once -- /\/products\// arrived as //products//.
-      var href = links[i].getAttribute('href') || '';
-      var at = href.indexOf(MARK);
-      if (at === -1) { continue; }
-      var seg = href.slice(at + MARK.length).split('/')[0];
-      seg = seg.split('?')[0].split('#')[0];
-      if (seg === handle) { out.push(links[i]); }
+  function saved() {
+    try {
+      if (window.ziglyWishlist && window.ziglyWishlist.getWishlist) {
+        var theirs = window.ziglyWishlist.getWishlist();
+        if (Object.prototype.toString.call(theirs) === '[object Array]') {
+          return theirs;
+        }
+      }
+      var raw = window.localStorage.getItem('zigly_wishlist_handles') || '';
+      var parts = raw.split(',');
+      var out = [];
+      for (var i = 0; i < parts.length; i++) {
+        var t = trim(parts[i]);
+        if (t) { out.push(t); }
+      }
+      return out;
+    } catch (e) {
+      return null;
     }
-    return out;
   }
 
-  /**
-   * The remove control for that product: searched from the link outwards, so
-   * it is always the one belonging to this tile and never a neighbour's.
-   * Six levels is deep enough for a card and shallow enough not to reach the
-   * grid, whose own controls belong to other items.
-   */
-  var REMOVE = [
-    '[class*="swym"][class*="delete"]',
-    '[class*="swym"][class*="remove"]',
-    '[class*="wishlist"][class*="remove"]',
-    '[class*="remove-from"]',
-    '[aria-label*="emove"]',
-    '[title*="emove"]',
-    '[data-action*="remove"]'
-  ].join(', ');
-
-  function controlFor(link) {
-    var node = link.parentElement;
-    for (var depth = 0; node && depth < 6; depth++) {
-      var found = node.querySelector(REMOVE);
-      if (found) { return found; }
-      node = node.parentElement;
+  function has(list) {
+    if (!list) { return null; }
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] === handle) { return true; }
     }
-    return null;
+    return false;
   }
 
-  function stillListed() {
-    return linksFor(root()).length > 0;
-  }
-
-  var container = root();
-  var links = linksFor(container);
-  if (!links.length) {
-    // Already gone -- most likely removed on the product page. Nothing to do,
-    // and the app is right to have dropped the tile.
-    send(true, 'already-absent');
-    return;
-  }
-
-  var control = controlFor(links[0]);
-  if (!control) {
-    send(false, 'no-control');
-    return;
-  }
-
-  /**
-   * Some Swym configurations confirm before removing. This page is parked off
-   * screen, so a native dialog would appear over the app with no context; and
-   * the customer has already asked for the removal by tapping the heart.
-   * Stubbed for the click only, then put back -- deliberately narrow, and never
-   * touching fetch, storage or cookies.
-   */
-  var realConfirm = window.confirm;
-  window.confirm = function () { return true; };
   try {
-    control.click();
-  } catch (e) {
-    window.confirm = realConfirm;
-    send(false, 'click-failed');
-    return;
-  }
-  setTimeout(function () { window.confirm = realConfirm; }, 0);
-
-  // Verify. Swym re-renders the list after its own request completes, so this
-  // waits for the tile to actually leave rather than trusting the click.
-  var tries = 0;
-  var timer = setInterval(function () {
-    tries++;
-    var gone = false;
-    try { gone = !stillListed(); } catch (e) { gone = false; }
-    if (gone) {
-      clearInterval(timer);
-      send(true, '');
-    } else if (tries >= 16) {
-      clearInterval(timer);
-      send(false, 'still-listed');
+    var before = saved();
+    if (has(before) === false) {
+      // Already gone -- nothing to undo, and the tile is already off screen.
+      send(true, 'already removed');
+      return;
     }
-  }, 250);
+
+    // Their own control for this product, if the page happens to show it.
+    var button = null;
+    var candidates = document.querySelectorAll(SELECTOR);
+    for (var c = 0; c < candidates.length; c++) {
+      if (candidates[c].getAttribute('data-product-handle') === handle) {
+        button = candidates[c];
+        break;
+      }
+    }
+
+    // Otherwise the smallest thing their delegated listener will accept.
+    var temporary = null;
+    if (!button) {
+      temporary = document.createElement('div');
+      temporary.className = 'swym-button swym-add-to-wishlist';
+      temporary.setAttribute('data-product-handle', handle);
+      temporary.setAttribute('aria-hidden', 'true');
+      temporary.style.position = 'fixed';
+      temporary.style.left = '-9999px';
+      temporary.style.top = '0';
+      temporary.style.width = '1px';
+      temporary.style.height = '1px';
+      temporary.style.opacity = '0';
+      temporary.style.pointerEvents = 'none';
+      document.body.appendChild(temporary);
+      button = temporary;
+    }
+
+    // Their handler reads event.target.closest(SELECTOR), so the event has to
+    // bubble to document. A plain click() does that.
+    button.click();
+
+    function cleanUp() {
+      if (temporary && temporary.parentNode) {
+        temporary.parentNode.removeChild(temporary);
+      }
+    }
+
+    /**
+     * Verify. Their toggle is synchronous, but the signed-in server sync is not,
+     * and a frame's grace costs nothing against a tap the user has already seen
+     * take effect.
+     */
+    setTimeout(function () {
+      var after = saved();
+      cleanUp();
+      if (after === null) {
+        send(false, 'storage unreadable');
+      } else if (has(after)) {
+        send(false, 'still saved after pressing the control');
+      } else {
+        send(true, '');
+      }
+    }, 60);
+  } catch (e) {
+    send(false, 'threw: ' + e);
+  }
 })();
 true;
 `;

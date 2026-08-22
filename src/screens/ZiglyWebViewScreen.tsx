@@ -180,7 +180,7 @@ interface Props {
  * a page layer's key. Resolved at the moment of injection, so a delayed pass
  * into a layer that has since been evicted is a no-op rather than a warning.
  */
-type Target = 'home' | 'wishlist' | 'login' | number;
+type Target = 'home' | 'login' | number;
 
 /**
  * Whether a page is a shopping page.
@@ -261,13 +261,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const [cart, setCart] = useState<CartData | null>(null);
 
   /**
-   * The wishlist. Native, but sourced from the site: a hidden WebView loads
-   * /pages/swym-wishlist so Swym can render, the bridge reads which products
-   * are on it, and Shopify prices them. See ../webview/wishlistBridge.
+   * The wishlist. Native, and sourced from the site's own storage.
+   *
+   * There used to be a hidden WebView here, loading /pages/swym-wishlist off
+   * screen so that Swym would render something to read. Swym is not on this
+   * store any more: the wishlist is a list of handles in the page's own
+   * localStorage, written by the theme's assets/wishlist.js. So the read is a
+   * question put to the dashboard WebView, which is already loaded, and the
+   * whole off-screen page load is gone. See ../webview/wishlistBridge.
    */
   const [wishlistOpen, setWishlistOpen] = useState(false);
   const [wishlist, setWishlist] = useState<WishlistItem[] | null>(null);
-  const wishlistRef = useRef<Web>(null);
   const wishlistOpenRef = useRef(false);
   /** Shown only when a removal could not be confirmed. */
   const [wishlistNotice, setWishlistNotice] = useState<string | null>(null);
@@ -456,8 +460,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     let view: Web | null | undefined;
     if (target === 'home') {
       view = webRef.current;
-    } else if (target === 'wishlist') {
-      view = wishlistRef.current;
     } else if (target === 'login') {
       view = loginRef.current;
     } else {
@@ -659,11 +661,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   // ---------------------------------------------------------------- wishlist
   const openWishlist = useCallback(() => {
     // Re-read every time it opens: the shopper may have saved something on a
-    // product page since. The hidden WebView mounts with the screen.
+    // product page since. Asked of the dashboard, which is already loaded, so
+    // the answer costs one storage read plus a request per saved product.
     setWishlist(null);
     setShowCart(false);
     setWishlistOpen(true);
-  }, []);
+    injectInto('home', WISHLIST_SCRIPT);
+  }, [injectInto]);
 
   const closeWishlist = useCallback(() => {
     setWishlistOpen(false);
@@ -673,10 +677,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /**
    * Un-save an item.
    *
-   * The tile goes immediately, because the write is a click on the site's own
-   * control in an off-screen page and that takes a moment -- waiting for it
-   * would make the tap feel broken. The reply then either confirms it or puts
-   * the tile back; see ../webview/wishlistBridge for why it is verified at all.
+   * The tile goes immediately. The write is a press of the site's own control
+   * inside the dashboard WebView, which is quick but not instant, and waiting
+   * for it would make the tap feel broken. The reply then either confirms it or
+   * puts the tile back; see ../webview/wishlistBridge for why it is verified.
    */
   const removeFromWishlist = useCallback(
     (item: WishlistItem) => {
@@ -692,7 +696,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return prev.filter(saved => saved.handle !== item.handle);
       });
       setWishlistNotice(null);
-      injectInto('wishlist', removeFromWishlistScript(item.handle));
+      injectInto('home', removeFromWishlistScript(item.handle));
     },
     [injectInto],
   );
@@ -1727,6 +1731,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 );
               } else if (data && data.tag === 'cart-added') {
                 setCartToast(true);
+              } else if (data && data.tag === 'wishlist') {
+                // Read out of the site's own localStorage by the dashboard
+                // itself; see ../webview/wishlistBridge.
+                const read = parseWishlist(data, ZIGLY_ORIGIN);
+                log('wishlist:', read.items.length, 'of', data.found, 'saved');
+                pendingRemovals.current.clear();
+                setWishlist(read.items);
+              } else if (data && data.tag === 'wishlist-removed') {
+                if (data.ok) {
+                  // Already off screen; nothing left to do but forget it.
+                  pendingRemovals.current.delete(data.handle);
+                } else {
+                  restoreWishlistItem(data.handle, data.reason || '');
+                }
               } else if (data && data.tag === 'announcements') {
                 setAnnouncements(Array.isArray(data.items) ? data.items : []);
               } else if (data && data.tag === 'search-placeholders') {
@@ -2016,51 +2034,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         ) : null}
 
         {/*
-          The wishlist's source, parked off screen. It exists because
-          /pages/swym-wishlist ships no items -- Swym fills the page in
-          client-side, so the page has to actually run for there to be anything
-          to read. Mounted only while the screen is open, and torn down with it,
-          because the answer is stale as soon as the shopper saves something.
+          There is no hidden WebView here any more.
+
+          One used to be mounted on /pages/swym-wishlist, off screen, purely so
+          that Swym would run and render something for the bridge to scrape --
+          an ~850 KB page load and up to twelve seconds of polling every time
+          the screen was opened. Swym is not on this store, so it was polling for
+          markup that was never coming. The wishlist is a list of handles in the
+          page's own localStorage, and the dashboard WebView is already loaded
+          and already has it; the read is injected there instead. That is the
+          whole of "load the wishlist quickly".
         */}
-        {wishlistOpen ? (
-          <View style={[styles.pageLayer, styles.parked]} pointerEvents="none">
-            <WebView<object>
-              {...baseWebViewProps}
-              ref={wishlistRef}
-              source={{uri: `${ZIGLY_ORIGIN}/pages/swym-wishlist`}}
-              style={styles.web}
-              onShouldStartLoadWithRequest={handleShouldStart}
-              onLoadEnd={() => injectInto('wishlist', WISHLIST_SCRIPT)}
-              onMessage={({nativeEvent}) => {
-                try {
-                  const data = JSON.parse(nativeEvent.data);
-                  if (data && data.tag === 'wishlist') {
-                    const read = parseWishlist(data, ZIGLY_ORIGIN);
-                    log(
-                      'wishlist read from',
-                      read.root,
-                      '-',
-                      read.items.length,
-                      'of',
-                      data.found,
-                    );
-                    pendingRemovals.current.clear();
-                    setWishlist(read.items);
-                  } else if (data && data.tag === 'wishlist-removed') {
-                    if (data.ok) {
-                      // Already off screen; nothing left to do but forget it.
-                      pendingRemovals.current.delete(data.handle);
-                    } else {
-                      restoreWishlistItem(data.handle, data.reason || '');
-                    }
-                  }
-                } catch {
-                  // The page posts for its own reasons too.
-                }
-              }}
-            />
-          </View>
-        ) : null}
 
         {searchOpen ? (
           <View style={styles.pageLayer}>

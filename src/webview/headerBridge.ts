@@ -256,8 +256,14 @@ true;
 `;
 
 /**
- * Open the site's wishlist. Swym powers it and the page lives at
- * /pages/swym-wishlist; the site's own bottom nav links to the raw myshopify
- * host, which the URL policy rewrites back to zigly.com.
+ * Open the site's own wishlist page.
+ *
+ * Not wired to anything: the heart opens the native wishlist screen, which reads
+ * the saved handles out of the page's localStorage (see ../webview/
+ * wishlistBridge). Kept as the way back if that screen ever has to be stood
+ * down. The path is still /pages/swym-wishlist even though Swym is long gone
+ * from this store -- the handle is the theme's, not the app's, and the site's own
+ * bottom nav links to the raw myshopify host, which the URL policy rewrites
+ * back to zigly.com.
  */
 export const OPEN_WISHLIST = `window.location.href = '/pages/swym-wishlist'; true;`;

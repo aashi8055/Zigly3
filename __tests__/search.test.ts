@@ -247,8 +247,11 @@ describe('the suggestion request', () => {
   });
 
   it('waits long enough that a fast typist makes one request', () => {
+    // The debounce is what bounds the request count; the minimum length only
+    // decides how early suggesting starts. It was lowered to 1 so a single
+    // letter already suggests, which is a product call, not a request-rate one.
     expect(SUGGEST_DEBOUNCE_MS).toBeGreaterThanOrEqual(200);
-    expect(MIN_QUERY_LENGTH).toBeGreaterThanOrEqual(2);
+    expect(MIN_QUERY_LENGTH).toBeGreaterThanOrEqual(1);
   });
 });
 
