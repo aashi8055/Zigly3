@@ -303,7 +303,7 @@ const SearchScreen = ({
 };
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: COLORS.white},
+  root: {flex: 1, backgroundColor: COLORS.ground},
 
   // Pale blue band, matching the header's own search band.
   band: {backgroundColor: '#BFD3EE', paddingHorizontal: 14, paddingVertical: 10},

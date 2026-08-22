@@ -26,6 +26,7 @@ import {
 } from '../src/webview/headerBridge';
 import {MOBILE_CSS, buildStyleInjection} from '../src/webview/injectedStyles';
 import {PAGE_COVER_CAP_MS} from '../src/components/PageCover';
+import {COLORS} from '../src/constants/appConstants';
 
 describe('installing the gate', () => {
   it('hides the document rather than removing it', () => {
@@ -36,8 +37,8 @@ describe('installing the gate', () => {
     expect(EARLY_HEADER_CSS).not.toContain('html{display:none');
   });
 
-  it('paints white behind it, not the WebView’s own ground', () => {
-    expect(EARLY_HEADER_CSS).toContain('background:#fff!important');
+  it('paints the app ground behind it, not the WebView’s own', () => {
+    expect(EARLY_HEADER_CSS).toContain(`background:${COLORS.ground}!important`);
   });
 
   it('refuses to gate the money flow', () => {

@@ -124,12 +124,12 @@ const AddressScreen = ({
 };
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.white },
+  root: { flex: 1, backgroundColor: COLORS.ground },
   centre: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
   },
   scroll: { paddingHorizontal: 16, paddingTop: 34, paddingBottom: 28, gap: 16 },
 

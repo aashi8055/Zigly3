@@ -131,7 +131,16 @@ export const COLORS = {
   ink: '#323232',
   inkMuted: '#767676',
   hairline: '#DDE3EC',
-  ground: '#FFFFFF',
+  /**
+   * The app's page ground: a warm off-white.
+   *
+   * Distinct from `white`, which stays pure -- it is also the foreground colour
+   * of text and icons on the navy and red fills, so tinting it would tint them.
+   * Anything that is a *surface the page sits on* uses this; anything that is a
+   * card lifted off that surface stays `white`, which is what gives the card
+   * its edge without a border.
+   */
+  ground: '#FFFAF1',
 };
 
 /** Minimum time the splash stays up, so it never flashes. */

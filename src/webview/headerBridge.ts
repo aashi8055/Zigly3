@@ -205,7 +205,10 @@ export const EARLY_HEADER_CSS = `
      */
     if (!isMoneyFlow && document.readyState === 'loading') {
       var GATE = ${JSON.stringify(PAINT_GATE_ID)};
-      var gateCss = 'html{visibility:hidden!important;background:#fff!important}';
+      // The gate's ground is the app's, not the site's: the gate is what the
+      // customer sees during a navigation, so a white one would flash between
+      // two warm pages.
+      var gateCss = 'html{visibility:hidden!important;background:#FFFAF1!important}';
 
       var install = function () {
         if (window.__ziglyGateLifted) { return; }

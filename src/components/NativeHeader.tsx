@@ -325,7 +325,7 @@ const BAR_H = 52;
 const SEARCH_BAND_H = 64;
 
 const styles = StyleSheet.create({
-  root: { backgroundColor: COLORS.white },
+  root: { backgroundColor: COLORS.ground },
 
   bar: {
     height: BAR_H,
@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 14,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
   },
   iconButton: {
     width: 34,

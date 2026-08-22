@@ -141,7 +141,7 @@ const styles = StyleSheet.create({
   sheet: {
     // Two thirds of the screen, so the field being filled stays in view above.
     maxHeight: '70%',
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
     borderTopLeftRadius: 14,
     borderTopRightRadius: 14,
     paddingBottom: 8,

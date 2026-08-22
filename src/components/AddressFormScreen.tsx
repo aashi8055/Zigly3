@@ -296,7 +296,7 @@ const Select = ({
 );
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.white },
+  root: { flex: 1, backgroundColor: COLORS.ground },
   scroll: { padding: 16, paddingBottom: 28, gap: 14 },
 
   box: {

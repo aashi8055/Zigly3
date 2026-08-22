@@ -61,8 +61,9 @@ const Shell = () => {
     <View
       style={[
         styles.root,
-        // White bands top and bottom, matching the reference app: its status
-        // bar area is light, and the site's own bottom nav is white.
+        // Ground-coloured bands top and bottom: the status bar area and the
+        // gesture-pill area read as part of the page, not as a white frame
+        // around it.
         {paddingTop: insets.top, paddingBottom: insets.bottom},
       ]}>
       {/* RN 0.87 is always edge-to-edge; `translucent` no longer exists. The
@@ -90,7 +91,7 @@ const App = () => (
 );
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: COLORS.white},
+  root: {flex: 1, backgroundColor: COLORS.ground},
   splashLayer: {position: 'absolute', left: 0, right: 0},
 });
 

@@ -101,12 +101,12 @@ const OrdersScreen = ({ orders, onOpenOrder }: Props) => {
 };
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F2F3F6' },
+  root: { flex: 1, backgroundColor: COLORS.ground },
   centre: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
   },
   list: { paddingVertical: 10, gap: 10 },
 

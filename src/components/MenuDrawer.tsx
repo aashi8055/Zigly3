@@ -360,7 +360,7 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
     // Android's shadow; the panel needs an edge against the page behind it.
     elevation: 16,
   },

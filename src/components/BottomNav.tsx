@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignItems: 'stretch',
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
     borderTopWidth: 1,
     borderTopColor: '#E8EDF4',
   },

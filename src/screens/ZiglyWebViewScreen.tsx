@@ -2356,10 +2356,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 };
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: COLORS.white},
+  root: {flex: 1, backgroundColor: COLORS.ground},
   /** Owns every overlay, so none of them can reach the header above it. */
   body: {flex: 1, position: 'relative'},
-  web: {flex: 1, backgroundColor: COLORS.white},
+  web: {flex: 1, backgroundColor: COLORS.ground},
   /** Covers the dashboard, which stays mounted and ready underneath. */
   pageLayer: {
     position: 'absolute',
@@ -2367,7 +2367,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
   },
   /**
    * How a kept-alive page is hidden: parked off screen, not display:none.

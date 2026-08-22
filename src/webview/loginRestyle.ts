@@ -49,7 +49,9 @@ const LOGIN_CSS = `
    added by the script, so a missing widget leaves the page untouched. */
 
 html.zigly-otp, html.zigly-otp body {
-  background: #FFFFFF !important;
+  /* The app's ground. The widget is flattened to a full screen below, so this
+     is the page the customer sees, not a backdrop behind a card. */
+  background: #FFFAF1 !important;
   overflow-x: hidden !important;
 }
 
@@ -68,7 +70,7 @@ html.zigly-otp .sotp-popup-wrapper {
   display: block !important;
   opacity: 1 !important;
   visibility: visible !important;
-  background: #FFFFFF !important;
+  background: #FFFAF1 !important;
   backdrop-filter: none !important;
   inset: auto !important;
   padding: 0 !important;
@@ -85,7 +87,7 @@ html.zigly-otp .sotp-form {
   border: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;
-  background: #FFFFFF !important;
+  background: #FFFAF1 !important;
   max-height: none !important;
   overflow: visible !important;
 }

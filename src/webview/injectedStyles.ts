@@ -34,6 +34,19 @@ html, body {
 }
 
 /* ------------------------------------------------------------------
+   Page ground.
+
+   The app's ground is a warm off-white, and the WebView is the largest
+   surface in it -- left on the theme's white the page would read as a white
+   sheet laid on a cream app. Set on html and body only: the theme's cards,
+   rails and bars paint their own backgrounds over this, so they keep their
+   edge.
+   ------------------------------------------------------------------ */
+html, body {
+  background: #FFFAF1 !important;
+}
+
+/* ------------------------------------------------------------------
    Header rules intentionally REMOVED.
 
    Device diagnostics showed the header is not hidden at all: it reports

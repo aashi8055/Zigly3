@@ -171,10 +171,10 @@ const GUTTER = 10;
 const HAIRLINE = '#ECEEF2';
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: COLORS.white},
+  root: {flex: 1, backgroundColor: COLORS.ground},
   centre: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.ground,
     alignItems: 'center',
     justifyContent: 'center',
   },

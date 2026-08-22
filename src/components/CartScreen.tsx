@@ -246,8 +246,8 @@ const CartScreen = ({
   );
 };
 
-/** Light ground, so the white line cards read as cards. */
-const GROUND = '#F5F6F8';
+/** The app ground, so the white line cards read as cards against it. */
+const GROUND = COLORS.ground;
 const HAIRLINE = '#ECEEF2';
 
 const styles = StyleSheet.create({
