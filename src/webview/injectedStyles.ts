@@ -590,6 +590,65 @@ body.zigly-listing .quick-add__submit {
 }
 
 /* ------------------------------------------------------------------
+   The wishlist heart: filled once the product is saved.
+
+   Tapping a card's heart already worked -- what it does not do is *look* like it
+   worked, and that is a gap on Zigly's own site rather than in this app.
+
+   Their wishlist is not Swym any more (see wishlistBridge.ts). It is
+   assets/wishlist.js, which keeps the saved handles in localStorage under
+   'zigly_wishlist_handles' and, on a tap, does this:
+
+     button.classList.toggle('is-wishlisted', wishlisted)
+     button.setAttribute('aria-pressed', wishlisted ? 'true' : 'false')
+
+   and then nothing happens, because there is no rule for .is-wishlisted
+   anywhere in the theme -- not in the section styles, not in base.css, not in
+   product-card.css. All three were searched on 2026-08-22. So the heart on a
+   saved product looks exactly like the heart on an unsaved one, and the only way
+   to find out whether a tap registered is to open the wishlist page.
+
+   This supplies the missing rule and nothing else. The state is the site's, the
+   class is the site's, the path is the site's; only the fill is drawn here.
+
+   Both the class and the ARIA state are matched. They are set together by the
+   same function, so either alone would do -- but a saved product whose heart
+   reads unsaved is the failure this is fixing, and two selectors cost nothing.
+
+   Red rather than black: #ED2427 is Zigly's own accent, the colour of the heart
+   in their bottom bar and of every pill and link in their sections. A filled
+   black heart over a product photo reads as a smudge.
+   ------------------------------------------------------------------ */
+.swym-button.swym-add-to-wishlist.is-wishlisted svg path,
+.swym-button.swym-add-to-wishlist[aria-pressed="true"] svg path {
+  fill: #ED2427 !important;
+  stroke: #ED2427 !important;
+}
+/* The tap itself. The control is a bare div around a 36x32 glyph, and on a card
+   it is the smallest thing on screen competing with the product link
+   underneath it -- so it gets a real target and stops the tap becoming a
+   scroll. Nothing about which element handles the tap changes: the listener is
+   the site's own, delegated from document. */
+.swym-button.swym-add-to-wishlist {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  min-width: 34px;
+  min-height: 34px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+/* A tap should be visible at the moment it happens, not only once the fill
+   arrives -- the toggle writes to localStorage and can wait a frame. */
+.swym-button.swym-add-to-wishlist:active svg {
+  transform: scale(0.86);
+}
+.swym-button.swym-add-to-wishlist svg {
+  transition: transform 120ms ease-out;
+}
+
+/* ------------------------------------------------------------------
    The banner carousel: one clean edge-to-edge card, no frame.
 
    The site insets the strip and rounds it --

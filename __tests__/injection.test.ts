@@ -167,6 +167,40 @@ describe('getInjectionForUrl', () => {
     });
   });
 
+  describe('the wishlist heart', () => {
+    const home = () => getInjectionForUrl('https://zigly.com/') as string;
+
+    it('fills the heart on the site’s own saved state', () => {
+      // Their wishlist.js toggles .is-wishlisted and aria-pressed and there is
+      // no rule for either anywhere in the theme, so a saved product's heart
+      // looked exactly like an unsaved one. This supplies the missing rule.
+      const s = home();
+      expect(s).toContain(
+        '.swym-button.swym-add-to-wishlist.is-wishlisted svg path',
+      );
+      // The CSS is JSON-encoded into the payload, so its quotes arrive escaped.
+      expect(s).toContain('aria-pressed=');
+      expect(s).toContain('fill: #ED2427 !important');
+    });
+
+    it('adds no wishlist behaviour of its own', () => {
+      // The toggle, the storage and the click handling are all the site's --
+      // wishlist.js binds one delegated listener on document, which covers
+      // transplanted cards too. Nothing injected on every page may add a second,
+      // or a tap would toggle twice and land back where it started.
+      // Nothing injected on every page writes their wishlist. The storage key
+      // and their toggle are quoted in a comment above the rule, which is why
+      // this checks for the write rather than for the names.
+      expect(home()).not.toContain('localStorage.setItem');
+    });
+
+    it('gives the control a real tap target', () => {
+      const s = home();
+      expect(s).toContain('.swym-button.swym-add-to-wishlist {');
+      expect(s).toContain('min-height: 34px');
+    });
+  });
+
   describe('the banner carousel', () => {
     const home = () => getInjectionForUrl('https://zigly.com/') as string;
 
