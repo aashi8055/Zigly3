@@ -192,12 +192,19 @@ easier to test than four WebViews.
 
 ## The cart
 
-Native, and one card per line on a light ground, with a summary card and a
-sticky bar carrying the live item count. Empty is a separate screen: the
-reference app's wireframe box over "No items", with no call to action — the
-header's back arrow is the way out. `EmptyState` draws that box from geometry
-(an isometric cube's silhouette is a regular hexagon), so it needs no asset and
-no icon dependency.
+Native. One full-bleed white block per line with the grey ground showing
+through between them, then the order summary, then two pinned footers: the
+savings line and the checkout bar. Only the list scrolls, so the total and the
+button never leave the screen — and the saving stays visible at the moment the
+customer is deciding, which is the only moment it is worth anything.
+
+Empty is a separate screen: a smiling bag, "Your Cart is Empty", one line of
+body copy, and a Continue Shopping button back to the dashboard. `EmptyState`
+also draws the bare "No items" box that list screens like the wishlist use.
+Both glyphs are geometry, not assets — an isometric cube's silhouette is a
+regular hexagon; the bag is a rounded rectangle, two diagonals and a smile made
+from a fully-rounded bottom edge — so neither needs a bitmap at three densities
+or an icon dependency.
 
 **The data layer is deliberately not the reference's.** That app drives
 Shopify's Storefront Cart API — `cartCreate`, `cartLinesAdd`, `checkoutUrl` into
@@ -226,6 +233,13 @@ A cart screen is the one place where an invented number becomes a wrong promise,
 so these are absent rather than approximated. Two things from the reference's
 config *are* adopted: the header drops the bag on this screen and shows the
 wishlist instead, and totals stay fully visible.
+
+Prices keep their paise. `display_decimals_in_cart_page: false` in the
+reference's config reads like a rounding instruction, but its own cart shows
+₹351.12 and ₹4375.84 — so the flag does not mean what it sounds like, and
+rounding a real ₹351.12 to ₹351 would print a number that is not the charge.
+The one figure the app cannot source is the wishlist count on the header's
+heart: that lives in Swym, not in Shopify.
 
 Covered by `__tests__/cart.test.tsx`, which renders the screen rather than
 grepping it — including that a not-yet-loaded cart waits instead of claiming to

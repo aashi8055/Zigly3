@@ -15,8 +15,10 @@
  * AJAX endpoints below are that one shared cart, keyed by the session cookie
  * both WebViews share.
  *
- * Layout is the reference's: one rectangular card per line on a light ground, a
- * summary card, and a sticky bar carrying the live item count. The merchandising
+ * Layout is the reference's: one full-bleed white block per line, separated by
+ * the grey ground showing through, then the order summary, then two pinned
+ * footers — the savings line and the checkout bar. Only the list scrolls, so the
+ * total and the button never leave the screen. The merchandising
  * blocks the reference also has — free-shipping progress, free-gift tiers, the
  * upsell rail, the membership card — are absent on purpose: their thresholds and
  * product selections live in server config this app cannot read, and a cart
@@ -65,9 +67,17 @@ interface Props {
   onChangeQty: (key: string, quantity: number) => void;
   onCheckout: () => void;
   onOpenItem: (url: string) => void;
+  /** Leaves the empty cart for the dashboard. */
+  onContinueShopping: () => void;
 }
 
-const CartScreen = ({cart, onChangeQty, onCheckout, onOpenItem}: Props) => {
+const CartScreen = ({
+  cart,
+  onChangeQty,
+  onCheckout,
+  onOpenItem,
+  onContinueShopping,
+}: Props) => {
   if (!cart) {
     return (
       <View style={styles.centre}>
@@ -77,11 +87,18 @@ const CartScreen = ({cart, onChangeQty, onCheckout, onOpenItem}: Props) => {
   }
 
   if (cart.itemCount === 0) {
-    // The reference routes to a separate empty screen with no call to action;
-    // the header's back arrow is the way out.
+    // The reference's own empty cart: a smiling bag, a headline, one line of
+    // body copy and a way back to shopping. (Its bare "No items" box belongs to
+    // list screens like the wishlist -- EmptyState still draws that one too.)
     return (
       <View style={styles.root}>
-        <EmptyState label="No items" />
+        <EmptyState
+          glyph="bag"
+          title="Your Cart is Empty"
+          body="Start shopping today and fill your cart with your favorite products."
+          actionLabel="Continue Shopping"
+          onAction={onContinueShopping}
+        />
       </View>
     );
   }
@@ -192,14 +209,21 @@ const CartScreen = ({cart, onChangeQty, onCheckout, onOpenItem}: Props) => {
           */}
         </View>
 
-        {cart.totalDiscount > 0 ? (
-          <View style={styles.savedBanner}>
-            <Text style={styles.savedBannerText}>
-              You saved {money(cart.totalDiscount)} on this order.
-            </Text>
-          </View>
-        ) : null}
       </ScrollView>
+
+      {/*
+        Pinned, not scrolled. The reference keeps this line sitting above the
+        checkout bar while the items move behind it, so the saving stays on
+        screen at the moment the customer is deciding -- which is the only
+        moment it is worth anything.
+      */}
+      {cart.totalDiscount > 0 ? (
+        <View style={styles.savedBanner}>
+          <Text style={styles.savedBannerText}>
+            You saved {money(cart.totalDiscount)} on this order.
+          </Text>
+        </View>
+      ) : null}
 
       <View style={styles.bar}>
         <View>
@@ -235,20 +259,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 32,
   },
-  scroll: {paddingTop: 10, paddingBottom: 24},
+  /** No bottom padding: the pinned footers below are not scrolled past. */
+  scroll: {paddingTop: 8},
 
+  /**
+   * Full-bleed rather than an inset card: the reference runs each line edge to
+   * edge and lets the grey ground show through between them, so the separator
+   * is the gap itself and there is no border to draw.
+   */
   card: {
     position: 'relative',
-    marginHorizontal: 12,
-    marginBottom: 10,
-    padding: 12,
+    marginBottom: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     backgroundColor: COLORS.white,
-    borderRadius: 12,
+  },
+  cardBody: {flexDirection: 'row', gap: 12},
+  thumb: {
+    width: 84,
+    height: 84,
+    borderRadius: 8,
+    backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: HAIRLINE,
   },
-  cardBody: {flexDirection: 'row', gap: 12},
-  thumb: {width: 84, height: 84, borderRadius: 8, backgroundColor: '#F5F5F5'},
   /** Right padding keeps the title clear of the remove control above it. */
   details: {flex: 1, paddingRight: 22},
   title: {
@@ -321,15 +355,7 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
 
-  summaryCard: {
-    marginHorizontal: 12,
-    marginTop: 6,
-    paddingBottom: 6,
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: HAIRLINE,
-  },
+  summaryCard: {paddingBottom: 10, backgroundColor: COLORS.white},
   sectionTitle: {
     fontFamily: FONT_FAMILY,
     fontSize: 17,
@@ -371,12 +397,10 @@ const styles = StyleSheet.create({
     color: '#1B1B1B',
   },
 
+  /** Pinned above the bar, so it stays put while the items scroll behind. */
   savedBanner: {
-    marginHorizontal: 12,
-    marginTop: 10,
-    backgroundColor: '#EEF3FA',
-    borderRadius: 12,
-    paddingVertical: 14,
+    backgroundColor: '#EEF0F4',
+    paddingVertical: 15,
     alignItems: 'center',
   },
   savedBannerText: {fontFamily: FONT_FAMILY, fontSize: 15, color: '#1B1B1B'},
@@ -387,8 +411,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: HAIRLINE,
     backgroundColor: COLORS.white,
   },
   barCount: {fontFamily: FONT_FAMILY, fontSize: 13.5, color: '#5A5A5A'},

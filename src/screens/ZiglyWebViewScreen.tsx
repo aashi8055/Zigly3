@@ -879,6 +879,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   url.indexOf('http') === 0 ? url : `${ZIGLY_ORIGIN}${url}`,
                 );
               }}
+              onContinueShopping={() => {
+                // Straight back to the dashboard, which is still mounted --
+                // there is nothing to come back to in an empty cart.
+                setShowCart(false);
+                dismissPages();
+              }}
             />
           </View>
         ) : null}

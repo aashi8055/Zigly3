@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {ActivityIndicator, Text} from 'react-native';
+import {ActivityIndicator, ScrollView, Text} from 'react-native';
 import CartScreen from '../src/components/CartScreen';
 import type {CartData, CartLine} from '../src/components/CartScreen';
 import EmptyState from '../src/components/EmptyState';
@@ -80,42 +80,55 @@ const CART: CartData = {
 
 const noop = () => {};
 
+const EMPTY: CartData = {
+  itemCount: 0,
+  totalPrice: 0,
+  originalTotalPrice: 0,
+  totalDiscount: 0,
+  items: [],
+};
+
+/** The screen with everything defaulted; pass only what the case is about. */
+const screen = (
+  props: Partial<React.ComponentProps<typeof CartScreen>> = {},
+): React.ReactElement => (
+  <CartScreen
+    cart={CART}
+    onChangeQty={noop}
+    onCheckout={noop}
+    onOpenItem={noop}
+    onContinueShopping={noop}
+    {...props}
+  />
+);
+
 describe('an empty cart', () => {
-  it('shows the reference app’s "No items" screen', () => {
-    const tree = render(
-      <CartScreen
-        cart={{
-          itemCount: 0,
-          totalPrice: 0,
-          originalTotalPrice: 0,
-          totalDiscount: 0,
-          items: [],
-        }}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
-    );
-    expect(textOf(tree)).toContain('No items');
+  it('shows the reference app’s empty-cart screen', () => {
+    const tree = render(screen({cart: EMPTY}));
+    const text = textOf(tree);
+    expect(text).toContain('Your Cart is Empty');
+    expect(text).toContain('Start shopping today');
+    expect(text).toContain('Continue Shopping');
+    // The bare "No items" box belongs to list screens like the wishlist.
+    expect(text).not.toContain('No items');
   });
 
-  it('offers no checkout button to press', () => {
+  it('sends Continue Shopping back to the store', () => {
+    let left = 0;
     const tree = render(
-      <CartScreen
-        cart={{
-          itemCount: 0,
-          totalPrice: 0,
-          originalTotalPrice: 0,
-          totalDiscount: 0,
-          items: [],
-        }}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({
+        cart: EMPTY,
+        onContinueShopping: () => {
+          left += 1;
+        },
+      }),
     );
-    // The reference's empty screen carries no call to action; the header's back
-    // arrow is the way out, and it is drawn above this screen.
+    press(tree, 'Continue Shopping');
+    expect(left).toBe(1);
+  });
+
+  it('offers no checkout to press with nothing to check out', () => {
+    const tree = render(screen({cart: EMPTY}));
     expect(textOf(tree)).not.toContain('Checkout');
   });
 });
@@ -125,12 +138,7 @@ describe('a cart that has not loaded yet', () => {
     // null means "no answer from /cart.js yet". Showing "No items" there would
     // tell the customer their cart had been emptied.
     const tree = render(
-      <CartScreen
-        cart={null}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: null}),
     );
     expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
     expect(textOf(tree)).not.toContain('No items');
@@ -140,12 +148,7 @@ describe('a cart that has not loaded yet', () => {
 describe('a cart with lines', () => {
   it('draws the line, its price and what it used to cost', () => {
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: CART}),
     );
     const text = textOf(tree);
     expect(text).toContain(LINE.title);
@@ -158,12 +161,7 @@ describe('a cart with lines', () => {
 
   it('reports the live item count and total on the sticky bar', () => {
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: CART}),
     );
     const text = textOf(tree);
     expect(text).toContain('2 Items');
@@ -173,24 +171,14 @@ describe('a cart with lines', () => {
 
   it('says Item, singular, for one', () => {
     const tree = render(
-      <CartScreen
-        cart={{...CART, itemCount: 1}}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: {...CART, itemCount: 1}}),
     );
     expect(textOf(tree)).toContain('1 Item |');
   });
 
   it('shows the totals Shopify reports, and no shipping line of its own', () => {
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: CART}),
     );
     const text = textOf(tree);
     expect(text).toContain('Cart Total');
@@ -204,22 +192,32 @@ describe('a cart with lines', () => {
 
   it('hides the strikethrough when there is no discount to show', () => {
     const tree = render(
-      <CartScreen
-        cart={{
+      screen({cart: {
           ...CART,
           totalDiscount: 0,
           originalTotalPrice: 14000,
           items: [{...LINE, originalPrice: 7000, originalLinePrice: 14000}],
-        }}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+        }}),
     );
     const text = textOf(tree);
     expect(text).not.toContain('% off');
     expect(text).not.toContain('You saved');
     expect(text).not.toContain('Savings');
+  });
+
+  it('keeps the savings line pinned, not scrolled away with the items', () => {
+    // The reference holds it above the checkout bar while the items move behind
+    // it, so the saving is on screen at the moment the customer decides.
+    const tree = render(screen());
+    const inList = tree.root
+      .findByType(ScrollView)
+      .findAllByType(Text)
+      .map(node => flatten(node.props.children))
+      .join(' | ');
+    expect(textOf(tree)).toContain('on this order');
+    expect(inList).not.toContain('on this order');
+    // Same for the bar itself.
+    expect(inList).not.toContain('Checkout');
   });
 
   it('invents no merchandising it cannot source', () => {
@@ -228,12 +226,7 @@ describe('a cart with lines', () => {
     // in server config this app cannot read, so they are absent rather than
     // guessed. Coupons are off in-app in the reference too.
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={noop}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: CART}),
     );
     const text = textOf(tree);
     for (const invented of [
@@ -261,12 +254,7 @@ describe('changing a line', () => {
 
   it('asks Shopify for one more, rather than doing its own arithmetic', () => {
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={onChangeQty}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: CART, onChangeQty: onChangeQty}),
     );
     press(tree, 'Increase quantity');
     expect(changes).toEqual([[LINE.key, 3]]);
@@ -274,12 +262,7 @@ describe('changing a line', () => {
 
   it('asks for one fewer', () => {
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={onChangeQty}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: CART, onChangeQty: onChangeQty}),
     );
     press(tree, 'Decrease quantity');
     expect(changes).toEqual([[LINE.key, 1]]);
@@ -287,12 +270,7 @@ describe('changing a line', () => {
 
   it('removes by asking for zero, which is how Shopify removes a line', () => {
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={onChangeQty}
-        onCheckout={noop}
-        onOpenItem={noop}
-      />,
+      screen({cart: CART, onChangeQty: onChangeQty}),
     );
     press(tree, 'Remove ' + LINE.title);
     expect(changes).toEqual([[LINE.key, 0]]);
@@ -301,14 +279,9 @@ describe('changing a line', () => {
   it('hands checkout off untouched', () => {
     let handed = 0;
     const tree = render(
-      <CartScreen
-        cart={CART}
-        onChangeQty={noop}
-        onCheckout={() => {
+      screen({cart: CART, onCheckout: () => {
           handed += 1;
-        }}
-        onOpenItem={noop}
-      />,
+        }}),
     );
     press(
       tree,
@@ -323,7 +296,7 @@ describe('the empty-state glyph', () => {
     // The cube is geometry, not an asset: three bordered rectangles for the
     // hexagon's six sides, three rotated spokes for the interior edges. If a
     // piece is lost the glyph silently stops being a cube.
-    const tree = render(<EmptyState label="No items" />);
+    const tree = render(<EmptyState title="No items" />);
     const rotated = JSON.stringify(tree.toJSON()).match(/"rotate"/g) ?? [];
     expect(rotated).toHaveLength(6);
     expect(textOf(tree)).toContain('No items');
