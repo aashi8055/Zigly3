@@ -75,6 +75,7 @@ import {getInjectionForUrl} from '../webview/injectedScripts';
 import {PREFETCH_SCRIPT} from '../webview/prefetch';
 import {log, warn} from '../utils/logger';
 import LoadingBar from '../components/LoadingBar';
+import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
 import NativeHeader from '../components/NativeHeader';
 import AnnouncementBar from '../components/AnnouncementBar';
 import CartToast from '../components/CartToast';
@@ -248,6 +249,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     useState<string[]>(SEED_PLACEHOLDERS);
   /** Per-letter cadence, replaced once the site's own has been measured. */
   const [searchTypeMs, setSearchTypeMs] = useState(DEFAULT_PLACEHOLDER_MS);
+  /**
+   * Page layers that have finished loading at least once.
+   *
+   * A layer whose key is not in here is covered by `PageCover` -- the app's own
+   * blank screen and spinner -- rather than showing the website drawing itself.
+   * Keyed rather than a single flag because layers are kept alive: coming back to
+   * one that already loaded must be instant, and it is, because its key is
+   * already here.
+   */
+  const [paintedLayers, setPaintedLayers] = useState<number[]>([]);
   /** True once scrolled away from the top; collapses the search band. */
   const [searchCollapsed, setSearchCollapsed] = useState(false);
   /** Shown when the page reports an add; the site still owns the cart. */
@@ -406,6 +417,51 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   useEffect(() => {
     menuOpenRef.current = menuOpen;
   }, [menuOpen]);
+
+  /** This layer has something to show; PageCover comes off it. */
+  const markPainted = useCallback((key: number) => {
+    setPaintedLayers(prev => (prev.includes(key) ? prev : [...prev, key]));
+  }, []);
+
+  /**
+   * Reveal the covered layer no later than PAGE_COVER_CAP_MS, whatever the
+   * network does.
+   *
+   * The cover exists so nobody watches a website assemble itself. It must never
+   * become a screen they are stuck behind: a page that is genuinely slow is
+   * better shown half-drawn, with the header's back arrow right there, than
+   * hidden indefinitely.
+   *
+   * An effect rather than something `showPage` arms, so it covers every way into
+   * a layer -- a category circle, a search result, a drawer row, a link inside
+   * another page. The cleanup cancels it when the page paints first, or when the
+   * customer leaves before it does.
+   */
+  useEffect(() => {
+    if (showing === null || paintedLayers.includes(showing.key)) {
+      return;
+    }
+    const key = showing.key;
+    const timer = setTimeout(() => markPainted(key), PAGE_COVER_CAP_MS);
+    return () => clearTimeout(timer);
+  }, [showing, paintedLayers, markPainted]);
+
+  /**
+   * Forget layers that have been evicted.
+   *
+   * Keys are monotonic and never reused, so a stale entry can never let a new
+   * layer skip its cover -- but the list would grow by one for every page opened
+   * in a session, and it is read on every render of every layer. Bounded to
+   * whatever is actually mounted instead.
+   */
+  useEffect(() => {
+    const live = new Set(stack.layers.map(layer => layer.key));
+    setPaintedLayers(prev => {
+      const next = prev.filter(key => live.has(key));
+      // Same array when nothing was dropped, or this would loop forever.
+      return next.length === prev.length ? prev : next;
+    });
+  }, [stack.layers]);
 
   useEffect(() => {
     authRef.current = auth;
@@ -1949,12 +2005,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   setLoadingTarget(prev =>
                     prev === layer.key ? null : prev,
                   );
+                  // The page has a document; the cover can come off.
+                  markPainted(layer.key);
                   applyStyles(layer.key, e.nativeEvent.url);
                 }}
                 onError={({nativeEvent}) => {
                   // Not promoted to the offline screen: the header's back arrow
-                  // is right there, so a failed inner page is escapable.
+                  // is right there, so a failed inner page is escapable -- but
+                  // only if the cover is not still over it.
                   warn('page load error:', nativeEvent.description);
+                  markPainted(layer.key);
                   setLoadingTarget(prev =>
                     prev === layer.key ? null : prev,
                   );
@@ -1976,6 +2036,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   layerRefs.current.get(layer.key)?.reload();
                 }}
               />
+
+              {/*
+                Over the page until it has something to show.
+
+                Without this, opening a category circle meant watching a Zigly
+                page build itself out of a white rectangle -- they carry no
+                cache-control and Cloudflare reports them DYNAMIC, so every one
+                is a fresh download. The cover is the app's own screen instead,
+                and it fades out rather than cutting, so the page arrives rather
+                than appearing.
+
+                Only over a layer that is actually on screen: a parked layer is
+                already invisible, and covering it would keep its key out of the
+                painted list for no reason.
+              */}
+              {isVisible && !paintedLayers.includes(layer.key) ? (
+                <PageCover />
+              ) : null}
             </View>
           );
         })}

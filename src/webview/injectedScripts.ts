@@ -17,6 +17,7 @@ import {HOT_PICKS_SCRIPT} from './hotPicks';
 import {EXPLORE_SCRIPT} from './explorePicker';
 import {SORT_FILTER_SCRIPT} from './sortFilterBar';
 import {DRAWER_EXTRAS_SCRIPT} from './drawerExtras';
+import {BREED_PAGE_SCRIPT} from './breedPage';
 import {EXTRA_SECTIONS_SCRIPT} from './extraSections';
 import {EVERYTHING_SCRIPT} from './everythingSection';
 import {CART_TOAST_SCRIPT} from './cartToast';
@@ -74,5 +75,6 @@ ${CART_TOAST_SCRIPT}
 ${READY_SIGNAL_SCRIPT}
 ${SORT_FILTER_SCRIPT}
 ${DRAWER_EXTRAS_SCRIPT}
+${BREED_PAGE_SCRIPT}
 ${diagnostic}`;
 };

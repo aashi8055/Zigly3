@@ -12,6 +12,7 @@
  *   - must degrade silently if the selector disappears
  */
 import {HEADER_DRAWER_CSS} from './headerBridge';
+import {BREED_PAGE_CSS} from './breedPage';
 
 export const MOBILE_CSS = `
 ${HEADER_DRAWER_CSS}
@@ -925,6 +926,8 @@ html.zigly-inner-page footer,
 html.zigly-inner-page [id*="__footer"] {
   display: none !important;
 }
+
+${BREED_PAGE_CSS}
 `;
 
 /**
