@@ -7,10 +7,12 @@
  *
  * Both /pages/dog and /pages/zigly-cat carry this section with the same four
  * tabs but species-specific collections, so the two are merged: tapping Food
- * shows dog AND cat food rather than dog only. Merging is used rather than
- * rewriting links to combined collections, because those only partly exist --
- * /collections/wet-food resolves but /collections/dry-food is a 404, so
- * rewriting would manufacture dead tiles.
+ * shows dog AND cat categories rather than dog only.
+ *
+ * Every tile keeps the link the section shipped with. An earlier version tried
+ * to improve on them by pointing a merged tile at a combined collection guessed
+ * from its label; see combineDuplicates() for the counts that showed why that
+ * has to stop.
  *
  * Two things the source page provides that the homepage does not:
  *
@@ -27,8 +29,14 @@
 export const EXPLORE_SCRIPT = `
 (function () {
   var ID = 'zigly-explore';
-  /** The reference app shows four categories per tab. */
-  var MAX_TILES = 4;
+  /**
+   * Tiles kept per tab, after the dog and cat sets are merged and deduplicated.
+   *
+   * Each source page ships four, so eight is "everything both pets have" and
+   * the cap is really a runaway guard. It used to be four, which silently threw
+   * away every cat-only category because the dog tiles merge in first.
+   */
+  var MAX_TILES = 8;
   var PRIMARY = 'explore_product@dog';
   var SECONDARY = 'explore_product@cat';
   var FRAGMENT = 'explore_product';
@@ -138,83 +146,60 @@ export const EXPLORE_SCRIPT = `
   /**
    * Collapse the dog and cat copies of a category into one tile.
    *
-   * After merging, each category appears twice -- Wet Food (dog) and Wet Food
-   * (cat) -- where the reference app shows a single tile whose listing holds
-   * both. Zigly publishes combined collections for most categories but not
-   * all -- several handles that would follow the same naming pattern are 404s.
+   * After merging, a category that both pets have appears twice -- Wet Food
+   * (dog) and Wet Food (cat) -- where the reference app shows one tile. The
+   * first is kept and the later ones dropped.
    *
-   * So each candidate is verified with a HEAD request before use. Where a
-   * combined collection exists we keep one tile pointing at it; where it does
-   * not, both species tiles stay, because a single tile linking to a dead
-   * collection would be worse than two that work.
+   * WHAT THIS DELIBERATELY NO LONGER DOES, because it was sending people to
+   * empty listings. It used to rewrite the surviving tile's link to a combined
+   * collection whose handle it guessed from the label -- "Rope Toys" becoming a
+   * "rope-toys" collection -- guarded by a HEAD request, and fell back to the
+   * site's search when that 404'd. The guard was the problem: a Shopify
+   * collection can be published and empty, so HEAD answers 200 for a handle
+   * with nothing in it. Product counts read on 2026-08-22:
    *
-   * This runs only once Explore is scrolled into view, so the checks are off
-   * the critical path.
+   *     tile                 guessed handle       had   handle it shipped  had
+   *     Biscuits & Cookies   biscuits-cookies       0   dog-biscuits         7
+   *     Rope Toys            rope-toys              0   dog-rope-tug-toys   21
+   *     Plush Toys           plush-toys             0   dog-plush-toys     112
+   *     Interactive Toys     interactive-toys       0   dog-interactive-...  17
+   *     Travel Essentials    travel-essentials      0   dog-grooming-...     33
+   *
+   * So five of sixteen tiles opened an empty page, and the rest had their
+   * species-specific listing swapped for a broader guess. Every tile already
+   * carries a real collection URL that Zigly themselves chose -- there was
+   * never anything to improve on. The links are now left exactly as the section
+   * ships them, which is the only way to be sure a tile lands on products.
+   *
+   * The cost is that a shared category shows the dog listing rather than a
+   * combined one. That is a listing with products in it, which beats a listing
+   * without.
    */
-  function handleFor(label) {
-    var out = '';
-    for (var i = 0; i < label.length; i++) {
-      var ch = label.charAt(i);
-      var code = label.charCodeAt(i);
-      var isAlpha = (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
-      var isDigit = code >= 48 && code <= 57;
-      if (isAlpha || isDigit) { out += ch.toLowerCase(); }
-      else if (out.length && out.charAt(out.length - 1) !== '-') { out += '-'; }
-    }
-    while (out.length && out.charAt(out.length - 1) === '-') { out = out.slice(0, -1); }
-    return out;
-  }
-
-  function exists(path) {
-    return fetch(path, {method: 'HEAD', credentials: 'same-origin'})
-      .then(function (r) { return r.ok; })
-      .catch(function () { return false; });
-  }
-
   function combineDuplicates(root) {
     var blocks = root.querySelectorAll('[id^="tab_block_"]');
     for (var b = 0; b < blocks.length; b++) {
       (function (block) {
         var wrap = block.querySelector('.swiper-wrapper') || block;
         var slides = block.querySelectorAll('.swiper-slide');
-        var groups = {};
-        var order = [];
+        var seen = {};
+
         for (var i = 0; i < slides.length; i++) {
           var label = squash(slides[i].textContent || '');
           if (!label) { continue; }
-          if (!groups[label]) { groups[label] = []; order.push(label); }
-          groups[label].push(slides[i]);
+          if (seen[label]) {
+            if (slides[i].parentNode) {
+              slides[i].parentNode.removeChild(slides[i]);
+            }
+          } else {
+            seen[label] = 1;
+          }
         }
 
-        order.forEach(function (label) {
-          var dupes = groups[label];
-          if (dupes.length < 2) { return; }
-
-          var keep = dupes[0];
-          var link = keep.querySelector('a[href]');
-
-          // Drop the duplicates immediately so the tab settles at one tile per
-          // category, as the reference app shows.
-          for (var d = 1; d < dupes.length; d++) {
-            if (dupes[d].parentNode) { dupes[d].parentNode.removeChild(dupes[d]); }
-          }
-
-          if (!link) { return; }
-
-          // Prefer Zigly's combined collection. Several categories have none --
-          // dry-food, biscuits and meaty-treats among them -- so those fall
-          // back to the site's own search for the category, which returns both
-          // pets. Either way the destination is real and covers cat and dog.
-          var combined = '/collections/' + handleFor(label);
-          exists(combined).then(function (ok) {
-            link.setAttribute(
-              'href',
-              ok ? combined : '/search?q=' + encodeURIComponent(label)
-            );
-          });
-        });
-
-        // The reference shows four categories per tab; keep the first four.
+        // Keep the cap generous. The rail is a horizontal scroller, so extra
+        // tiles cost nothing on screen, and the categories only one pet has --
+        // Kitten Food, Creamy Treats, Catnip Toys, Wand Toys, Litter
+        // Accessories -- are exactly the ones a tight cap threw away, since the
+        // dog tiles are merged in first.
         var remaining = wrap.querySelectorAll('.swiper-slide');
         for (var r = MAX_TILES; r < remaining.length; r++) {
           if (remaining[r].parentNode) {

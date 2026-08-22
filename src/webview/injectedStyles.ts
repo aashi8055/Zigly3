@@ -166,7 +166,9 @@ html, body {
 }
 [id^="zigly-breed-"] .swiper-wrapper {
   display: flex;
-  gap: 14px;
+  /* See "Breed circles" below: the air between circles is set there, in one
+     place, because the width and the gap have to be chosen together. */
+  gap: 26px;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x proximity;
@@ -177,10 +179,7 @@ html, body {
 [id^="zigly-breed-"] .swiper-wrapper::-webkit-scrollbar {
   display: none;
 }
-/* Roughly three circles visible, matching the reference app. */
 [id^="zigly-breed-"] .swiper-slide {
-  flex: 0 0 30%;
-  max-width: 30%;
   margin: 0 !important;
   scroll-snap-align: start;
 }
@@ -452,11 +451,22 @@ body.zigly-listing .card-wrapper {
    sections. All are presentation only.
    ------------------------------------------------------------------ */
 
-/* 1. Breed circles were roughly half the reference size, and four fitted per
-      screen where the reference shows three. */
+/* 1. Breed circles.
+
+      They were sized at 33% with a 14px gap, which drew a circle wider than
+      the reference's and left the rail looking crowded -- three big discs
+      almost touching. The brief is smaller icons with more air between them,
+      so the width comes down and the gap goes up (the gap itself is set on the
+      wrapper above, since the two only make sense together).
+
+      24% + 26px still shows three circles and a peek of the fourth on a 360px
+      screen, so nothing is lost from view: the same list, smaller discs, and
+      roughly double the space between them. The label under each circle is the
+      reason the width does not go lower -- "Labrador Retriever" needs room to
+      wrap to two lines without hyphenating. */
 [id^="zigly-breed-"] .swiper-slide {
-  flex: 0 0 33% !important;
-  max-width: 33% !important;
+  flex: 0 0 24% !important;
+  max-width: 24% !important;
 }
 [id^="zigly-breed-"] .home-category-list-image-wrapper,
 [id^="zigly-breed-"] .category-list-image {
@@ -506,11 +516,215 @@ body.zigly-listing .card-wrapper {
 }
 
 /* ------------------------------------------------------------------
+   Hot Picks cards: the Add to Bag button, actually on screen.
+
+   The rule above showed .quick-add__submit and was believed to be the fix, but
+   it never had any effect on a phone, because the button was not the thing
+   being hidden -- its container was, twice over, by the theme's own mobile CSS
+   (both verified against the live stylesheets on 2026-08-22):
+
+     base.aio.min.css
+       @media (max-width: 749px) { .small-hide { display: none !important } }
+     product-card.aio.min.css
+       @media (max-width: 749px) { .product-card-wrapper .quick-add { display: none } }
+
+   and the card's markup is <div class="quick-add no-js-hidden small-hide">.
+   A display:block on the child cannot bring back a parent that is display:none,
+   so the cards showed no add control at all: the compact variant picker hidden
+   by us, and Add to Bag hidden by the theme. That is the card the reference
+   dashboard does not have.
+
+   So the container is un-hidden -- which needs !important to beat .small-hide's
+   own !important -- and the floating "+ Add" chip is hidden in its place. That
+   chip is .atc-wrapper#mobile-atc-wrapper, positioned absolute bottom-right,
+   and it is the mobile control the theme shows *instead of* Add to Bag. With
+   both visible a card would carry two add buttons.
+
+   The button is still Zigly's: the theme's own <product-form>, submitting the
+   variant the theme itself pre-selected. Only which of the site's two add
+   controls is on screen changes -- no cart request is made from this app.
+   ------------------------------------------------------------------ */
+#zigly-hot-picks .quick-add,
+[id^="zigly-x-"] .quick-add,
+body.zigly-listing .quick-add {
+  display: block !important;
+  margin-top: auto !important;
+}
+#zigly-hot-picks .atc-wrapper,
+[id^="zigly-x-"] .atc-wrapper,
+body.zigly-listing .atc-wrapper {
+  display: none !important;
+}
+/* Full-width, and tall enough to be a real target. The theme's own button
+   colours are left alone -- this only gives it the shape the reference has. */
+#zigly-hot-picks .quick-add__submit,
+[id^="zigly-x-"] .quick-add__submit,
+body.zigly-listing .quick-add__submit {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  min-height: 38px !important;
+  margin: 8px 0 0 !important;
+}
+/* Cards are a column with the button pinned to the bottom edge, so a two-line
+   title next to a one-line title does not stagger the buttons in a rail. */
+#zigly-hot-picks .card-wrapper,
+[id^="zigly-x-"] .card-wrapper {
+  height: 100%;
+}
+#zigly-hot-picks .card-wrapper .product--below-content,
+[id^="zigly-x-"] .card-wrapper .product--below-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+
+/* ------------------------------------------------------------------
    Category circles: the reference app runs them straight under the search
    band with no heading, so the section's own title is hidden.
    ------------------------------------------------------------------ */
 [id*="home_category_section"] h2,
 [id*="home_category_section"] .top-head-wrapper {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------
+   The banner carousel: one clean edge-to-edge card, no frame.
+
+   The site insets the strip and rounds it --
+
+     .homepage_banner .homepageMainBanner.swiper { padding-inline: 20px }
+     @media (max-width: 500px) { ... padding-inline: 16px }
+     .homepage_banner .homepageMainBanner .swiper-slide { border-radius: 10px }
+     .homepage_banner .homepageMainBanner .swiper-slide img { border-radius: 20px }
+
+   -- which on a phone reads as a bordered card floating in a gutter rather
+   than the full-width banner the reference app shows. The inset and the radius
+   go, so the banner is the width of the screen with nothing drawn around it.
+
+   Only the frame is touched. The slides, their images and their links are
+   Zigly's, and the carousel itself is Zigly's Swiper instance -- see
+   bannerCarousel.ts for the looping and autoplay, which is behaviour and
+   deliberately not done from here.
+   ------------------------------------------------------------------ */
+.homepage_banner .homepageMainBanner.swiper,
+[id*="homepage_banner"] .swiper {
+  padding-inline-start: 0 !important;
+  padding-inline-end: 0 !important;
+}
+.homepage_banner .homepageMainBanner .swiper-slide,
+.homepage_banner .homepageMainBanner .swiper-slide img,
+.homepage_banner .banner_image_div,
+.homepage_banner .banner_link {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+/* The dots the site only shows below 749px. Given room of their own, so they
+   sit under the banner rather than over the last few pixels of the image. */
+.homepage_banner .swiper-pagination {
+  position: static !important;
+  display: block !important;
+  margin: 8px 0 0 !important;
+}
+
+/* ------------------------------------------------------------------
+   The coupon strip: hand-scrolled, not self-scrolled.
+
+   The site drives this with a CSS marquee, not JavaScript -- its own drag
+   handler is commented out in the theme:
+
+     .mySwiper_couponSlider .slider-track {
+       animation: scroll 30s linear infinite;
+     }
+     @keyframes scroll { from { translateX(0) } to { translateX(-50%) } }
+
+   So the strip slid past on its own and a coupon could not be held still long
+   enough to read, let alone copied. The animation is stopped and the container
+   becomes a native horizontal scroller, so it moves only under the user's
+   thumb. It also means one infinite compositor animation stops running for the
+   whole life of the dashboard.
+
+   The duplicate coupons the marquee needed are removed in couponStrip.ts, which
+   is also where the copy button is put back to work.
+   ------------------------------------------------------------------ */
+.mySwiper_couponSlider .slider-track {
+  animation: none !important;
+  transform: none !important;
+  transition: none !important;
+  width: max-content;
+}
+.slider-container.mySwiper_couponSlider {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+.slider-container.mySwiper_couponSlider::-webkit-scrollbar {
+  display: none;
+}
+.mySwiper_couponSlider .slide {
+  scroll-snap-align: start;
+}
+/* The copy control is an 18px glyph on mobile, which is half a usable target.
+   Padded out rather than scaled up, so Zigly's icon keeps its own size. */
+.coupon_slider_main .secondary_Svg {
+  padding: 8px !important;
+  margin: -8px !important;
+  min-width: 34px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ------------------------------------------------------------------
+   Top Pet Brands: one brand per card.
+
+   The section's own Swiper is initialised with
+
+     grid: { rows: 2, fill: "row" }
+
+   so every column of the rail holds two brands stacked one above the other.
+   That is the two-brands-per-card the brief asks to undo. Swiper positions the
+   second row by writing an inline margin-top on those slides, which is why the
+   overrides here are !important -- a stylesheet rule with !important is the one
+   thing that beats an inline declaration.
+
+   Rather than re-initialise Zigly's Swiper with different options, the rail
+   becomes a native horizontal scroller, which is the same treatment every other
+   rail in this app already gets and needs no library callback. The cards, their
+   images, their links and their order stay the section's own; the Popular /
+   Emerging tabs keep working, because that handler is the site's and it only
+   toggles a class.
+   ------------------------------------------------------------------ */
+.home-brand-section-wrapper .home-shop-brand-swiper-wrapper .swiper-wrapper {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  height: auto !important;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  transform: none !important;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  padding-bottom: 4px;
+}
+.home-brand-section-wrapper .home-shop-brand-swiper-wrapper .swiper-wrapper::-webkit-scrollbar {
+  display: none;
+}
+.home-brand-section-wrapper .home-shop-brand-swiper-wrapper .swiper-slide {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+/* The arrows are desktop chrome and overlap the first and last card on a
+   phone, where the rail is scrolled by thumb. */
+.home-brand-section-wrapper .swiper-button-next,
+.home-brand-section-wrapper .swiper-button-prev {
   display: none !important;
 }
 

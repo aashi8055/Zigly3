@@ -70,6 +70,40 @@ describe('getInjectionForUrl', () => {
       expect(script).toContain('[id*="home_category_section"]');
     });
 
+    it('installs the section fetcher before anything calls it', () => {
+      // This was wrong and failed silently. homeLayout is the first module to
+      // call window.__ziglyFetchSection, and pageCache -- which defines it --
+      // came second in the payload, so the call threw on every load and was
+      // swallowed by homeLayout's own try/catch. The visible symptom was the
+      // reference app's six category circles never replacing the homepage's
+      // fourteen, with nothing in the log to say why.
+      const script = getInjectionForUrl('https://zigly.com/') as string;
+      expect(script.indexOf('window.__ziglyFetchSection = function')).toBeLessThan(
+        script.indexOf('swapCategories'),
+      );
+    });
+
+    it('swaps in the category set the reference app shows', () => {
+      const script = getInjectionForUrl('https://zigly.com/') as string;
+      expect(script).toContain('swapCategories');
+      expect(script).toContain('data-zigly-swapped');
+      // Six circles from the pet page, not the homepage's fourteen tiles. The
+      // set itself is Zigly's; only which of their sections is used changes.
+      expect(script).toContain('home_category_section');
+      expect(script).not.toContain('"Small Pets"');
+      expect(script).not.toContain('"Vet Care"');
+    });
+
+    it('lets a transplanted section tell our slot from the site’s own', () => {
+      // "Everything For" reserves a slot called zigly-x-everything, then
+      // checked [id*="everything"] to see whether the site already rendered the
+      // section -- and matched its own slot, so it disabled itself every time
+      // and the section never appeared at all.
+      const script = getInjectionForUrl('https://zigly.com/') as string;
+      expect(script).toContain('siteRenders');
+      expect(script).toContain("id.indexOf('zigly-') !== 0");
+    });
+
     it('can recover when a seeded section id goes stale', () => {
       // Full ids are used as a fast-path cache hint for Shopify's Section
       // Rendering API, but a theme re-save changes them -- so there must always
@@ -87,13 +121,185 @@ describe('getInjectionForUrl', () => {
 
     it('treats a missing coupon section as normal, not an error', () => {
       // Zigly adds and removes this section; absence must not warn or throw.
+      // Scoped to the layout module: couponStrip.ts warns when a *copy* fails,
+      // which is a different event and must not be read as this one.
       const script = getInjectionForUrl('https://zigly.com/') as string;
-      const couponBlock = script.slice(script.indexOf('coupon_slider'));
-      expect(couponBlock).not.toContain("warn('coupon");
+      const layout = script.slice(
+        script.indexOf('coupon_slider'),
+        script.indexOf('__ziglyCouponStrip'),
+      );
+      expect(layout).not.toContain("warn('coupon strip");
+      expect(layout).not.toContain("warn('coupon section");
+    });
+
+    it('stops the strip scrolling itself and lets the thumb do it', () => {
+      // The movement is the theme's own CSS marquee, so it is stopped in CSS.
+      const script = getInjectionForUrl('https://zigly.com/') as string;
+      expect(script).toContain('.mySwiper_couponSlider .slider-track');
+      expect(script).toContain('animation: none !important');
+      expect(script).toContain('.slider-container.mySwiper_couponSlider');
+      expect(script).toContain('overflow-x: auto !important');
+    });
+
+    it("re-supplies the site's own copy function, and only if absent", () => {
+      // The section's markup calls copyCodeCoupon from an inline onclick, and
+      // this app drops transplanted scripts -- so the function has to come
+      // back, under the same name, without shadowing the site's own.
+      const script = getInjectionForUrl('https://zigly.com/') as string;
+      expect(script).toContain("typeof window.copyCodeCoupon !== 'function'");
+      expect(script).toContain('window.copyCodeCoupon = function');
+      // Same feedback class the theme's CSS keys the tick off.
+      expect(script).toContain('show_copy_message');
+      // Clipboard API first, execCommand when the WebView refuses it.
+      expect(script).toContain('navigator.clipboard.writeText');
+      expect(script).toContain("document.execCommand('copy')");
+    });
+
+    it('drops the duplicate coupons the marquee needed', () => {
+      // translateX(-50%) means the theme emits every coupon twice. Scrolled by
+      // hand, that reads as the list repeating.
+      const script = getInjectionForUrl('https://zigly.com/') as string;
+      expect(script).toContain('data-zigly-deduped');
     });
 
     it('is not injected into checkout', () => {
       expect(getInjectionForUrl('https://zigly.com/checkouts/c/x')).toBeNull();
+    });
+  });
+
+  describe('the banner carousel', () => {
+    const home = () => getInjectionForUrl('https://zigly.com/') as string;
+
+    it('runs on inner pages too, not only the dashboard', () => {
+      // The brief is that a banner is never stuck wherever one appears, and the
+      // pet pages, the collection list and the lifestyle pages all carry one.
+      for (const url of [
+        'https://zigly.com/',
+        'https://zigly.com/pages/dog',
+        'https://zigly.com/collections/dog-dry-food',
+      ]) {
+        expect(getInjectionForUrl(url)).toContain('__ziglyBannerCarousel');
+      }
+    });
+
+    it('puts the theme’s misplaced loop where Swiper reads it', () => {
+      // The section passes `loop: true` nested inside `autoplay`, where Swiper
+      // ignores it -- so the last banner was a dead end. rewind is Swiper 11's
+      // own no-cloning equivalent and is read on every slideNext.
+      const s = home();
+      expect(s).toContain('sw.params.rewind = true');
+      expect(s).toContain('stopOnLastSlide = false');
+    });
+
+    it('wraps a drag off either end, after Swiper has settled', () => {
+      // Swiper emits touchEnd near the top of its own handler and only then
+      // decides where to land, so moving the carousel from inside the event
+      // would be overwritten a moment later.
+      const s = home();
+      expect(s).toContain("sw.on('touchEnd'");
+      expect(s).toContain('sw.isEnd');
+      expect(s).toContain('sw.isBeginning');
+      expect(s).toContain('sw.slideTo(0)');
+      expect(s).toContain('setTimeout(function () {');
+    });
+
+    it('leaves the pagination alone', () => {
+      // The theme passes the document-wide '.swiper-pagination', and this app
+      // puts a dozen more of those on the page -- which looks like a defect and
+      // is not. Swiper's uniqueNavElements defaults to true and narrows a
+      // multi-match string selector to nodes inside the instance's own element.
+      // Re-pointing the dots from here would be pure risk, and Swiper 11
+      // exposes no init/destroy on swiper.pagination to do it cleanly.
+      const s = home();
+      expect(s).not.toContain('pagination.destroy()');
+      expect(s).not.toContain('params.pagination.el =');
+    });
+
+    it('stops autoplay off screen and re-arms it on the way back', () => {
+      // Inner pages are parked off screen rather than hidden, so a carousel
+      // nobody is looking at would keep the compositor busy.
+      const s = home();
+      expect(s).toContain('IntersectionObserver');
+      expect(s).toContain('stopAutoplay');
+      expect(s).toContain('armAutoplay');
+      expect(s).toContain('sw.autoplay.start');
+    });
+
+    it('nudges a visible carousel that has stopped moving', () => {
+      const s = home();
+      expect(s).toContain('sw.slideNext()');
+      expect(s).toContain('onScreen(root)');
+    });
+
+    it('builds no carousel of its own and touches no slide', () => {
+      // It repairs the configuration of the instance the page already made.
+      const s = home();
+      expect(s).not.toContain('new Swiper');
+      expect(s).not.toContain('swiper-slide-duplicate');
+      expect(s).not.toContain('loopCreate');
+    });
+
+    it('leaves a section with no instance alone', () => {
+      // Transplanted sections deliberately never run their scripts, so
+      // el.swiper being undefined is the signal to leave them to the CSS.
+      expect(home()).toContain('if (!sw || !sw.params) { return; }');
+    });
+
+    it('drops the frame the site draws round the strip', () => {
+      const s = home();
+      expect(s).toContain('.homepage_banner .homepageMainBanner.swiper');
+      expect(s).toContain('padding-inline-start: 0 !important');
+      expect(s).toContain('border-radius: 0 !important');
+    });
+  });
+
+  describe('the breed rail', () => {
+    it('draws smaller circles with more air between them', () => {
+      // Was 33% wide with a 14px gap, which read as three big discs almost
+      // touching. Width and gap only make sense chosen together.
+      const s = getInjectionForUrl('https://zigly.com/') as string;
+      expect(s).toContain('flex: 0 0 24% !important');
+      expect(s).toContain('gap: 26px');
+      expect(s).not.toContain('flex: 0 0 33% !important');
+    });
+  });
+
+  describe('the product card', () => {
+    it('un-hides the container the theme hides, not just the button', () => {
+      // Two mobile rules hid it: base.css's .small-hide and product-card.css's
+      // .product-card-wrapper .quick-add. A display:block on the child cannot
+      // bring back a parent that is display:none, so the cards had no add
+      // control at all -- variants hidden by us, Add to Bag hidden by them.
+      const s = getInjectionForUrl('https://zigly.com/') as string;
+      expect(s).toContain('#zigly-hot-picks .quick-add,');
+      expect(s).toContain('display: block !important');
+    });
+
+    it('shows one add control, not two', () => {
+      // .atc-wrapper is the floating "+ Add" the theme shows instead of Add to
+      // Bag on mobile. With both visible a card carries two add buttons.
+      const s = getInjectionForUrl('https://zigly.com/') as string;
+      expect(s).toContain('#zigly-hot-picks .atc-wrapper,');
+      expect(s).toContain('body.zigly-listing .atc-wrapper');
+    });
+
+    it('makes no cart request of its own', () => {
+      const s = getInjectionForUrl('https://zigly.com/') as string;
+      expect(s).not.toContain('/cart/add');
+    });
+  });
+
+  describe('the brand rail', () => {
+    it('shows one brand per card, not two stacked', () => {
+      // The section's Swiper is initialised with grid: { rows: 2 }, so every
+      // column held two brands. Swiper writes the second row's offset as an
+      // inline margin-top, which is why the override has to be !important.
+      const s = getInjectionForUrl('https://zigly.com/') as string;
+      expect(s).toContain(
+        '.home-brand-section-wrapper .home-shop-brand-swiper-wrapper .swiper-wrapper',
+      );
+      expect(s).toContain('flex-wrap: nowrap !important');
+      expect(s).toContain('margin-top: 0 !important');
     });
   });
 
@@ -174,17 +380,19 @@ describe('getInjectionForUrl', () => {
     expect(script).toContain('tabMap');
   });
 
-  it('verifies a combined collection exists before linking to it', () => {
-    // Several combined handles that follow the obvious naming pattern are
-    // 404s, so each candidate is checked with a HEAD request; a category
-    // without one keeps its two working species tiles rather than gaining a
-    // single dead one.
+  it('leaves every explore tile pointing where Zigly pointed it', () => {
+    // This used to rewrite a merged tile's link to a combined collection
+    // guessed from its label, guarded by a HEAD request. The guard did not
+    // work: a Shopify collection can be published and empty, so HEAD answered
+    // 200 for handles holding nothing, and five of sixteen tiles opened a
+    // listing with no products in it. Counts are in explorePicker.ts.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain("method: 'HEAD'");
-    expect(script).toContain('handleFor');
-    // Handles are derived from the visible label, never written here.
+    expect(script).not.toContain("method: 'HEAD'");
+    expect(script).not.toContain('handleFor');
+    expect(script).not.toContain("'/search?q=' + encodeURIComponent(label)");
+    // And no handle is written here either, guessed or otherwise.
     expect(script).not.toContain('/collections/dry-food');
-    expect(script).not.toContain('/collections/wet-food');
+    expect(script).not.toContain('/collections/rope-toys');
   });
 
   describe('sort and filter bar', () => {
@@ -354,12 +562,12 @@ describe('getInjectionForUrl', () => {
     expect(script).toContain('.tab-content');
   });
 
-  it('shows four combined categories per explore tab', () => {
+  it('keeps every category both source pages ship, deduplicated', () => {
+    // Four per page, so eight is "everything both pets have" and the cap is a
+    // runaway guard. At four it silently dropped every cat-only category,
+    // because the dog tiles are merged in first.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain('MAX_TILES = 4');
-    // Categories without a combined collection fall back to Zigly's own
-    // search, which returns both pets, rather than a dog-only collection.
-    expect(script).toContain("'/search?q=' + encodeURIComponent(label)");
+    expect(script).toContain('MAX_TILES = 8');
   });
 
   describe('full dashboard match', () => {
@@ -409,12 +617,15 @@ describe('getInjectionForUrl', () => {
       'home_shop_by_brand_section',
       'helpful_tips',
       'about_our_communities',
-      'home_arrival_section',
       'custom_video_text_banner',
     ]) {
       expect(script).toContain(`"move":"${frag}"`);
       expect(script).not.toContain(`"key":"${frag}"`);
     }
+    // The arrival sections are the exception: neither of the homepage's two is
+    // in the reference dashboard, so they are hidden rather than relocated.
+    expect(script).toContain('"hide":"home_arrival_section"');
+    expect(script).not.toContain('"move":"home_arrival_section"');
   });
 
   it('hides homepage sections the reference does not show', () => {
@@ -427,12 +638,15 @@ describe('getInjectionForUrl', () => {
     expect(script).toContain('custom_single_banner');
   });
 
-  it('uses the arrival section for Bestsellers, not best_deals', () => {
-    // Section names do not match their content here: best_deals holds the
-    // Zigly Coins banner and offer cards, while the products the reference
-    // shows under "Bestsellers" live in the homepage's arrival section.
+  it('uses the pet page product section for Bestsellers, not best_deals', () => {
+    // Section names do not match their content here. best_deals holds the
+    // Zigly Coins banner and offer cards, and the homepage's arrival sections
+    // are "Best Deals" and "Trending Products" -- neither is the rail in this
+    // slot. collection_product_section is: ten real product cards, sitting in
+    // exactly this position on /pages/dog.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain('"move":"home_arrival_section"');
+    expect(script).toContain('"key":"collection_product_section"');
+    expect(script).toContain('"mark":"zigly-x-bestsellers"');
     // best_deals is used, but for Coins -- a different slot entirely.
     expect(script).toContain('"mark":"zigly-x-coins"');
   });
@@ -476,11 +690,18 @@ describe('getInjectionForUrl', () => {
     expect(logos).toBeGreaterThan(communities);
   });
 
-  it('takes Bestsellers from the arrival section that has those products', () => {
-    // The homepage has two: "Best Deals" first, "Trending Products" second.
-    // The reference's products are in the second.
+  it('closes the dashboard with a real Zigly photo section', () => {
+    // The reference heads this "From Our Instagram". No section on zigly.com is
+    // called that and none pulls a feed; the site's own photo grid is `gallery`
+    // on /pages/store-home-page-section, so that is what is used, under its own
+    // heading. The mark deliberately does not contain "gallery" -- `check` is a
+    // substring test over ids, and a mark holding its own check fragment is a
+    // section that disables itself on the second injection.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain('"index":1');
+    expect(script).toContain('"key":"gallery"');
+    expect(script).toContain('"path":"/pages/store-home-page-section"');
+    expect(script).toContain('"mark":"zigly-x-moments"');
+    expect(script).not.toContain('From Our Instagram');
   });
 
   describe('add to cart feedback', () => {

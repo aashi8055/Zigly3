@@ -140,12 +140,15 @@ src/
 │   ├── pageStack.ts            the inner-page stack — see below
 │   └── accountStack.ts         the account section's screens — see below
 ├── search/suggestions.ts       parsing the suggest payload — see below
+├── search/placeholders.ts      the typewriter's cycle, as data — see below
 ├── wishlist/wishlistItems.ts   parsing the wishlist payload — see below
 ├── account/accountData.ts      parsing the account payloads — see below
 ├── utils/money.ts              one formatter, one unit (integer paise)
 ├── webview/webViewConfig.ts    WebView props
 ├── webview/accountBridge.ts    reading and writing the account in the page
 ├── webview/loginRestyle.ts     presenting the site's OTP widget as a screen
+├── webview/bannerCarousel.ts   keeping the site's banner Swiper unstuck
+├── webview/couponStrip.ts      the copy button, and stopping the marquee
 ├── components/                 NativeHeader, BottomNav, AnnouncementBar,
 │                               CartScreen, CartToast, SearchScreen,
 │                               WishlistScreen, AccountScreen, OrdersScreen,
@@ -469,6 +472,112 @@ session-scoped: eight strings did not justify a storage dependency.
 
 Covered by `__tests__/search.test.ts`.
 
+### The bar types its own prompt
+
+The site's search box does not sit still, and the way it moves is not a fade or
+a swap — it is a typewriter. SearchTap runs this (`dynamicPlaceholder`, read out
+of the live bundle on 2026-08-22):
+
+```
+placeholder = ''
+phrases = ['Search For Dry Food',
+           'Search For Oral & Dental Care',
+           'Search For Grooming Tools']
+type  100ms/char → hold 1000ms → erase 50ms/char → pause 1000ms → next, wrapping
+```
+
+The header does exactly that, at those timings. Nothing is smoothed or rounded:
+a prompt moving at a speed the website does not use is a prompt that came from
+somewhere else.
+
+**The phrases are read, not written down.** SearchTap keeps its list inside a
+minified bundle, so there is nothing to lift out of the DOM up front — but the
+*animation* is in the DOM, one letter at a time, on an input this app keeps
+rendered (`visibility: hidden`, never `display: none`, which is why the site's
+own scripts keep running). `REPORT_SEARCH_PLACEHOLDERS` puts a MutationObserver
+on that one attribute, treats the longest value seen before the first shrink as
+a finished phrase, and posts it over. It also times the gaps between letters, so
+the app types at the site's measured cadence rather than at one we chose.
+
+There are seeds, because the reader cannot be instant — the site takes about
+four seconds per phrase, and a cold header would be blank through the first
+thing the customer looks at. They are Zigly's copy, three of them verbatim from
+the bundle above. Anything the reader brings back is folded in after them.
+
+Two things worth knowing:
+
+- **The cycle is data, not timers.** `src/search/placeholders.ts` is a pure
+  function from one frame to the next, so the part that can be wrong is testable
+  without a clock.
+- **It stops when it cannot be seen.** The band collapses on scroll, and the
+  animation stops with it. The prompt is also its own memoised component, so a
+  letter re-renders one `<Text>` rather than the whole header ten times a
+  second.
+
+Covered by `__tests__/placeholders.test.ts` and `__tests__/header.test.tsx`.
+
+## Carousels
+
+Every rail on the dashboard is one of two kinds, and the difference matters.
+
+**Transplanted sections have no Swiper**, because this app deliberately does not
+run their scripts — those scripts also start looping carousels that clone
+slides. Their rails are laid out as native horizontal scrollers in CSS instead:
+same gesture, finite list, no library callback to trigger.
+
+**The banner is the site's own live Swiper**, and `src/webview/bannerCarousel.ts`
+repairs its configuration through Swiper's public API rather than rebuilding it.
+Three findings, all read off the live section (Swiper 11.2.4):
+
+| Read on the site | Consequence | What the app does |
+| --- | --- | --- |
+| `loop: true` is nested inside `autoplay`, where Swiper never reads it | the last banner is a dead end — swipe to it and nothing moves. This is the "banner stuck" report | sets `rewind`, Swiper 11's own no-cloning equivalent, which `slideNext` checks at call time |
+| a drag past the end is the one path `rewind` does not cover | same dead end, by thumb | wraps on `touchEnd`, deferred one task because Swiper emits that event before it decides where to settle |
+| nothing ever restarts autoplay | a carousel stopped by throttled timers or an interrupted transition stays stopped | re-arms whenever the section comes back into view, and stops it while it is out of view |
+
+And because reading a configuration cannot prove a carousel is moving, there is
+a watchdog: a visible banner that has not changed slide within twice its own
+delay gets nudged. That is what makes this hold whatever the real cause turns
+out to be on a device.
+
+It runs on **every** page, not just the dashboard — the pet pages, the collection
+list and the lifestyle pages all carry a banner. A section with no instance is
+left alone, which is exactly how the transplanted ones are told apart.
+
+One thing that looks like a defect and is not, recorded so it does not get
+"fixed" later: the theme passes the document-wide `'.swiper-pagination'` as
+`pagination.el`, and this app puts a dozen more of those on the page. Swiper
+handles it — `uniqueNavElements` defaults to true and narrows a multi-match
+string selector to nodes inside the instance's own element.
+
+## The coupon strip
+
+Two defects, one cause. The strip is transplanted, so its script is dropped —
+and that script holds a function its own markup calls from an inline handler:
+
+```
+<div class="secondary_Svg" onclick="copyCodeCoupon(this,'INR 50 off ...')">
+```
+
+With the script gone, tapping the copy button did nothing at all.
+`src/webview/couponStrip.ts` re-supplies `copyCodeCoupon` under the same name,
+with the same arguments and the same `show_copy_message` feedback — and only if
+the page has not defined its own, so on a page that renders the section itself
+Zigly's version still wins. The Clipboard API is tried first, as the site does,
+with `execCommand` behind it because an Android WebView can refuse the former.
+
+The auto-scroll was not JavaScript either — the theme's own drag handler is
+commented out, and the movement is a CSS marquee (`animation: scroll 30s linear
+infinite`, `translateX(-50%)`). It is stopped in CSS and the container becomes a
+native scroller, so the strip moves under the thumb and nowhere else. That also
+retires an infinite compositor animation that ran for the whole life of the
+dashboard.
+
+`translateX(-50%)` is the marquee's tell: the theme emits every coupon twice so
+the loop has somewhere to wrap to. Scrolled by hand that reads as the list
+repeating, so the second copy of each is removed — keyed on the coupon's own
+text, so nothing unique is ever dropped.
+
 ## The URL policy
 
 `src/utils/urlUtils.ts` runs two modes, because a strict allowlist would break
@@ -517,10 +626,19 @@ there -- so device testing is the only trustworthy signal.
 | Search did nothing until enter, and the pre-typing screen was blank | Fixed by the native search screen |
 | A backslash inside a template literal is eaten before the page sees it — `/\/products\//` shipped as `//products//` | Watch for it: the removal bridge splits strings instead, and `__tests__/injection-syntax.test.ts` parses every payload |
 | Sort/Filter bar emptied itself after a filter change, and never appeared on `/search` | Fixed in sortFilterBar.ts |
-| Listing cards showed the compact variant picker, not the reference's full-width Add to Bag | Fixed via `body.zigly-listing` |
+| Listing cards showed the compact variant picker, not the reference's full-width Add to Bag | Fixed via `body.zigly-listing` — but see the row below; the first attempt did nothing |
+| Cards had *no* add control at all on a phone: the variant picker hidden by us, Add to Bag hidden by the theme | Fixed. Two mobile rules hid its container — `base.css`'s `.small-hide` and `product-card.css`'s `.product-card-wrapper .quick-add`. `display:block` on the button could never bring back a parent that is `display:none`, so the earlier fix was a no-op. The container is un-hidden and the floating "+ Add" chip hidden in its place |
+| The banner could not be swiped past its last slide | Fixed — see *Carousels*. The theme nests `loop` inside `autoplay`, where Swiper ignores it |
+| The coupon strip scrolled itself, and its copy button did nothing | Fixed — see *The coupon strip* |
+| Category circles never became the reference's set | Fixed. `homeLayout` called `window.__ziglyFetchSection` and `pageCache` — which defines it — was concatenated *after* it, so the call threw on every load into that module's own `catch`. The fetcher now installs first |
+| "Everything For" never appeared | Fixed. It checked `[id*="everything"]` to see whether the site already rendered the section, and matched our own reserved slot `zigly-x-everything`, so it disabled itself every time. The check now ignores `zigly-` ids |
+| Explore tiles opened empty listings | Fixed. Merged tiles had their link rewritten to a collection handle guessed from the label, guarded by a HEAD request — which passes for a published-but-empty collection. Five of sixteen tiles led to zero products. Tiles now keep the link Zigly gave them |
+| Brand cards showed two brands stacked per column | Fixed. The section's Swiper is initialised with `grid: { rows: 2 }`; the rail is laid out as a single-row native scroller instead |
+| Bestsellers was the homepage's "Trending Products" | Fixed — the rail in that slot is the pet page's `collection_product_section`, transplanted like every other section, under Zigly's own heading |
 | Logging in left the app: the Account tab, and every `/account` link, opened Shopify's own account page | Fixed — native account section, and account urls are taken over before they navigate |
 | No Account item in the bottom navigation | Fixed — the site's bar has none to restyle, so the bar is native and carries five tabs |
-| Some homepage sections not visible | Under investigation -- compare against zigly.com in mobile Chrome first; if absent there too it is the site's own mobile design, not an app defect |
+| Some homepage sections not visible | Largely resolved by the four rows above; each had its own cause, none of them the site's mobile design. What remains is that the reference app's closing "From Our Instagram" has no counterpart on zigly.com — see below |
+| The reference's "From Our Instagram" | No section on zigly.com is called that, and none pulls a feed; the site's only Instagram presence is the footer's social links. Its own photo grid, `gallery` on `/pages/store-home-page-section` ("Happy Moments"), is used instead, under its own heading. Retitling it would tell the customer these photos came from a feed they can follow, and that is not where they came from |
 
 ## Known gaps (deliberate, scheduled)
 

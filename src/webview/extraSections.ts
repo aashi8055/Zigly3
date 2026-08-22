@@ -39,10 +39,32 @@ const SECTIONS = [
   {key: 'custom_single_banner#2', check: '', mark: 'zigly-x-banner2', eager: false},
   {key: 'shop_of_concern', check: 'shop_of_concern', mark: 'zigly-x-concern', eager: false},
   {key: 'offer_section#3', check: '', mark: 'zigly-x-offer3', eager: false},
-  // Bestsellers. The homepage's own arrival section holds these products --
-  // the theme's best_deals section renders none at all -- so it is relocated
-  // rather than transplanted.
-  {move: 'home_arrival_section', index: 1, hideOthers: true},
+  /**
+   * The bestsellers rail.
+   *
+   * This slot used to relocate the homepage's second arrival section here, on
+   * the belief that it held these products. It does not: read on 2026-08-22 the
+   * homepage's two arrival sections are titled "Best Deals" (4 cards) and
+   * "Trending Products" (3 cards), and neither is the rail sitting in this
+   * position in the reference dashboard.
+   *
+   * The section that is, by position and by content, is the pet page's
+   * `collection_product_section` -- Zigly title it "Pet Parent Favourites" and
+   * it carries ten real product cards. On /pages/dog it sits exactly here,
+   * between "Zigly Style Steals" and the double banner. So it is transplanted
+   * like every other section in this list, and its own heading is kept: calling
+   * a rail "Bestsellers" would be this app making a sales claim about products
+   * on Zigly's behalf, which is not ours to make.
+   *
+   * It is the heaviest section the dashboard pulls (~262 KB against ~32 KB
+   * typical), so it stays lazy -- it is far below the fold.
+   */
+  {key: 'collection_product_section', check: 'collection_product_section', mark: 'zigly-x-bestsellers', eager: false},
+  // Neither of the homepage's own arrival sections appears in the reference
+  // dashboard: the picks rail is built from the pet pages by hotPicks.ts. They
+  // used to be suppressed as a side effect of relocating one of them, so with
+  // that relocation gone they are marked for hiding explicitly.
+  {hide: 'home_arrival_section'},
   // Slot only: everythingSection.ts fills this. Reserving it here keeps the
   // order deterministic -- anchoring itself put it above Bestsellers.
   {slot: 'zigly-x-everything'},
@@ -53,6 +75,24 @@ const SECTIONS = [
   // homepage, so it is moved rather than transplanted.
   {move: 'custom_video_text_banner'},
   {move: 'about_our_communities'},
+  /**
+   * The photo grid that closes the dashboard.
+   *
+   * The reference app heads this "From Our Instagram". No section on zigly.com
+   * is called that, and none pulls an Instagram feed -- the site's only
+   * Instagram presence is the footer's social links. What it does have, on
+   * /pages/store-home-page-section, is `gallery`: a six-photo grid of Zigly's
+   * own pet and store photography, which is the same thing in the same place.
+   *
+   * So the real section is used and Zigly's own heading, "Happy Moments", is
+   * kept. Retitling it "From Our Instagram" would tell the customer these
+   * photos came from a feed they can go and follow, and that is not where they
+   * came from.
+   */
+  // Marked "moments", not "gallery": `check` is a substring test over element
+  // ids, and a mark containing its own check fragment is a section that
+  // disables itself the second time the injection runs.
+  {key: 'gallery', path: '/pages/store-home-page-section', check: 'gallery', mark: 'zigly-x-moments', eager: false},
   // The brand-claims strip (1680X324_BrandClaims) -- the logos. Last, so it
   // sits directly above the footer as the reference shows.
   {key: 'custom_single_banner#3', check: '', mark: 'zigly-x-logos', eager: false},
@@ -124,6 +164,20 @@ export const EXTRA_SECTIONS_SCRIPT = `
         return;
       }
 
+      /**
+       * Sections the homepage renders that the reference dashboard does not
+       * show. Marked, never removed: the theme's own scripts look these up on
+       * navigation, and an element a script cannot find is how a script starts
+       * throwing on every page. The CSS hides anything carrying the mark.
+       */
+      if (spec.hide) {
+        var spares = document.querySelectorAll('[id*="' + spec.hide + '"]');
+        for (var sp = 0; sp < spares.length; sp++) {
+          spares[sp].setAttribute('data-zigly-extra', 'true');
+        }
+        return;
+      }
+
       // A reserved slot: create the container and move on. Another module
       // fills it, but its position in the order is fixed here.
       if (spec.slot) {
@@ -151,7 +205,10 @@ export const EXTRA_SECTIONS_SCRIPT = `
       if (spec.key !== 'coupon_slider') { tail = slot; }
 
       function load() {
-        window.__ziglyFetchSection('/', spec.key)
+        // Almost everything resolves from '/', so unrelated sections share one
+        // batched request. \`path\` names the exception -- see the gallery entry
+        // in pageCache.ts for why one section has to ask its own page.
+        window.__ziglyFetchSection(spec.path || '/', spec.key)
           .then(function (sec) {
             if (!sec) { warn('unavailable: ' + spec.key); return; }
             var imported = document.importNode(sec, true);

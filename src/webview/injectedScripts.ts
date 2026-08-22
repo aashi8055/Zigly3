@@ -10,6 +10,8 @@
 import {MOBILE_CSS, buildStyleInjection} from './injectedStyles';
 import {HOME_LAYOUT_SCRIPT} from './homeLayout';
 import {PAGE_CACHE_SCRIPT} from './pageCache';
+import {BANNER_CAROUSEL_SCRIPT} from './bannerCarousel';
+import {COUPON_STRIP_SCRIPT} from './couponStrip';
 import {BREED_SECTION_SCRIPT} from './breedSection';
 import {HOT_PICKS_SCRIPT} from './hotPicks';
 import {EXPLORE_SCRIPT} from './explorePicker';
@@ -51,9 +53,18 @@ export const getInjectionForUrl = (url: string): string | null => {
   // Flip to false before cutting a release APK.
   const diagnostic = ENABLE_DIAGNOSTIC ? SEARCH_DIAGNOSTIC : '';
 
+  // Order matters in exactly one place, and it used to be wrong: PAGE_CACHE
+  // defines window.__ziglyFetchSection, and HOME_LAYOUT is the first script to
+  // call it. With the cache installed second, that call threw on every load and
+  // was swallowed by the module's own try/catch -- so the reference app's
+  // category circles were never swapped in, silently, and the homepage kept its
+  // own fourteen-tile set. The fetcher now installs first; every other module
+  // that uses it already ran after it.
   return `${buildStyleInjection(MOBILE_CSS)}
-${HOME_LAYOUT_SCRIPT}
 ${PAGE_CACHE_SCRIPT}
+${HOME_LAYOUT_SCRIPT}
+${BANNER_CAROUSEL_SCRIPT}
+${COUPON_STRIP_SCRIPT}
 ${BREED_SECTION_SCRIPT}
 ${HOT_PICKS_SCRIPT}
 ${EXPLORE_SCRIPT}

@@ -31,7 +31,27 @@ export const EVERYTHING_SCRIPT = `
   }
 
   if (!isHome()) { return; }
-  if (document.querySelector('[id*="' + FRAGMENT + '"]')) { return; }
+
+  /**
+   * Is the SITE already rendering this section?
+   *
+   * The plain \`[id*="everything"]\` test this used to be always matched -- and
+   * what it matched was our own slot, \`zigly-x-everything\`, which extraSections
+   * reserves a few lines earlier in the same injection. So the section bailed
+   * out every single time and "Everything For" never appeared on the dashboard
+   * at all. Ids this app creates are all \`zigly-\` prefixed, so they are the one
+   * thing this check has to ignore.
+   */
+  function siteRenders(fragment) {
+    var found = document.querySelectorAll('[id*="' + fragment + '"]');
+    for (var i = 0; i < found.length; i++) {
+      var id = found[i].getAttribute('id') || '';
+      if (id.indexOf('zigly-') !== 0) { return true; }
+    }
+    return false;
+  }
+
+  if (siteRenders(FRAGMENT)) { return; }
 
   // The slot is reserved by extraSections so the order is fixed there, not
   // recomputed here from whichever siblings happen to exist yet.

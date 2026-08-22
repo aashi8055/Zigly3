@@ -29,6 +29,11 @@
  */
 const DOG = 'template--26530973942076__';
 const CAT = 'template--26530973843772__';
+/**
+ * /pages/store-home-page-section, which is where the theme keeps its photo
+ * gallery. Nothing else is sourced from that page.
+ */
+const STORE = 'template--26530984362300__';
 
 /**
  * Seeded section ids, used as a fast-path hint.
@@ -77,6 +82,17 @@ const SEEDED_IDS: Record<string, string> = {
   '/|everything@cat': CAT + 'everything_czXFGJ',
   '/|redesign_custom_double_banner': DOG + 'redesign_custom_double_banner_FqtJbt',
   '/|video_swiper': DOG + 'video_swiper_U9CqpQ',
+  /**
+   * The photo gallery, keyed to its own page rather than to '/'.
+   *
+   * Every other entry above is requested from '/' so unrelated sections share
+   * one batched call. This one cannot be, and the reason is the fallback rather
+   * than the fetch: rediscovery looks for the fragment in the page it fetched,
+   * and '/' has no gallery section to find, so a stale id here would fail
+   * permanently instead of self-healing. Asking the page that actually carries
+   * it costs one extra request for a section that is below the fold and lazy.
+   */
+  '/pages/store-home-page-section|gallery': STORE + 'gallery_ERfJbd',
 };
 
 export const PAGE_CACHE_SCRIPT = `
