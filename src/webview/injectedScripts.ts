@@ -18,6 +18,8 @@ import {EXPLORE_SCRIPT} from './explorePicker';
 import {SORT_FILTER_SCRIPT} from './sortFilterBar';
 import {DRAWER_EXTRAS_SCRIPT} from './drawerExtras';
 import {BREED_PAGE_SCRIPT} from './breedPage';
+import {BREED_GALLERY_SCRIPT} from './breedGallery';
+import {BRAND_RAIL_SCRIPT} from './brandRail';
 import {EXTRA_SECTIONS_SCRIPT} from './extraSections';
 import {EVERYTHING_SCRIPT} from './everythingSection';
 import {CART_TOAST_SCRIPT} from './cartToast';
@@ -76,5 +78,7 @@ ${READY_SIGNAL_SCRIPT}
 ${SORT_FILTER_SCRIPT}
 ${DRAWER_EXTRAS_SCRIPT}
 ${BREED_PAGE_SCRIPT}
+${BREED_GALLERY_SCRIPT}
+${BRAND_RAIL_SCRIPT}
 ${diagnostic}`;
 };
