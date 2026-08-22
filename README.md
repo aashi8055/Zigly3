@@ -433,38 +433,13 @@ screen is the one place where the site is thinner than the app that fronts it:
 | Missing | Why |
 | --- | --- |
 | Email and phone on the profile | Dawn's account section renders neither, and classic accounts have no customer JSON endpoint. The app shows an email- or phone-shaped string *if* the theme prints one, and leaves the line out if not |
-| Change Password | Classic Shopify has no change-password page for a signed-in customer, only `POST /account/recover`, which emails a reset link — and an OTP-first store's customers mostly have no password for that link to change. The row is deliberately not drawn |
+| Edit Profile | No storefront endpoint changes a customer's name, email or phone. The only place they are editable is inside SimplyOTP's login flow |
+| Change Password | Classic Shopify has no change-password page for a signed-in customer, only `POST /account/recover`, which emails a reset link — and an OTP-first store's customers mostly have no password for that link to change |
+| Delete Account | No storefront endpoint deletes a customer. The button explains that and opens Zigly's contact page, in the app |
 | Wishlist count on the header heart | That total lives in Swym, as it always did |
 
 A profile line that is missing is left blank rather than filled in, which is the
 same rule the cart follows about invented numbers.
-
-**Two things here do not do what they appear to do.** Both were asked for
-explicitly, to match Zigly's own app while there is no endpoint behind either,
-and both are written down at the top of the code that implements them.
-
-- **Edit Profile** opens a real form — First Name, Last Name, Email — and Save
-  keeps a **device-local overlay** over what the site rendered. Shopify's
-  storefront can write addresses and nothing else about a customer, so the edit
-  never reaches Zigly: not the website, not their orders, not their invoices.
-  The form says that on screen rather than leaving it to be discovered. It is
-  held in memory for the session, because persisting a value that is already not
-  the real one would be buying permanence for a fiction. Phone is shown but not
-  editable — it comes from the OTP login, which makes it the one authoritative
-  field on the screen. The overlay is composed once in ZiglyWebViewScreen, so
-  the account screen and the drawer's account block cannot drift apart.
-
-- **Delete Account** signs the customer out and tells them their account was
-  deleted. **Nothing is deleted.** No storefront endpoint deletes a Shopify
-  customer, so the record, the orders and the addresses are all still there and
-  signing in again brings them back. It confirms first and still offers the
-  contact form, which is the only route that actually removes an account. This
-  is the one screen in the app that tells a customer something untrue about
-  their own data; it should not reach a real customer without a delete endpoint
-  behind it.
-
-When either endpoint exists, one function changes in each case — saveProfile
-and requestAccountDeletion — and the on-screen notices come off with them.
 
 **Screen order matters.** The section is drawn *below* the page layers: an order,
 or a product opened from Favorites, is a real page and has to come down over the
@@ -728,5 +703,4 @@ there -- so device testing is the only trustworthy signal.
 | Native facets and sort on search results | needs Zigly's SearchTap account |
 | Wishlist count badge on the header heart | no longer blocked. The reason recorded here was that the total lived in Swym; it lives in the page's own localStorage, and the bridge already reads it. Not built yet, but it is now a small piece of work rather than an impossible one |
 | Email and phone on the account profile | the theme does not render them and classic accounts expose no customer JSON; needs Zigly's own API |
-| A real Edit Profile and a real Delete Account | both are drawn and both are local-only; no storefront endpoint exists for either, so they need Zigly's own backend — see *The account section* |
-| Change Password | no storefront endpoint; the row is not drawn |
+| Edit Profile, Change Password, Delete Account | no storefront endpoint for any of the three — see *The account section* |

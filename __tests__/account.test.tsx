@@ -376,7 +376,6 @@ describe('the account screen', () => {
       customer={parseCustomer({name: 'Lux Bhati', email: 'lux@example.com'})}
       notice={null}
       onOpenRow={noop}
-      onEditProfile={noop}
       onLogOut={noop}
       onDeleteAccount={noop}
       {...props}
@@ -396,26 +395,7 @@ describe('the account screen', () => {
   });
 
   it('omits Change Password, which classic Shopify cannot do', () => {
-    // Classic Shopify has no change-password page for a signed-in customer,
-    // only POST /account/recover -- and an OTP-first store's customers mostly
-    // have no password for that link to change.
     expect(textOf(render(screen()))).not.toContain('Change Password');
-  });
-
-  it('offers Edit Profile, as Zigly’s own app does', () => {
-    expect(textOf(render(screen()))).toContain('Edit Profile');
-  });
-
-  it('opens the form when it is tapped', () => {
-    let opened = false;
-    const tree = render(screen({onEditProfile: () => (opened = true)}));
-    const [button] = tree.root.findAll(
-      node =>
-        node.props.accessibilityLabel === 'Edit profile' &&
-        typeof node.props.onPress === 'function',
-    );
-    ReactTestRenderer.act(() => button.props.onPress());
-    expect(opened).toBe(true);
   });
 
   it('shows no contact line the site did not give it', () => {

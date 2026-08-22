@@ -21,9 +21,7 @@ export type AccountScreen =
   | 'login'
   | 'orders'
   | 'address'
-  | 'addressForm'
-  /** The profile form. A device-local overlay; see ../account/accountData. */
-  | 'editProfile';
+  | 'addressForm';
 
 export type AccountStack = AccountScreen[];
 
