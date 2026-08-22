@@ -102,12 +102,19 @@ import NetworkErrorScreen from '../components/NetworkErrorScreen';
 import SearchScreen from '../components/SearchScreen';
 import {
   MIN_QUERY_LENGTH,
+  REPORT_SEARCH_PLACEHOLDERS,
   SUGGEST_DEBOUNCE_MS,
   SUGGEST_TIMEOUT_MS,
   suggestScript,
 } from '../webview/searchBridge';
 import {parseSuggestions, rememberSearch} from '../search/suggestions';
 import type {Suggestions} from '../search/suggestions';
+import {
+  DEFAULT_PLACEHOLDER_MS,
+  SEED_PLACEHOLDERS,
+  acceptInterval,
+  mergePlaceholders,
+} from '../search/placeholders';
 import {
   EMPTY_STACK,
   closeTopPage,
@@ -226,6 +233,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const [cartCount, setCartCount] = useState(0);
   /** Offer strings mirrored from the site's own announcement bar. */
   const [announcements, setAnnouncements] = useState<string[]>([]);
+  /**
+   * The prompts the header's search bar types through.
+   *
+   * Seeded with Zigly's observed copy so the bar is never blank, then grown
+   * with whatever the site's own search box is seen typing -- see
+   * ../search/placeholders.ts.
+   */
+  const [searchPlaceholders, setSearchPlaceholders] =
+    useState<string[]>(SEED_PLACEHOLDERS);
+  /** Per-letter cadence, replaced once the site's own has been measured. */
+  const [searchTypeMs, setSearchTypeMs] = useState(DEFAULT_PLACEHOLDER_MS);
   /** True once scrolled away from the top; collapses the search band. */
   const [searchCollapsed, setSearchCollapsed] = useState(false);
   /** Shown when the page reports an add; the site still owns the cart. */
@@ -451,6 +469,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // The bar mirrors the dashboard's own announcements; an inner page
         // reporting its (possibly absent) bar would blank it.
         injectInto(target, REPORT_ANNOUNCEMENTS);
+        // The rotating search prompts, read off the site's own search box. Only
+        // from the dashboard: the reader is idempotent and one page's worth of
+        // phrases is the whole list.
+        injectInto(target, REPORT_SEARCH_PLACEHOLDERS);
       }
       // Re-apply on a short schedule. The page keeps loading images and
       // third-party scripts well after onLoadEnd, and those late arrivals can
@@ -1494,6 +1516,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           !showCart && !searchOpen && (!onAccountScreen || onOrdersScreen)
         }
         searchCollapsed={searchCollapsed}
+        searchPlaceholders={searchPlaceholders}
+        searchTypeMs={searchTypeMs}
         showBack={
           headerUrl !== null ||
           showCart ||
@@ -1610,6 +1634,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 setCartToast(true);
               } else if (data && data.tag === 'announcements') {
                 setAnnouncements(Array.isArray(data.items) ? data.items : []);
+              } else if (data && data.tag === 'search-placeholders') {
+                // One message per phrase the site finishes typing, so this
+                // folds in rather than replaces -- see mergePlaceholders.
+                setSearchPlaceholders(current =>
+                  mergePlaceholders(current, data.items),
+                );
+                setSearchTypeMs(current => acceptInterval(data.typeMs, current));
               } else if (data && data.tag === 'search-suggest') {
                 // Anything but the newest request is an answer to a keystroke
                 // the user has already typed past.

@@ -16,7 +16,7 @@
  * Icons are drawn with plain Views rather than pulling in an icon library, to
  * avoid a dependency for four glyphs.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -26,6 +26,14 @@ import {
   View,
 } from 'react-native';
 import { COLORS, FONT_FAMILY } from '../constants/appConstants';
+import {
+  FIRST_FRAME,
+  frameDelay,
+  frameText,
+  nextFrame,
+  TYPE_MS,
+  type TypeFrame,
+} from '../search/placeholders';
 import { HeartShape } from './glyphs';
 
 interface Props {
@@ -61,6 +69,16 @@ interface Props {
    * The menu stays reachable from the home dashboard.
    */
   showBack: boolean;
+  /**
+   * The prompts the search bar types through, in order.
+   *
+   * Zigly's own, read off the site's search box at runtime -- see
+   * ../search/placeholders.ts. An empty list simply means nothing has been read
+   * yet, and the bar shows its resting label.
+   */
+  searchPlaceholders: string[];
+  /** The site's own per-letter cadence, once it has been measured. */
+  searchTypeMs?: number;
 }
 
 const WishlistIcon = () => (
@@ -104,6 +122,70 @@ const BagIcon = () => (
   </View>
 );
 
+/**
+ * The search bar's rotating prompt, typed out a letter at a time.
+ *
+ * A component of its own, and memoised, for one reason: it changes state ten
+ * times a second, and if that state lived on the header then the hamburger, the
+ * logo, the badge and the whole animated band would be re-rendered on every
+ * letter. Here, a frame re-renders one <Text>.
+ *
+ * The cycle is a pure function of the previous frame -- see
+ * ../search/placeholders.ts -- so all this owns is one timeout, re-armed per
+ * frame rather than an interval at a fixed rate: erasing runs at twice the speed
+ * of typing and the two holds are ten times slower again, so a single interval
+ * would either be wrong or would wake up twenty times for every frame it drew.
+ */
+interface PromptProps {
+  phrases: string[];
+  typeMs: number;
+  /**
+   * False while the band is closed or nothing has been read yet. The timer
+   * stops entirely rather than drawing into something nobody can see -- and the
+   * band is closed for the whole time the user is scrolling, which is exactly
+   * when frames are worth most.
+   */
+  running: boolean;
+}
+
+const SearchPrompt = React.memo(({phrases, typeMs, running}: PromptProps) => {
+  const [frame, setFrame] = useState<TypeFrame>(FIRST_FRAME);
+
+  useEffect(() => {
+    if (!running) {
+      return;
+    }
+    const timer = setTimeout(
+      () => setFrame(current => nextFrame(current, phrases)),
+      frameDelay(frame, typeMs),
+    );
+    return () => clearTimeout(timer);
+  }, [running, frame, phrases, typeMs]);
+
+  /**
+   * "Search For" is the resting label: it is what shows before the first phrase
+   * has been read, and between phrases -- the site erases all the way to empty,
+   * and an empty search bar reads as broken rather than as animated.
+   */
+  const typed = frameText(frame, phrases);
+
+  return (
+    <Text
+      // One line, clipped rather than reflowed: the phrases differ in length
+      // and a wrap mid-cycle would make the whole header jump.
+      style={styles.searchPlaceholder}
+      numberOfLines={1}
+      // Decorative while it animates -- a screen reader reading a half-typed
+      // prompt letter by letter is noise, and the button is already labelled.
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    >
+      {typed.length > 0 ? typed : 'Search For'}
+    </Text>
+  );
+});
+SearchPrompt.displayName = 'SearchPrompt';
+
 const NativeHeader = ({
   onMenuPress,
   onBackPress,
@@ -117,6 +199,8 @@ const NativeHeader = ({
   showBack,
   showWishlist,
   showCartIcon,
+  searchPlaceholders,
+  searchTypeMs = TYPE_MS,
 }: Props) => {
   /**
    * Height rather than translate: the band must give its space back so the page
@@ -230,7 +314,11 @@ const NativeHeader = ({
               style={styles.searchField}
             >
               <SearchIcon />
-              <Text style={styles.searchPlaceholder}>Search For</Text>
+              <SearchPrompt
+                phrases={searchPlaceholders}
+                typeMs={searchTypeMs}
+                running={!searchCollapsed && searchPlaceholders.length > 0}
+              />
             </Pressable>
           </View>
         </Animated.View>

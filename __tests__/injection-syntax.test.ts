@@ -8,6 +8,34 @@
  * `new Function` parses without executing, which is exactly the check we want.
  */
 import {getInjectionForUrl} from '../src/webview/injectedScripts';
+import {
+  EARLY_HEADER_CSS,
+  OPEN_MENU,
+  REPORT_ANNOUNCEMENTS,
+  REPORT_CART_COUNT,
+  searchScript,
+} from '../src/webview/headerBridge';
+import {
+  REPORT_SEARCH_PLACEHOLDERS,
+  suggestScript,
+} from '../src/webview/searchBridge';
+import {
+  READ_CART_SCRIPT,
+  addToCartScript,
+  changeQtyScript,
+} from '../src/webview/cartBridge';
+import {
+  WISHLIST_SCRIPT,
+  removeFromWishlistScript,
+} from '../src/webview/wishlistBridge';
+import {
+  ACCOUNT_PROBE,
+  ADDRESSES_PROBE,
+  COUNTRIES_PROBE,
+  LOGOUT_SCRIPT,
+} from '../src/webview/accountBridge';
+import {LOGIN_RESTYLE} from '../src/webview/loginRestyle';
+import {PREFETCH_SCRIPT} from '../src/webview/prefetch';
 
 const parses = (src: string): boolean => {
   try {
@@ -52,5 +80,42 @@ describe('injected script is syntactically valid', () => {
     expect(script).not.toContain('[s]+');
     expect(script).not.toContain('/s+/g');
     expect(script).not.toContain('replace(//');
+  });
+});
+
+/**
+ * The same check for the payloads that are injected on their own.
+ *
+ * `getInjectionForUrl` only assembles the ones that go in on every navigation.
+ * The bridges are injected separately -- on a tap, on a probe, on a load -- and
+ * were not covered here at all, which is the same silent failure with a smaller
+ * blast radius: a mangled escape in one of these means one feature quietly does
+ * nothing while the rest of the app looks fine.
+ */
+describe('every separately injected payload is valid too', () => {
+  it.each([
+    ['EARLY_HEADER_CSS', EARLY_HEADER_CSS],
+    ['REPORT_CART_COUNT', REPORT_CART_COUNT],
+    ['REPORT_ANNOUNCEMENTS', REPORT_ANNOUNCEMENTS],
+    ['REPORT_SEARCH_PLACEHOLDERS', REPORT_SEARCH_PLACEHOLDERS],
+    ['OPEN_MENU', OPEN_MENU],
+    ['READ_CART_SCRIPT', READ_CART_SCRIPT],
+    ['WISHLIST_SCRIPT', WISHLIST_SCRIPT],
+    ['ACCOUNT_PROBE', ACCOUNT_PROBE],
+    ['ADDRESSES_PROBE', ADDRESSES_PROBE],
+    ['COUNTRIES_PROBE', COUNTRIES_PROBE],
+    ['LOGOUT_SCRIPT', LOGOUT_SCRIPT],
+    ['LOGIN_RESTYLE', LOGIN_RESTYLE],
+    ['PREFETCH_SCRIPT', PREFETCH_SCRIPT],
+    // The parameterised ones, with a value that exercises the quoting: an
+    // apostrophe and a backslash are what would break a hand-built string.
+    ['suggestScript', suggestScript("dog's \\ bed", 1)],
+    ['searchScript', searchScript("dog's \\ bed")],
+    ['changeQtyScript', changeQtyScript("line's\\key", 0)],
+    ['addToCartScript', addToCartScript(123, 1)],
+    ['removeFromWishlistScript', removeFromWishlistScript("a'b\\c")],
+  ])('%s parses cleanly', (_name, script) => {
+    expect(typeof script).toBe('string');
+    expect(parses(script as string)).toBe(true);
   });
 });
