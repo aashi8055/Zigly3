@@ -128,7 +128,15 @@ export const EARLY_HEADER_CSS = `
 true;
 `;
 
-/** Open the site's own menu drawer by clicking its summary. */
+/**
+ * Open the site's own menu drawer by clicking its summary.
+ *
+ * No longer wired to anything: the hamburger opens the native drawer in
+ * ../components/MenuDrawer, which reads the same menu out of the page rather
+ * than revealing the page's copy of it. Kept, with the CSS above that placed
+ * it, as the way back if the native drawer ever has to be stood down -- one
+ * prop on NativeHeader, and the site's own drawer works again.
+ */
 export const OPEN_MENU = `
 (function () {
   try {

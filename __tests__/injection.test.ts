@@ -530,9 +530,10 @@ describe('getInjectionForUrl', () => {
     expect(script).not.toContain('/pages/zigly-store-locator');
     expect(script).not.toContain('/blogs/all');
     expect(script).not.toContain('/pages/about-us');
-    // The one exception is /account, a documented Zigly route that already
-    // handles both signed-in and signed-out.
-    expect(script).toContain("'/account'");
+    // Login/Register is no longer appended here. The drawer is native now and
+    // opens with an account block of its own; adding the row to the list the
+    // native drawer reads would show it twice.
+    expect(script).not.toContain('Login/Register');
   });
 
   it('uses Zigly’s own in-app flag rather than only CSS', () => {

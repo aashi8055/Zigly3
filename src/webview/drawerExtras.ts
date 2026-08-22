@@ -2,13 +2,10 @@
  * Fill out the menu drawer to match the reference app.
  *
  * Zigly's mobile drawer ships Dogs, Cats, Brands, Lifestage, Vetcare, Pharmacy,
- * Grooming and Sale. Their app additionally shows Login/Register at the top and
- * Store Locator, Blogs and About Us below.
+ * Grooming and Sale. Their app additionally shows Store Locator, Blogs and
+ * About Us below them.
  *
  * None of that is invented here:
- *   Login/Register -> /account, the same real route the Account tab uses; it
- *                     shows the account page when signed in and Zigly's own
- *                     login when signed out.
  *   Blogs, Store   -> cloned from the site's own utility bar, where they exist
  *   Locator           in the DOM but carry `hide-mobile` so phones never see
  *                     them.
@@ -16,6 +13,13 @@
  *
  * Cloning rather than hardcoding means the destinations stay correct if Zigly
  * moves them, and anything they remove simply stops appearing.
+ *
+ * This runs even though the drawer the customer sees is now native: the native
+ * one is *read* from this list by ../webview/menuBridge.ts, so a row appended
+ * here is a row in the app. The reference app's Login/Register row used to be
+ * appended here too and is not any more -- the native drawer opens with the
+ * account block that replaced it, and adding it to the list as well would show
+ * it twice.
  */
 export const DRAWER_EXTRAS_SCRIPT = `
 (function () {
@@ -72,13 +76,7 @@ export const DRAWER_EXTRAS_SCRIPT = `
     if (!list) { return false; }
     if (list.querySelector('.' + MARK)) { return true; }
 
-    // Login/Register sits above the categories, as in the reference app.
-    // /account is Zigly's own route and handles both signed-in and signed-out.
-    if (!findLinkInList(list, '/account')) {
-      list.insertBefore(row(list, '/account', 'Login/Register'), list.firstChild);
-    }
-
-    // Everything else is taken from links the site already publishes.
+    // Every row is taken from a link the site already publishes.
     var extras = [
       {text: 'Store Locator'},
       {text: 'Blogs'},

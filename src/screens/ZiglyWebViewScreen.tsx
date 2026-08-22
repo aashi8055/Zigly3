@@ -93,11 +93,15 @@ import {
 import {parseWishlist} from '../wishlist/wishlistItems';
 import type {WishlistItem} from '../wishlist/wishlistItems';
 import {
-  OPEN_MENU,
   REPORT_CART_COUNT,
   EARLY_HEADER_CSS,
   REPORT_ANNOUNCEMENTS,
 } from '../webview/headerBridge';
+import MenuDrawer from '../components/MenuDrawer';
+import type {MenuDrawerHandle} from '../components/MenuDrawer';
+import {READ_MENU_SCRIPT} from '../webview/menuBridge';
+import {parseMenu} from '../menu/menuTree';
+import type {MenuNode} from '../menu/menuTree';
 import NetworkErrorScreen from '../components/NetworkErrorScreen';
 import SearchScreen from '../components/SearchScreen';
 import {
@@ -298,6 +302,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const searchOpenRef = useRef(false);
 
   /**
+   * The menu drawer.
+   *
+   * Native, drawn by ../components/MenuDrawer, but every row in it is read off
+   * the page by ../webview/menuBridge -- the categories are Zigly's, only the
+   * presentation is ours.
+   */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menu, setMenu] = useState<MenuNode[]>([]);
+  const menuOpenRef = useRef(false);
+  const menuRef = useRef<MenuDrawerHandle | null>(null);
+
+  /**
    * The account section.
    *
    * Native, and the reason this app now draws its own bottom bar: the site's
@@ -382,6 +398,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   useEffect(() => {
     wishlistOpenRef.current = wishlistOpen;
   }, [wishlistOpen]);
+
+  useEffect(() => {
+    menuOpenRef.current = menuOpen;
+  }, [menuOpen]);
 
   useEffect(() => {
     authRef.current = auth;
@@ -819,6 +839,58 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     [openWishlist, orders, probeAccount, probeAddresses],
   );
 
+  // ------------------------------------------------------------- menu drawer
+  /**
+   * Open the drawer, and re-read the menu while it slides in.
+   *
+   * Read on every tap rather than once: `drawerExtras` appends Store Locator,
+   * Blogs and About Us to the site's own list a second or two after load, and
+   * a menu captured before that would be missing them for the rest of the
+   * session. The reply is cheap and the drawer already has the previous one to
+   * show in the meantime, so there is nothing to wait for.
+   */
+  const openMenu = useCallback(() => {
+    setMenuOpen(true);
+    injectInto('home', READ_MENU_SCRIPT);
+  }, [injectInto]);
+
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+
+  /**
+   * A row in the drawer was tapped.
+   *
+   * The support block at the foot of the menu is `tel:`, `mailto:` and a
+   * WhatsApp link, so those go to the OS. Everything else is a storefront page
+   * -- except Zigly's own account route, which this app answers natively; see
+   * `handleShouldStart` for the same rule applied to links inside the page.
+   */
+  const openFromMenu = useCallback(
+    (url: string) => {
+      closeMenu();
+      const action = classifyUrl(url);
+      if (action.kind === 'appIntent' || action.kind === 'external') {
+        Linking.openURL(action.url).catch(() =>
+          warn('could not open', action.url),
+        );
+        return;
+      }
+      if (isAccountUrl(url)) {
+        openAccountSection();
+        return;
+      }
+      closeAccountSection();
+      setWishlistOpen(false);
+      showPage(url);
+    },
+    [closeAccountSection, closeMenu, openAccountSection, showPage],
+  );
+
+  const openAccountFromMenu = useCallback(() => {
+    closeMenu();
+    setWishlistOpen(false);
+    openAccountSection();
+  }, [closeMenu, openAccountSection]);
+
   const openAddressForm = useCallback(
     (address: Address | null) => {
       setEditing(address);
@@ -996,6 +1068,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   // ------------------------------------------------------------ back button
   useEffect(() => {
     const onBack = (): boolean => {
+      // The drawer is over everything, so it answers first: out of a category,
+      // then out of the drawer.
+      if (menuOpenRef.current) {
+        if (!menuRef.current?.stepBack()) {
+          closeMenu();
+        }
+        return true;
+      }
       if (searchOpenRef.current) {
         closeSearch();
         return true;
@@ -1031,7 +1111,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       onBack,
     );
     return () => subscription.remove();
-  }, [closeCart, closeSearch, closeWishlist, stepBack, stepBackAccount]);
+  }, [
+    closeCart,
+    closeMenu,
+    closeSearch,
+    closeWishlist,
+    stepBack,
+    stepBackAccount,
+  ]);
 
   // ------------------------------------------------------------- url policy
   const handleShouldStart = useCallback(
@@ -1453,6 +1540,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const showNav =
     !searchOpen &&
+    // The drawer is a screen of its own while it is open, as it is in the
+    // reference app: nothing under it should be offering a second way out.
+    !menuOpen &&
     !inCheckout &&
     !(onAccountScreen && accountTop === 'login') &&
     !(headerUrl !== null && showsSortFilterBar(headerUrl));
@@ -1538,7 +1628,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             webRef.current?.goBack();
           }
         }}
-        onMenuPress={() => injectInto('home', OPEN_MENU)}
+        onMenuPress={openMenu}
         onCartPress={openCart}
         onLogoPress={() => {
           // The logo means home, so the section comes down with the pages.
@@ -1606,8 +1696,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 log('SEARCHDIAG', JSON.stringify(data));
               } else if (data && data.tag === 'cart-count') {
                 setCartCount(typeof data.n === 'number' ? data.n : 0);
+              } else if (data && data.tag === 'menu') {
+                setMenu(parseMenu(data, ZIGLY_ORIGIN));
               } else if (data && data.tag === 'dashboard-ready') {
                 onFirstLoad();
+                // Read the menu now so the first tap of the hamburger opens on
+                // a filled drawer rather than a spinner.
+                injectInto('home', READ_MENU_SCRIPT);
                 // Who is signed in, asked once the dashboard is settled. The
                 // answer decides what the Account tab opens, and asking now
                 // means the tap does not have to wait for a round trip.
@@ -1981,6 +2076,22 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             />
           </View>
         ) : null}
+
+        {/*
+          The menu, over every layer in `body` but still under the header --
+          the hamburger that opened it stays where it was, which is what makes
+          tapping it again, or the page beside it, the obvious way out.
+        */}
+        <MenuDrawer
+          ref={menuRef}
+          open={menuOpen}
+          items={menu}
+          auth={auth}
+          customer={customer}
+          onClose={closeMenu}
+          onNavigate={openFromMenu}
+          onAccountPress={openAccountFromMenu}
+        />
 
         {busy ? <LoadingBar /> : null}
 
