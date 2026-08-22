@@ -1,20 +1,22 @@
 /**
- * The heart.
+ * The two glyphs that are paths rather than geometry.
  *
- * It is the most-seen icon in the app -- the bottom bar, the header, the account
- * screen and every wishlist tile -- and it is the one glyph here that is not
- * ours: the path is lifted verbatim from the `swym-add-to-wishlist` button
- * Zigly's theme renders on every product card. So what is defended here is that
- * it stays *theirs*, drawn once, in both states.
+ * The heart is the most-seen icon in the app -- the bottom bar, the header, the
+ * account screen and every wishlist tile -- and it is not ours: the path is
+ * lifted verbatim from the `swym-add-to-wishlist` button Zigly's theme renders
+ * on every product card. So what is defended is that it stays *theirs*, drawn
+ * once, in both states. There had been three copies of the old stacked-View
+ * construction, already drifted apart; these tests fail if a fourth appears.
  *
- * It was previously stacked Views -- two circles and a rotated square -- and
- * three separate copies of that construction had drifted apart. The point of
- * these tests is that a fourth copy cannot appear without one of them failing.
+ * The basket is ours, because Zigly's storefront has no basket to lift -- their
+ * header uses a shopping trolley. What is defended there is that it stays one
+ * drawing: a body and a handle sharing one stroke and meeting on one edge,
+ * rather than the rectangle-plus-floating-arc it replaced.
  */
 import React from 'react';
 import ReactTestRenderer, {type ReactTestInstance} from 'react-test-renderer';
 import {Path} from 'react-native-svg';
-import {HeartOutline, HeartShape} from '../src/components/glyphs';
+import {BasketIcon, HeartOutline, HeartShape} from '../src/components/glyphs';
 import NativeHeader from '../src/components/NativeHeader';
 import BottomNav from '../src/components/BottomNav';
 
@@ -86,6 +88,36 @@ describe('filled and outlined differ only in the fill', () => {
   });
 });
 
+describe('the cart basket is one path, not two shapes', () => {
+  it('draws a body and a handle, stroked, never filled', () => {
+    // It used to be a rounded rectangle with a separate arc floating above it.
+    // Two subpaths in one component keeps a single stroke width over both, so
+    // the handle cannot drift from the body.
+    const drawn = paths(render(<BasketIcon />).root);
+    expect(drawn).toHaveLength(2);
+    for (const part of drawn) {
+      expect(part.fill).toBe('none');
+      expect(part.strokeLinejoin).toBe('round');
+      expect(part.strokeWidth).toBe(drawn[0].strokeWidth);
+    }
+  });
+
+  it('lands the handle on the top edge, not above it', () => {
+    // The body's top edge and the handle's two ends share a y of 7.75. A handle
+    // that stopped short is the gap the old geometry had.
+    const [body, handle] = paths(render(<BasketIcon />).root);
+    expect(body.d).toContain('7.75');
+    expect(handle.d).toContain('7.75');
+    expect(handle.d.trimEnd().endsWith('7.75')).toBe(true);
+  });
+
+  it('takes its colour from the caller', () => {
+    for (const part of paths(render(<BasketIcon color="#183761" />).root)) {
+      expect(part.stroke).toBe('#183761');
+    }
+  });
+});
+
 describe('there is one heart, not four', () => {
   const headerProps = {
     onMenuPress: () => {},
@@ -105,10 +137,13 @@ describe('there is one heart, not four', () => {
 
   it('the header draws it as a path, not as stacked Views', () => {
     const drawn = paths(render(<NativeHeader {...headerProps} />).root);
-    expect(drawn).toHaveLength(1);
-    expect(drawn[0].d).toBe(ZIGLY_HEART);
+    const hearts = drawn.filter(p => p.d === ZIGLY_HEART);
+    expect(hearts).toHaveLength(1);
     // The header's heart is an outline: nothing there is saved yet.
-    expect(drawn[0].fill).toBe('none');
+    expect(hearts[0].fill).toBe('none');
+    // The rest of the header's paths are the basket, body and handle. Anything
+    // beyond that is a third path drawing something twice.
+    expect(drawn).toHaveLength(3);
   });
 
   it('the bottom bar draws both states from the same path', () => {

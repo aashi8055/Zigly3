@@ -125,6 +125,65 @@ export const HeartOutline = ({
   <Heart size={size} color={color} filled={false} />
 );
 
+/* -------------------------------------------------------------------------- *
+ * The basket
+ *
+ * The second glyph here that is a path rather than geometry, for the same reason
+ * as the heart: a tapered body with rounded corners and an arch meeting its top
+ * edge is not something stacked Views can draw. What they drew instead was a
+ * rounded rectangle with a separate arc floating above it -- two shapes that
+ * never quite met, and squared off where the real icon tapers.
+ *
+ * Unlike the heart, this one is NOT Zigly's web icon. Their storefront header
+ * uses a shopping *trolley* -- a two-wheeled cart, verified in the theme on
+ * 2026-08-22 -- and there is no basket anywhere in their markup to lift. So this
+ * is drawn to match the icon their app uses, which is a shape rather than data:
+ * the same licence under which every other glyph in this file was drawn.
+ *
+ * Two subpaths in one Path, so a single stroke width and one set of round joins
+ * govern both and the handle cannot drift from the body:
+ *
+ *   body    top edge, tapering in to a rounded bottom
+ *   handle  an arch whose two ends land ON that top edge, not above it
+ * -------------------------------------------------------------------------- */
+
+const BASKET_BODY =
+  'M3.75 7.75 H20.25 L18.85 18.6 C18.7 20 17.5 21 16.1 21 ' +
+  'H7.9 C6.5 21 5.3 20 5.15 18.6 Z';
+
+const BASKET_HANDLE = 'M8.25 7.75 V6.5 A3.75 3.75 0 0 1 15.75 6.5 V7.75';
+
+/** Matched to the heart's optical weight at the same size. */
+const BASKET_STROKE = 1.5;
+
+/**
+ * The cart's basket.
+ *
+ * Stroke only: a filled basket would read as full, and this icon carries the
+ * item count in a badge instead. The box is square and the artwork is 24x24, so
+ * it drops into the header's 22px icon slot without shifting the row.
+ */
+export const BasketIcon = ({ size = 22, color = '#1B1B1B' }: Glyph) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24">
+    <Path
+      d={BASKET_BODY}
+      fill="none"
+      stroke={color}
+      strokeWidth={BASKET_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <Path
+      d={BASKET_HANDLE}
+      fill="none"
+      stroke={color}
+      strokeWidth={BASKET_STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
 /** Four rounded squares: the collections tab, as the reference app draws it. */
 export const GridIcon = ({ size = 22, color = '#1B1B1B' }: Glyph) => {
   const cell = size * 0.42;

@@ -14,8 +14,9 @@
  *   cart      -> opens the site's own cart
  *
  * Icons are drawn with plain Views rather than pulling in an icon library, to
- * avoid a dependency for four glyphs. The wishlist heart is the one exception --
- * it is a real path, and Zigly's own; see ./glyphs.
+ * avoid a dependency for four glyphs. The wishlist heart and the cart basket are
+ * the exceptions -- both are real paths, because neither shape can be built
+ * honestly out of stacked Views; see ./glyphs.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -35,7 +36,7 @@ import {
   TYPE_MS,
   type TypeFrame,
 } from '../search/placeholders';
-import { HeartOutline } from './glyphs';
+import { BasketIcon, HeartOutline } from './glyphs';
 
 interface Props {
   onMenuPress: () => void;
@@ -109,12 +110,10 @@ const SearchIcon = () => (
   </View>
 );
 
-const BagIcon = () => (
-  <View style={styles.bag}>
-    <View style={styles.bagHandle} />
-    <View style={styles.bagBody} />
-  </View>
-);
+// The shared basket -- a real path. This used to be a rounded rectangle with a
+// separate arc floating above it, which is two shapes that never quite met; see
+// ./glyphs.
+const BagIcon = () => <BasketIcon size={22} color="#1B1B1B" />;
 
 /**
  * The search bar's rotating prompt, typed out a letter at a time.
@@ -395,28 +394,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  bag: {
-    width: 22,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  bagHandle: {
-    width: 11,
-    height: 8,
-    borderWidth: 1.8,
-    borderColor: '#1B1B1B',
-    borderBottomWidth: 0,
-    borderTopLeftRadius: 6,
-    borderTopRightRadius: 6,
-  },
-  bagBody: {
-    width: 21,
-    height: 16,
-    borderWidth: 1.8,
-    borderColor: '#1B1B1B',
-    borderRadius: 3,
-  },
   badge: {
     position: 'absolute',
     top: -2,
