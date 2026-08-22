@@ -36,17 +36,23 @@ one of them desyncs the app from the site:
 ## Why so little
 
 Analysis of the live site found that **the official Zigly Pet Care app is itself
-a WebView wrapper**, and that the mobile UI it presents is drawn by the website:
+a WebView wrapper**, and that most of the mobile UI it presents is drawn by the
+website:
 
 | App UI element | Actually rendered by |
 | --- | --- |
-| 5-tab bottom navigation | the site's own `.fixed-icons`, fixed below 990px |
 | PDP *Add to Bag / Buy Now* bar | the site's `.mobile-atc-main` |
 | Listing *Sort / Filter* bar | SearchTap's `initial-search-sort` / `-filters` |
 | Category circles, coupons, breed rail | real Shopify sections |
+| Bottom navigation | the site's own `.fixed-icons` — but see below |
 
-Adding a native bottom bar would therefore stack a second one on top of the
-site's. The correct shell is small on purpose.
+The bottom bar was on that list too, and it is the one entry that turned out not
+to hold. Verified on 2026-08-22: the site's `.fixed-icons` carries **four** tabs
+— Zigly, Collections, Breed-verse, Wishlist — and **no Account item at all**,
+while the reference app shows five. It is also drawn inside the page, so it
+vanished behind every native screen this app has. So the bar is now native and
+the site's is hidden; see *The bottom navigation* below. Everything else on that
+list is still the site's.
 
 ## Requirements
 
@@ -130,14 +136,22 @@ src/
 ├── utils/
 │   ├── urlUtils.ts             the URL policy — see below
 │   └── logger.ts               __DEV__-gated, never throws
-├── navigation/pageStack.ts     the inner-page stack — see below
+├── navigation/
+│   ├── pageStack.ts            the inner-page stack — see below
+│   └── accountStack.ts         the account section's screens — see below
 ├── search/suggestions.ts       parsing the suggest payload — see below
 ├── wishlist/wishlistItems.ts   parsing the wishlist payload — see below
+├── account/accountData.ts      parsing the account payloads — see below
 ├── utils/money.ts              one formatter, one unit (integer paise)
 ├── webview/webViewConfig.ts    WebView props
-├── components/                 NativeHeader, AnnouncementBar, CartScreen,
-│                               CartToast, SearchScreen, WishlistScreen,
-│                               EmptyState, LoadingBar, NetworkErrorScreen
+├── webview/accountBridge.ts    reading and writing the account in the page
+├── webview/loginRestyle.ts     presenting the site's OTP widget as a screen
+├── components/                 NativeHeader, BottomNav, AnnouncementBar,
+│                               CartScreen, CartToast, SearchScreen,
+│                               WishlistScreen, AccountScreen, OrdersScreen,
+│                               AddressScreen, AddressFormScreen, SelectSheet,
+│                               EmptyState, LoadingBar, NetworkErrorScreen,
+│                               glyphs
 └── screens/                    SplashScreen, ZiglyWebViewScreen
 ```
 
@@ -146,9 +160,9 @@ screens, which is exactly what `pageStack` exists to avoid.
 
 ## Screen structure
 
-The announcement bar and the native header are drawn **outside** the container
-that holds everything else, and every overlay — page layers, cart, offline
-screen — is positioned inside it. That is load-bearing rather than tidy: the
+The announcement bar, the native header and the bottom navigation are drawn
+**outside** the container that holds everything else, and every overlay — page
+layers, cart, the account section, offline screen — is positioned inside it. That is load-bearing rather than tidy: the
 layers are absolutely positioned, so while their container was the whole screen
 they covered the header along with the page, and every screen except the
 dashboard had no back arrow and no cart.
@@ -300,6 +314,112 @@ instead, because adding the wrong size is worse than one extra tap.
 
 Covered by `__tests__/wishlist.test.tsx`.
 
+## The bottom navigation
+
+Native, five tabs — Zigly, Collection, Breed-verse, Wishlist, Account — drawn
+outside `body` exactly as the header is, and the site's own `.fixed-icons` is
+hidden by injected CSS.
+
+This reverses an earlier decision, so the reasoning is worth keeping. The app
+deliberately had no tab bar: the reference app's is the *website's*, fixed below
+990px, so a native one would have stacked a second bar on top of it. Two facts
+about the live site retired that, both verified on 2026-08-22:
+
+- the site's bar carries **four** tabs and **no Account item at all**, where the
+  reference app carries five. There was nothing there to restyle into an Account
+  tab;
+- it is drawn inside the page, so it disappeared behind every native screen this
+  app has — the cart, the wishlist, and now the whole account section. A tab bar
+  that is missing exactly where the user is is not a tab bar.
+
+Hidden, never removed: the theme's own scripts mark the active tab in that
+element on navigation, and an element a script cannot find is how a script starts
+throwing on every page.
+
+The destinations are still the site's own urls, so what the tabs point at stays
+Zigly's decision. Only Wishlist and Account open native screens, because both
+already exist natively here. Tapping a tab is a reset to that tab's root: any
+native screen closes and the page stack is dismissed.
+
+The bar stands down in four places — the search screen (keyboard-first), Shopify
+checkout (not this app's screen, and not somewhere to offer five ways out),
+listing pages (the injected Sort / Filter bar already pins itself there, and the
+reference app shows that bar *instead of* the tabs — `showsSortFilterBar` in
+`urlUtils.ts` mirrors that script's own path test), and the login screen.
+
+## The account section
+
+Native: an account screen, orders, addresses, an address form, and a login
+screen. The brief was that logging in must not hand the user to the website, and
+that is exactly what `/account` did before — it is a Shopify page, so it opened
+as one.
+
+**Where the data comes from.** zigly.com runs Shopify's *classic* customer
+accounts (`/account` 302s to `/account/login`, not to `shopify.com`), so the
+account pages are ordinary storefront pages on the canonical origin. Every read
+is executed *inside* the dashboard WebView, like the cart and the search
+suggestions, so it carries the one session the customer signed into — the "one
+cookie jar" rule again. §5a of [DATA-SOURCES.md](DATA-SOURCES.md) has every
+endpoint and payload.
+
+- **Signed in?** is the *redirect*: `/account?sections=main-account` bounces to
+  the login page when there is no session. Not a guess at a cookie.
+- **Addresses are read as forms, not as text.** Dawn renders an edit form per
+  saved address, so they come back under the field names Shopify accepts on the
+  way in, and Edit round-trips through the site's own names. Writes are its
+  documented `customer_address` form post, with `_method` for update and
+  delete, and each one is **verified** by re-reading the list — Shopify answers a
+  rejected address with the form again rather than an error, so "the POST
+  returned 200" means nothing on its own.
+- **Countries and states come from `/services/countries.js`**, the shop's own
+  dataset. That is also where the *labels* come from: India calls the subdivision
+  a State and the postcode a PIN code, and a country Shopify records no
+  subdivisions for gets no State field at all.
+
+**Login is the site's own OTP widget, restyled.** It is SimplyOTP (Lucent
+Commerce), and its live config has `recaptcha_enabled: true` and
+`fraud_detection: true` — so the request-OTP call cannot be made from native
+code, because a reCAPTCHA token only exists inside a real page. A native form
+would mean building on a credential lifted out of Zigly's storefront, which is
+the objection that kept search off SearchTap and the wishlist off Swym's API, and
+a worse one here: this is the flow that creates the session everything else
+reads. So `loginRestyle.ts` moves the widget's own popup to the body, hides the
+rest of the page, and restyles the phone row, the button and the OTP boxes into
+the app's shapes. Not one listener is replaced and not one click is synthesised.
+Two things it will not do: hide the consent notice, which is a legal one with
+links to Zigly's policies, and offer the theme's email-and-password form, which
+is the web experience this screen replaces.
+
+Success is Shopify's own signal — arriving at any Zigly page that is *not* the
+login form means the session exists — and the auth state flips at that moment
+rather than after a probe, because what the login WebView is showing right then is
+the website's account page. Navigation inside that one WebView is deliberately
+looser than everywhere else: any https destination renders, so an OTP provider's
+own host cannot bounce the customer into Chrome mid-login. That is the same
+relaxation checkout already gets, for the same reason.
+
+**What the reference app has here and this does not**, and why — the account
+screen is the one place where the site is thinner than the app that fronts it:
+
+| Missing | Why |
+| --- | --- |
+| Email and phone on the profile | Dawn's account section renders neither, and classic accounts have no customer JSON endpoint. The app shows an email- or phone-shaped string *if* the theme prints one, and leaves the line out if not |
+| Edit Profile | No storefront endpoint changes a customer's name, email or phone. The only place they are editable is inside SimplyOTP's login flow |
+| Change Password | Classic Shopify has no change-password page for a signed-in customer, only `POST /account/recover`, which emails a reset link — and an OTP-first store's customers mostly have no password for that link to change |
+| Delete Account | No storefront endpoint deletes a customer. The button explains that and opens Zigly's contact page, in the app |
+| Wishlist count on the header heart | That total lives in Swym, as it always did |
+
+A profile line that is missing is left blank rather than filled in, which is the
+same rule the cart follows about invented numbers.
+
+**Screen order matters.** The section is drawn *below* the page layers: an order,
+or a product opened from Favorites, is a real page and has to come down over the
+screen it was opened from, so Back returns there instead of to the dashboard.
+Back therefore walks page layers first, then the section, then the dashboard's
+own history. Covered by `__tests__/account.test.tsx` — the parsers, the stack
+rules, every screen's empty and waiting states, and a parse check on each
+injected script.
+
 ## Search
 
 The header's search bar is a button, not a field. Tapping it opens a native
@@ -371,9 +491,15 @@ on the dev machine has a broken Chromium/GPU path -- Chrome itself renders white
 there -- so device testing is the only trustworthy signal.
 
 - [x] Home page renders; real Zigly content, live banner carousel
-- [x] Bottom tab bar (the site's own `.fixed-icons`) visible and navigating
+- [x] Bottom tab bar visible and navigating — was the site's `.fixed-icons`,
+      now native with five tabs (see *The bottom navigation*); **the native bar
+      and the account section are the one part of this app never yet run on a
+      device**
 - [x] Search, cart, product navigation -- reported working
 - [x] OTP login completes (no SMS autofill in a WebView; code typed manually)
+- [ ] OTP login completes *through the restyled widget*, and lands on the native
+      account screen rather than the website's  <-- verify first, with a real
+      account: everything signed-in is untestable without one
 - [ ] Reach checkout; UPI intent opens a payment app  <-- highest remaining risk
 - [ ] Force-stop, relaunch -- still logged in, cart intact
 - [ ] Airplane mode shows the offline screen; Retry recovers
@@ -392,6 +518,8 @@ there -- so device testing is the only trustworthy signal.
 | A backslash inside a template literal is eaten before the page sees it — `/\/products\//` shipped as `//products//` | Watch for it: the removal bridge splits strings instead, and `__tests__/injection-syntax.test.ts` parses every payload |
 | Sort/Filter bar emptied itself after a filter change, and never appeared on `/search` | Fixed in sortFilterBar.ts |
 | Listing cards showed the compact variant picker, not the reference's full-width Add to Bag | Fixed via `body.zigly-listing` |
+| Logging in left the app: the Account tab, and every `/account` link, opened Shopify's own account page | Fixed — native account section, and account urls are taken over before they navigate |
+| No Account item in the bottom navigation | Fixed — the site's bar has none to restyle, so the bar is native and carries five tabs |
 | Some homepage sections not visible | Under investigation -- compare against zigly.com in mobile Chrome first; if absent there too it is the site's own mobile design, not an app defect |
 
 ## Known gaps (deliberate, scheduled)
@@ -405,3 +533,5 @@ there -- so device testing is the only trustworthy signal.
 | Cookie flush on background (session persistence) | validate in gate first |
 | Native facets and sort on search results | needs Zigly's SearchTap account |
 | Wishlist count badge on the header heart | that total lives in Swym, not Shopify |
+| Email and phone on the account profile | the theme does not render them and classic accounts expose no customer JSON; needs Zigly's own API |
+| Edit Profile, Change Password, Delete Account | no storefront endpoint for any of the three — see *The account section* |

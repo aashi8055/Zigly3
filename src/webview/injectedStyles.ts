@@ -238,8 +238,9 @@ html, body {
    The controls inside are SearchTap's own; this only places them.
 
    The reference app shows this bar in place of the tab bar on collection
-   screens, so the site's bottom nav is hidden while it is present. Navigation
-   stays available through the header's back arrow.
+   screens. The site's own nav is hidden everywhere now, and the *native* bar
+   stands down on these pages for the same reason -- see showsSortFilterBar in
+   ../utils/urlUtils.ts, which mirrors the path test this script uses.
    ------------------------------------------------------------------ */
 #zigly-sortfilter-bar {
   position: fixed !important;
@@ -264,9 +265,6 @@ html, body {
 /* Divider between the two controls. */
 #zigly-sortfilter-bar > *:first-child {
   border-right: 1px solid #E3E9F3;
-}
-body.zigly-has-sortfilter .fixed-icons {
-  display: none !important;
 }
 /* Clearance for the pinned bar. 56px of bar plus room to breathe: at 70px the
    foot of the document sat almost against the strip, which is where SearchTap
@@ -365,23 +363,24 @@ body.zigly-listing .card-wrapper {
 }
 
 /* ------------------------------------------------------------------
-   The site's bottom navigation.
+   The site's bottom navigation: hidden, because the app now draws its own.
 
-   The reference app shows the site's own four tabs -- Zigly, Collections,
-   Breed-verse, Wishlist -- so nothing is added to the bar. These rules only
-   spread the tabs evenly and let "Breed-verse" wrap, as the reference does.
+   This app used to show the site's bar and restyle it, on the reasoning that a
+   native one would stack a second bar on top of it. Two facts about the live
+   site retired that, both verified on 2026-08-22:
+
+     - the site's bar has four tabs and **no Account item**, while the reference
+       app has five, so there was nothing here to turn into an Account tab;
+     - it is drawn inside the page, so it vanished behind every native screen
+       this app has -- the cart, the wishlist, and now the account section.
+
+   So the bar is native (see ../components/BottomNav.tsx) and this hides the
+   site's. Hidden, never removed: the theme's own scripts mark the active tab in
+   here on navigation, and an element they cannot find is how a script starts
+   throwing on every page.
    ------------------------------------------------------------------ */
 .fixed-icons {
-  gap: 0 !important;
-}
-.fixed-icons > a {
-  flex: 1 1 0 !important;
-  min-width: 0 !important;
-}
-.fixed-icons > a span {
-  font-size: 0.95rem !important;
-  text-align: center;
-  white-space: normal;
+  display: none !important;
 }
 
 /* ------------------------------------------------------------------

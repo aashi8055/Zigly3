@@ -214,6 +214,77 @@ WebView that intercepts fetches and caches responses, which is a live candidate
 for the open "some homepage sections not visible" defect — a stale SW cache
 serves old section HTML. Worth testing with the SW blocked.
 
+## 5a. Customer accounts — verified live 2026-08-22
+
+zigly.com is on Shopify's **classic** customer accounts, not the new
+`shopify.com/<id>/account` ones. `GET /account` while signed out answers
+`302 -> /account/login?return_url=%2Faccount`, which is the whole login check
+this app needs and the reason the account screens can be native at all: these are
+ordinary storefront pages on the canonical origin, readable with the shared
+session.
+
+| What | Source | Shape |
+| --- | --- | --- |
+| Signed in? | `GET /account?sections=main-account` | redirect to `/account/login` means no session |
+| Profile | same reply | see the caveat below |
+| Order history | same reply | Dawn's `table.order-history`; cells labelled by `headers="Column…"` |
+| Order detail | `/account/orders/{id}?key=…` | left on the web: line items, tax, shipping, tracking |
+| Addresses | `GET /account/addresses?sections=main-addresses` | one `{% form 'customer_address' %}` per address |
+| Countries / states | `GET /services/countries.js` | `var Countries = {…}`; carries `provinces`, `province_label`, `zip_label` |
+| Create address | `POST /account/addresses` | `form_type=customer_address`, `address[...]` |
+| Update address | `POST /account/addresses/{id}` + `_method=put` | same fields |
+| Delete address | `POST /account/addresses/{id}` + `_method=delete` | |
+| Sign out | `GET /account/logout` | clears the session cookie |
+
+Three things worth knowing before touching this area:
+
+- **The profile is thin, and that is the site's shape, not a bug.** Dawn's
+  `main-account` section renders a heading, the order table and
+  `customer.default_address | format_address`. There is **no** `customer.email`
+  and no `customer.phone` in it, and classic accounts expose no customer JSON
+  endpoint. So the app reads the name off the default address, looks for an
+  email- or phone-shaped string in case this theme prints one, and leaves
+  anything it does not find blank. A customer with no saved address may show only
+  their initials.
+- **Read the address *form*, not the rendered address.** Each saved address ships
+  with its own edit form, so the fields come back under the names Shopify will
+  accept on the way in. One catch, and it is the kind that only shows on a
+  device: Dawn does not mark the customer's country with `selected`; it prints
+  `data-default="India"` and applies it with its own script. A parsed document
+  has run no script, so `selectedIndex` is 0 — read `data-default` *first* or
+  every address comes back in Afghanistan.
+- **Order totals are rendered strings.** There is no `/account/orders.json`, so
+  the theme's `money_with_currency` output is the only source. It is displayed
+  verbatim and never parsed — the one money value in this app that is not
+  integer paise, and the reason it is never used in arithmetic.
+
+### Login is SimplyOTP, and it is not ours to drive
+
+Login is the **Simply OTP Login** app (Lucent Commerce, `auth.lucentcommerce.com`).
+Its live config on the login page carries:
+
+```
+login_screen_theme: "modal_view"   phone_enable: true    email_enable: false
+enable_countries: "IN"             recaptcha_enabled: true
+fraud_detection: true              auto_login_enable: false
+login_title: "Login with OTP"      request_otp_text: "Request OTP"
+```
+
+`recaptcha_enabled` is the decisive one: the request-OTP call needs a reCAPTCHA
+token, which only exists inside a real page running their script. So a native OTP
+form is not possible without lifting a credential out of Zigly's storefront — the
+same objection that kept search off SearchTap and the wishlist off Swym's API,
+and a far worse one here, because this is the flow that creates the session
+everything else reads. The app therefore runs the site's own widget in a WebView
+and restyles it; `src/webview/loginRestyle.ts` carries the selector list
+(`.sotp-popup-wrapper`, `.login-box`, `.send-btn`, `.verify-box`,
+`.otp-input-box`, `.update-user-box`).
+
+**No storefront endpoint exists for**: changing a signed-in customer's password
+(only `POST /account/recover`, which emails a reset link), editing a customer's
+name, email or phone, or deleting a customer. The account screen omits the first
+two and routes deletion to Zigly's contact page rather than pretending.
+
 ## 6. Screen → data source map
 
 | Mobile screen | Primary source | Notes |
@@ -226,7 +297,10 @@ serves old section HTML. Worth testing with the SW blocked.
 | Delivery ETA on PDP | `pincode_fetch` + `clickpost` | §4 |
 | Cart | `/cart.js`, `/cart/add.js`, `/cart/update.js` | cookie-scoped |
 | Checkout | `/checkouts/…`, Fastrr | leave in WebView — see below |
-| Login / OTP | `/account/login`, `otp-section` | no SMS autofill in WebView |
+| Login / OTP | `/account/login` (SimplyOTP widget, restyled) | reCAPTCHA — must run in the page; no SMS autofill in a WebView |
+| Account | `/account?sections=main-account` | §5a; profile is thin on a stock theme |
+| Orders | same reply | detail page stays on the web |
+| Address + form | `/account/addresses`, `/services/countries.js` | writes are Shopify's own form post |
 | Prescription upload | `860wd50e1i…` prescription endpoints | needs a file chooser |
 | Blog / static pages | `/blogs/all`, `/pages/*`, `/policies/*` | |
 
@@ -234,7 +308,10 @@ serves old section HTML. Worth testing with the SW blocked.
 
 1. **One cookie jar.** Cart and login live in `_shopify_*` cookies. If any screen
    fetches JSON outside the WebView's cookie store, it gets a *different* cart.
-   Either share the jar or route all cart writes through the WebView.
+   Either share the jar or route all cart writes through the WebView. The account
+   reads and address writes in §5a follow the same rule for the same reason: they
+   are executed *inside* the dashboard WebView, so they carry the one session the
+   customer actually signed into.
 2. **Prices in paise, divided once.** See §1.
 3. **Never hardcode section ids.** See §3.
 4. **Don't reimplement checkout.** Payment redirects to unknowable bank 3-D

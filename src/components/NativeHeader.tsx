@@ -26,6 +26,7 @@ import {
   View,
 } from 'react-native';
 import { COLORS, FONT_FAMILY } from '../constants/appConstants';
+import { HeartShape } from './glyphs';
 
 interface Props {
   onMenuPress: () => void;
@@ -61,50 +62,6 @@ interface Props {
    */
   showBack: boolean;
 }
-
-const HeartShape = ({ size, color }: { size: number; color: string }) => {
-  // Proportions tuned so the lobes sit on the square's top edge and its rotated
-  // corner forms the point, without either spilling past the box.
-  const lobe = size * 0.52;
-  const square = size * 0.7;
-  return (
-    <View style={{ width: size, height: size }}>
-      <View
-        style={{
-          position: 'absolute',
-          left: size * 0.02,
-          top: size * 0.08,
-          width: lobe,
-          height: lobe,
-          borderRadius: lobe / 2,
-          backgroundColor: color,
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          right: size * 0.02,
-          top: size * 0.08,
-          width: lobe,
-          height: lobe,
-          borderRadius: lobe / 2,
-          backgroundColor: color,
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          left: (size - square) / 2,
-          top: size * 0.22,
-          width: square,
-          height: square,
-          backgroundColor: color,
-          transform: [{ rotate: '45deg' }],
-        }}
-      />
-    </View>
-  );
-};
 
 const WishlistIcon = () => (
   <View style={styles.wishlist}>

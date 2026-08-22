@@ -145,3 +145,76 @@ export const SPLASH_MIN_MS = 900;
  * missing section delays the app rather than trapping it.
  */
 export const SPLASH_MAX_MS = 7000;
+
+/* ------------------------------------------------------------------
+   Account.
+
+   zigly.com runs Shopify's *classic* customer accounts -- verified
+   2026-08-22: /account 302s to /account/login?return_url=%2Faccount, not to
+   shopify.com's new-accounts host. That matters, because it means the account
+   pages are ordinary storefront pages on the canonical origin, readable with
+   the session this app already shares (the "one cookie jar" rule), and the
+   address form is Shopify's own documented POST target rather than an API that
+   would need a token this app has no right to.
+
+   Login itself is a third-party app: SimplyOTP (auth.lucentcommerce.com), with
+   `recaptcha_enabled: true` and `fraud_detection: true` in its live config. So
+   the OTP request cannot be made from native code -- a reCAPTCHA token only
+   exists inside a real page. The login screen therefore runs the site's own
+   widget in a WebView and restyles it; see ../webview/loginRestyle.ts.
+   ------------------------------------------------------------------ */
+
+/** The account page. Redirects to ACCOUNT_LOGIN_PATH when signed out. */
+export const ACCOUNT_PATH = '/account';
+export const ACCOUNT_LOGIN_PATH = '/account/login';
+export const ACCOUNT_ADDRESSES_PATH = '/account/addresses';
+export const ACCOUNT_LOGOUT_PATH = '/account/logout';
+
+/**
+ * Where the login WebView is sent, and where a completed login lands.
+ *
+ * `return_url` is Shopify's own parameter, so the site decides the landing
+ * page; the app only has to notice that it is no longer on the login page.
+ */
+export const LOGIN_URL = `${ZIGLY_ORIGIN}${ACCOUNT_LOGIN_PATH}?return_url=%2Faccount`;
+
+/**
+ * Shopify's country/province dataset for this shop, same origin and no key:
+ * `var Countries = {...};`. It is what fills the Country and State pickers on
+ * the address form, so those lists are the shop's own rather than a table
+ * bundled into the app that would drift out of date.
+ */
+export const COUNTRIES_URL = `${ZIGLY_ORIGIN}/services/countries.js`;
+
+/** Where an account-deletion request goes. Zigly handles these by hand. */
+export const SUPPORT_PAGE_URL = `${ZIGLY_ORIGIN}/pages/contact-us`;
+export const SUPPORT_EMAIL = 'support@zigly.com';
+
+/**
+ * The bottom navigation.
+ *
+ * The site's own bar (`.fixed-icons`) carries four tabs and no Account item at
+ * all -- verified against the live homepage on 2026-08-22 -- while the
+ * reference app shows five. It is also drawn inside the page, so it vanished
+ * behind every native screen this app has. Both problems have the same fix:
+ * the bar is native, and the site's is hidden (see injectedStyles.ts).
+ *
+ * Hrefs are the site's own, so the destinations stay whatever Zigly points
+ * those tabs at.
+ */
+export type TabKey = 'home' | 'collections' | 'breeds' | 'wishlist' | 'account';
+
+export interface Tab {
+  key: TabKey;
+  label: string;
+  /** Absent for the two tabs that open a native screen. */
+  url?: string;
+}
+
+export const TABS: Tab[] = [
+  {key: 'home', label: 'Zigly', url: `${ZIGLY_ORIGIN}/`},
+  {key: 'collections', label: 'Collection', url: `${ZIGLY_ORIGIN}/collections`},
+  {key: 'breeds', label: 'Breed-verse', url: `${ZIGLY_ORIGIN}/pages/pet-breeds`},
+  {key: 'wishlist', label: 'Wishlist'},
+  {key: 'account', label: 'Account'},
+];

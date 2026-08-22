@@ -7,13 +7,24 @@
  *   native header      /  (the bar stands down only on the search screen)
  *   ------------------ <- everything below is inside `body`
  *   dashboard WebView     mounted for the life of the app
+ *   account section       native: account, orders, address, the login widget
  *   page layers           inner pages: one on screen, the rest parked off it
  *   cart screen
+ *   ------------------
+ *   bottom navigation     five tabs, native, outside `body` like the header
  *
- * The header sits *outside* `body`, and every overlay is positioned inside it.
- * That is load-bearing: the layers used to be absolutely positioned against the
- * whole screen, so opening any inner page covered the header with it and left
- * the user on a page with no back arrow and no cart.
+ * The header and the bottom bar sit *outside* `body`, and every overlay is
+ * positioned inside it. That is load-bearing: the layers used to be absolutely
+ * positioned against the whole screen, so opening any inner page covered the
+ * header with it and left the user on a page with no back arrow and no cart.
+ * The bottom bar is native for the same reason -- the site's own is drawn inside
+ * the page, so every native screen in this list hid it, and it has no Account
+ * tab to begin with.
+ *
+ * The account section is *below* the page layers on purpose: an order, or a
+ * product opened from Favorites, is a real page and has to be drawn over the
+ * screen it was opened from, so that Back returns there rather than to the
+ * dashboard.
  *
  * Remounting the dashboard would drop the Shopify session cookie and the user's
  * place on the page, so navigation is performed by driving these WebViews
@@ -41,9 +52,25 @@ import type {
 } from 'react-native-webview/lib/WebViewTypes';
 import NetInfo from '@react-native-community/netinfo';
 
-import {COLORS, START_URL, ZIGLY_ORIGIN} from '../constants/appConstants';
+import {
+  COLORS,
+  LOGIN_URL,
+  START_URL,
+  SUPPORT_EMAIL,
+  SUPPORT_PAGE_URL,
+  TABS,
+  ZIGLY_ORIGIN,
+} from '../constants/appConstants';
+import type {TabKey} from '../constants/appConstants';
 import {baseWebViewProps} from '../webview/webViewConfig';
-import {classifyUrl, isCheckoutUrl} from '../utils/urlUtils';
+import {
+  classifyUrl,
+  isAccountUrl,
+  isCheckoutUrl,
+  isInternalHost,
+  parseUrl,
+  showsSortFilterBar,
+} from '../utils/urlUtils';
 import {getInjectionForUrl} from '../webview/injectedScripts';
 import {PREFETCH_SCRIPT} from '../webview/prefetch';
 import {log, warn} from '../utils/logger';
@@ -91,6 +118,46 @@ import {
   visibleLayer,
 } from '../navigation/pageStack';
 import type {PageStack} from '../navigation/pageStack';
+import BottomNav from '../components/BottomNav';
+import AccountScreen from '../components/AccountScreen';
+import OrdersScreen from '../components/OrdersScreen';
+import AddressScreen from '../components/AddressScreen';
+import AddressFormScreen from '../components/AddressFormScreen';
+import {
+  ACCOUNT_PROBE,
+  ADDRESSES_PROBE,
+  COUNTRIES_PROBE,
+  LOGOUT_SCRIPT,
+  WRITE_TIMEOUT_MS,
+  deleteAddressScript,
+  saveAddressScript,
+} from '../webview/accountBridge';
+import {LOGIN_RESTYLE} from '../webview/loginRestyle';
+import {
+  EMPTY_ADDRESS_FIELDS,
+  parseAddresses,
+  parseCountries,
+  parseCustomer,
+  parseOrders,
+} from '../account/accountData';
+import type {
+  Address,
+  AddressFields,
+  AuthState,
+  Country,
+  Customer,
+  Order,
+} from '../account/accountData';
+import {
+  EMPTY_ACCOUNT_STACK,
+  closeAccount,
+  openAccount,
+  popScreen,
+  pushScreen,
+  resolveAuth,
+  topScreen,
+} from '../navigation/accountStack';
+import type {AccountStack} from '../navigation/accountStack';
 
 interface Props {
   /** Fired once the first page has painted, so the splash can retire. */
@@ -102,7 +169,7 @@ interface Props {
  * a page layer's key. Resolved at the moment of injection, so a delayed pass
  * into a layer that has since been evicted is a no-op rather than a warning.
  */
-type Target = 'home' | 'wishlist' | number;
+type Target = 'home' | 'wishlist' | 'login' | number;
 
 /**
  * Whether a page is a shopping page.
@@ -212,6 +279,45 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const searchToken = useRef(0);
   const searchOpenRef = useRef(false);
 
+  /**
+   * The account section.
+   *
+   * Native, and the reason this app now draws its own bottom bar: the site's
+   * has no Account tab, and every screen here would have hidden it anyway.
+   * Nothing in here is a second copy of the customer's data -- the session is
+   * the website's, the addresses are Shopify's, and every read goes out through
+   * the dashboard WebView so it carries that session. See ../webview/
+   * accountBridge.ts.
+   */
+  const [auth, setAuth] = useState<AuthState>('unknown');
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  /** null means "not read yet"; [] means the customer really has none. */
+  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [addresses, setAddresses] = useState<Address[] | null>(null);
+  /** The shop's own country list, fetched once the address form is first opened. */
+  const [countries, setCountries] = useState<Country[]>([]);
+  const countriesAsked = useRef(false);
+  const [accountScreens, setAccountScreens] =
+    useState<AccountStack>(EMPTY_ACCOUNT_STACK);
+  /** The address the form is editing, or null when it is adding a new one. */
+  const [editing, setEditing] = useState<Address | null>(null);
+  const [savingAddress, setSavingAddress] = useState(false);
+  /** Shown on the form when a save came back unconfirmed. */
+  const [addressError, setAddressError] = useState<string | null>(null);
+  /** Shown on the address list when a delete came back unconfirmed. */
+  const [addressNotice, setAddressNotice] = useState<string | null>(null);
+  /** Shown on the account screen when a sign-out did not take. */
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  /** Read inside native callbacks, so they must be refs, not state. */
+  const authRef = useRef<AuthState>('unknown');
+  const accountScreensRef = useRef<AccountStack>(EMPTY_ACCOUNT_STACK);
+  const loginRef = useRef<Web>(null);
+  /**
+   * Mirrors inCheckoutRef as state: the bottom bar has to come down over
+   * Shopify's checkout, and a ref cannot re-render it.
+   */
+  const [inCheckout, setInCheckout] = useState(false);
+
   /** Inner pages. See ../navigation/pageStack for the rules. */
   const [stack, setStack] = useState<PageStack>(EMPTY_STACK);
   /** Mirrors `stack` for the native back handler, which reads a ref. */
@@ -258,6 +364,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   useEffect(() => {
     wishlistOpenRef.current = wishlistOpen;
   }, [wishlistOpen]);
+
+  useEffect(() => {
+    authRef.current = auth;
+  }, [auth]);
+
+  useEffect(() => {
+    accountScreensRef.current = accountScreens;
+  }, [accountScreens]);
 
   /** Stop both the pending request and the wait for one. */
   const cancelSuggestTimers = useCallback(() => {
@@ -306,6 +420,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       view = webRef.current;
     } else if (target === 'wishlist') {
       view = wishlistRef.current;
+    } else if (target === 'login') {
+      view = loginRef.current;
     } else {
       view = layerRefs.current.get(target);
     }
@@ -372,6 +488,22 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     }
     setStack(prev => goToDashboard(prev));
     // The cart may have changed while away; re-read the site's own counter.
+    injectInto('home', REPORT_CART_COUNT);
+  }, [injectInto]);
+
+  /**
+   * Bring the dashboard to the front without the logo's scroll-to-top.
+   *
+   * `dismissPages` treats "already home" as a request to jump to the top, which
+   * is right for the logo and for the Zigly tab and wrong for everything else:
+   * opening the account section would silently throw away the customer's place
+   * on the home page behind it, which they would find on the way back.
+   */
+  const clearPages = useCallback(() => {
+    if (onDashboard(stackRef.current)) {
+      return;
+    }
+    setStack(prev => goToDashboard(prev));
     injectInto('home', REPORT_CART_COUNT);
   }, [injectInto]);
 
@@ -563,6 +695,282 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     injectInto('home', READ_CART_SCRIPT);
   }, [injectInto]);
 
+  // ----------------------------------------------------------------- account
+  /**
+   * Ask the site who is signed in.
+   *
+   * Every account read goes through the dashboard WebView, which is mounted for
+   * the life of the app and holds the session -- the same route the cart and the
+   * search suggestions take, and the reason the app and the website are one
+   * signed-in customer rather than two.
+   */
+  const probeAccount = useCallback(() => {
+    injectInto('home', ACCOUNT_PROBE);
+  }, [injectInto]);
+
+  const probeAddresses = useCallback(() => {
+    setAddresses(null);
+    injectInto('home', ADDRESSES_PROBE);
+  }, [injectInto]);
+
+  /** The country list is the same for every customer, so it is asked for once. */
+  const probeCountries = useCallback(() => {
+    if (countriesAsked.current) {
+      return;
+    }
+    countriesAsked.current = true;
+    injectInto('home', COUNTRIES_PROBE);
+  }, [injectInto]);
+
+  /**
+   * Apply an auth answer.
+   *
+   * Kept in one place because three different messages carry one -- the account
+   * read, the sign-out reply and the login screen's own navigation -- and they
+   * must all leave the app in the same state. Anything that is not a definite
+   * yes or no is left alone: an errored probe is not evidence of a signed-out
+   * customer, and treating it as one would sign people out on a dropped packet.
+   */
+  const applyAuth = useCallback((state: AuthState) => {
+    setAuth(state);
+    setAccountScreens(prev => resolveAuth(prev, state));
+    if (state === 'signedOut') {
+      setCustomer(null);
+      setOrders(null);
+      setAddresses(null);
+      setEditing(null);
+    }
+  }, []);
+
+  /**
+   * Open the account section.
+   *
+   * Signed out this is the login screen, which is the requirement this feature
+   * exists for: the tab must not open the website's account page. The state is
+   * re-checked on every open, because a session can expire while the app is
+   * sitting on the dashboard.
+   */
+  const openAccountSection = useCallback(() => {
+    setAccountNotice(null);
+    // Always to the front. Page layers are drawn over the section, so a section
+    // opened from a link inside a page -- the drawer's Login/Register, say --
+    // would otherwise open underneath the page it was opened from.
+    clearPages();
+    setAccountScreens(openAccount(authRef.current));
+    probeAccount();
+  }, [clearPages, probeAccount]);
+
+  const closeAccountSection = useCallback(() => {
+    setAccountScreens(closeAccount());
+  }, []);
+
+  /** One step back inside the section. Empty means it has closed. */
+  const stepBackAccount = useCallback((): boolean => {
+    if (accountScreensRef.current.length === 0) {
+      return false;
+    }
+    setAccountScreens(prev => popScreen(prev));
+    return true;
+  }, []);
+
+  const openAccountRow = useCallback(
+    (row: 'orders' | 'address' | 'favorites') => {
+      if (row === 'favorites') {
+        // The same wishlist the bottom navigation opens, and the same state:
+        // there is one wishlist screen in this app, reached from two places.
+        openWishlist();
+        return;
+      }
+      if (row === 'orders') {
+        setAccountScreens(prev => pushScreen(prev, 'orders'));
+        // Orders arrive with the account read, so this is usually already
+        // filled. Re-asked only when that read did not land.
+        if (orders === null) {
+          probeAccount();
+        }
+        return;
+      }
+      setAddressNotice(null);
+      setAccountScreens(prev => pushScreen(prev, 'address'));
+      probeAddresses();
+    },
+    [openWishlist, orders, probeAccount, probeAddresses],
+  );
+
+  const openAddressForm = useCallback(
+    (address: Address | null) => {
+      setEditing(address);
+      setAddressError(null);
+      probeCountries();
+      setAccountScreens(prev => pushScreen(prev, 'addressForm'));
+    },
+    [probeCountries],
+  );
+
+  /**
+   * Stop waiting for a write that is not going to answer.
+   *
+   * Both writes confirm themselves by re-reading the list, so a reply is two
+   * requests away. If the page navigated or the renderer was killed in between,
+   * nothing comes back -- and a Save button that spins for ever looks exactly
+   * like an app that has crashed.
+   */
+  const writeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearWriteWatch = useCallback(() => {
+    if (writeTimer.current) {
+      clearTimeout(writeTimer.current);
+      writeTimer.current = null;
+    }
+  }, []);
+
+  const watchWrite = useCallback(
+    (giveUp: () => void) => {
+      clearWriteWatch();
+      writeTimer.current = setTimeout(() => {
+        writeTimer.current = null;
+        giveUp();
+      }, WRITE_TIMEOUT_MS);
+    },
+    [clearWriteWatch],
+  );
+
+  useEffect(() => clearWriteWatch, [clearWriteWatch]);
+
+  const saveAddress = useCallback(
+    (fields: AddressFields) => {
+      setSavingAddress(true);
+      setAddressError(null);
+      watchWrite(() => {
+        warn('address save never reported back');
+        setSavingAddress(false);
+        setAddressError(
+          'That did not reach Zigly. Check your connection and try again.',
+        );
+      });
+      injectInto(
+        'home',
+        saveAddressScript(fields, editing ? editing.id : null),
+      );
+    },
+    [editing, injectInto, watchWrite],
+  );
+
+  const deleteAddress = useCallback(
+    (address: Address) => {
+      Alert.alert(
+        'Delete address',
+        'Remove this address from your Zigly account?',
+        [
+          {text: 'Keep it', style: 'cancel'},
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              setAddressNotice(null);
+              setAddresses(null);
+              watchWrite(() => {
+                warn('address delete never reported back');
+                setAddressNotice(
+                  'That did not reach Zigly. Your addresses are as they were.',
+                );
+                probeAddresses();
+              });
+              injectInto('home', deleteAddressScript(address.id));
+            },
+          },
+        ],
+      );
+    },
+    [injectInto, probeAddresses, watchWrite],
+  );
+
+  /**
+   * Sign out.
+   *
+   * The site's own /account/logout, fetched inside the WebView so the one
+   * shared cookie jar is what gets cleared. The screen is not updated here: it
+   * waits for the reply, because an account screen that says "signed out" over
+   * a website that is still signed in is the one outcome worse than a moment's
+   * delay.
+   */
+  const logOut = useCallback(() => {
+    setAccountNotice(null);
+    injectInto('home', LOGOUT_SCRIPT);
+  }, [injectInto]);
+
+  /**
+   * Delete account.
+   *
+   * Shopify's storefront has no endpoint that deletes a customer -- the
+   * reference app must call a Zigly backend this app does not have, and there is
+   * no honest way to fake it. So the button does what Zigly actually needs to
+   * happen: it offers their contact form, in the app, and names the support
+   * address for anyone who would rather write.
+   */
+  const requestAccountDeletion = useCallback(() => {
+    Alert.alert(
+      'Delete account',
+      'Zigly deletes accounts on request rather than from the app. Open their contact form to ask, or email ' +
+        SUPPORT_EMAIL +
+        '.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Open contact form',
+          onPress: () => showPage(SUPPORT_PAGE_URL),
+        },
+      ],
+    );
+  }, [showPage]);
+
+  /**
+   * A bottom-navigation tab.
+   *
+   * Tapping a tab is a reset to that tab's root: any native screen closes and
+   * the page stack is dismissed, so the tab shows what the tab is for rather
+   * than whatever was on top of it.
+   */
+  const selectTab = useCallback(
+    (key: TabKey) => {
+      setSearchOpen(false);
+      setShowCart(false);
+
+      if (key === 'account') {
+        setWishlistOpen(false);
+        // Brings the dashboard forward itself, so the section is never opened
+        // underneath a page layer.
+        openAccountSection();
+        return;
+      }
+
+      if (key === 'wishlist') {
+        closeAccountSection();
+        clearPages();
+        openWishlist();
+        return;
+      }
+
+      setWishlistOpen(false);
+      closeAccountSection();
+
+      const tab = TABS.find(entry => entry.key === key);
+      if (key === 'home' || !tab || !tab.url) {
+        dismissPages();
+        return;
+      }
+      showPage(tab.url);
+    },
+    [
+      clearPages,
+      closeAccountSection,
+      dismissPages,
+      openAccountSection,
+      openWishlist,
+      showPage,
+    ],
+  );
+
   // ------------------------------------------------------------ back button
   useEffect(() => {
     const onBack = (): boolean => {
@@ -578,7 +986,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         closeCart();
         return true;
       }
+      // Page layers first, then the account section: a page opened from inside
+      // the section (an order, a product from Favorites) is drawn over it, so
+      // Back has to take the page off before it takes a step in the section.
       if (stepBack()) {
+        return true;
+      }
+      if (stepBackAccount()) {
         return true;
       }
       if (canGoBackRef.current) {
@@ -595,7 +1009,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       onBack,
     );
     return () => subscription.remove();
-  }, [closeCart, closeSearch, closeWishlist, stepBack]);
+  }, [closeCart, closeSearch, closeWishlist, stepBack, stepBackAccount]);
 
   // ------------------------------------------------------------- url policy
   const handleShouldStart = useCallback(
@@ -606,6 +1020,19 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       }
 
       const {url} = request;
+
+      // The account area is native now, so the site's own links into it are
+      // taken over rather than followed. Without this, the drawer's
+      // "Login/Register" and the theme's account links would still show
+      // Shopify's account page inside the app -- the web experience the native
+      // section exists to replace. The one exception is an order's own page,
+      // which `isAccountUrl` deliberately leaves out; see urlUtils.
+      if (isAccountUrl(url)) {
+        log('account link taken over ->', url);
+        openAccountSection();
+        return false;
+      }
+
       const action = classifyUrl(url, inCheckoutRef.current);
 
       switch (action.kind) {
@@ -646,7 +1073,87 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           return true;
       }
     },
+    [openAccountSection],
+  );
+
+  /**
+   * Navigation policy inside the login screen, which is deliberately looser
+   * than everywhere else.
+   *
+   * Login is SimplyOTP's, and an OTP provider may take the page through its own
+   * host to complete the sign-in -- auth.lucentcommerce.com, a reCAPTCHA check,
+   * a magic-token hop back to the storefront. Under the ordinary policy an
+   * unrecognised host is handed to the system browser, and that would produce
+   * exactly the defect this whole feature exists to fix: the app opening Chrome
+   * in the middle of logging in, with the session landing somewhere the app
+   * cannot see.
+   *
+   * So inside this one WebView every https destination renders, which is the
+   * same relaxation checkout already gets and for the same reason: a flow that
+   * must complete cannot be policed by a list of hosts nobody controls. It is
+   * narrow -- one screen, torn down the moment login finishes -- and it never
+   * relaxes the two things that matter: cleartext is still upgraded, and
+   * non-web schemes still go to the OS rather than being rendered.
+   */
+  const handleLoginShouldStart = useCallback(
+    (request: ShouldStartLoadRequest): boolean => {
+      if (request.isTopFrame === false) {
+        return true;
+      }
+      const action = classifyUrl(request.url, true);
+      switch (action.kind) {
+        case 'appIntent':
+          Linking.openURL(action.url).catch(() =>
+            warn('no handler for', action.url),
+          );
+          return false;
+        case 'rewrite':
+          setTimeout(() => {
+            loginRef.current?.injectJavaScript(
+              `window.location.replace(${JSON.stringify(action.url)}); true;`,
+            );
+          }, 0);
+          return false;
+        case 'block':
+          warn('blocked during login:', action.reason, request.url);
+          return false;
+        default:
+          // Both 'allow' and 'external' render here.
+          return true;
+      }
+    },
     [],
+  );
+
+  /**
+   * Watch the login screen for the moment it succeeds.
+   *
+   * The signal is Shopify's own: /account redirects to /account/login without a
+   * session, so arriving at any Zigly page that is *not* the login form means
+   * the session now exists. That is a fact about the server's behaviour rather
+   * than a guess at the widget's internals, which is why it is what this
+   * watches -- SimplyOTP's success screen is a class name that could be
+   * renamed in an app update, and a redirect is not.
+   *
+   * The auth state is flipped here rather than waiting for the probe to answer:
+   * the login WebView is showing the website's own account page at this moment,
+   * and that page must not be what the customer sees.
+   */
+  const handleLoginNav = useCallback(
+    (nav: WebViewNavigation) => {
+      const parsed = parseUrl(nav.url);
+      if (!parsed || !isInternalHost(parsed.host)) {
+        // Mid-flow, on the provider's host. Not an answer either way.
+        return;
+      }
+      if (parsed.path.toLowerCase().indexOf('/account/login') === 0) {
+        return;
+      }
+      log('login completed, landed on', nav.url);
+      applyAuth('signedIn');
+      probeAccount();
+    },
+    [applyAuth, probeAccount],
   );
 
   /**
@@ -664,11 +1171,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       if (
         request.isTopFrame !== false &&
         !isHomeUrl(request.url) &&
+        !isAccountUrl(request.url) &&
         classifyUrl(request.url).kind === 'allow'
       ) {
         showPage(request.url);
         return false;
       }
+      // Account urls fall through to the shared handler, which takes them over.
       return handleShouldStart(request);
     },
     [handleShouldStart, showPage],
@@ -684,6 +1193,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     const nowInCheckout = isCheckoutUrl(nav.url);
     if (nowInCheckout !== inCheckoutRef.current) {
       inCheckoutRef.current = nowInCheckout;
+      // The bottom bar comes down over Shopify's checkout: it is not this app's
+      // screen, and a tab bar across the foot of a payment page is one mistap
+      // away from abandoning a paid-for basket.
+      setInCheckout(nowInCheckout);
       log(nowInCheckout ? 'entered checkout flow' : 'left checkout flow');
     }
   }, []);
@@ -718,6 +1231,113 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     });
   }, []);
 
+  /** Every account reply. Returns true when the message was one of ours. */
+  const handleAccountMessage = useCallback(
+    (data: Record<string, unknown>): boolean => {
+      switch (data.tag) {
+        case 'account': {
+          const state: AuthState =
+            data.state === 'signedIn'
+              ? 'signedIn'
+              : data.state === 'signedOut'
+              ? 'signedOut'
+              : 'unknown';
+          applyAuth(state);
+          if (state === 'signedIn') {
+            setCustomer(parseCustomer(data));
+            setOrders(parseOrders(data, ZIGLY_ORIGIN));
+            // What the theme actually gave us. Logged rather than shown, so a
+            // single device run says which fields this store renders instead
+            // of leaving the thin ones assumed.
+            log('account read via', data.via, JSON.stringify(data.probe ?? {}));
+          } else {
+            log('account read:', state, 'via', data.via);
+          }
+          return true;
+        }
+
+        case 'addresses': {
+          if (data.state === 'signedOut') {
+            applyAuth('signedOut');
+            return true;
+          }
+          setAddresses(parseAddresses(data));
+          return true;
+        }
+
+        case 'countries': {
+          const list = parseCountries(data);
+          setCountries(list);
+          if (list.length === 0) {
+            // Asked again next time the form opens: without this list the
+            // Country field cannot be filled at all.
+            countriesAsked.current = false;
+            warn('country list came back empty');
+          }
+          return true;
+        }
+
+        case 'address-saved': {
+          clearWriteWatch();
+          setSavingAddress(false);
+          if (data.ok === true) {
+            setAddressError(null);
+            setEditing(null);
+            // Back to the list, which re-reads: the address on screen is then
+            // the one Shopify actually holds, not the one that was typed.
+            setAccountScreens(prev => popScreen(prev));
+            probeAddresses();
+          } else if (data.reason === 'signedOut') {
+            applyAuth('signedOut');
+          } else {
+            // Shopify answers a rejected address with the form again rather
+            // than an error, so the only honest report is that it did not
+            // arrive -- and the form keeps what was typed.
+            warn('address not saved:', data.reason);
+            setAddressError(
+              'Zigly did not accept that address. Check the street, city and PIN code and try again.',
+            );
+          }
+          return true;
+        }
+
+        case 'address-deleted': {
+          clearWriteWatch();
+          if (data.ok === true) {
+            setAddressNotice(null);
+          } else if (data.reason === 'signedOut') {
+            applyAuth('signedOut');
+            return true;
+          } else {
+            warn('address not deleted:', data.reason);
+            setAddressNotice(
+              'That address could not be removed. It is still on your account.',
+            );
+          }
+          probeAddresses();
+          return true;
+        }
+
+        case 'auth': {
+          if (data.state === 'signedOut') {
+            applyAuth('signedOut');
+          } else if (data.from === 'logout') {
+            // The request went through and the customer is still signed in.
+            warn('logout did not clear the session');
+            setAccountNotice(
+              'Sign out did not go through. Check your connection and try again.',
+            );
+          }
+          return true;
+        }
+
+        default:
+          return false;
+      }
+    },
+    [applyAuth, clearWriteWatch, probeAddresses],
+  );
+
   const retry = useCallback(() => {
     setLoadError(null);
     const current = visibleLayer(stackRef.current);
@@ -730,18 +1350,90 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
   // ------------------------------------------------------------------ render
   const showError = offline || loadError !== null;
-  /** Progress is only ever drawn for whatever the user is actually looking at. */
-  const busy =
-    !showCart &&
-    !showError &&
-    loadingTarget !== null &&
-    (showing ? loadingTarget === showing.key : loadingTarget === 'home');
 
   /** The page the header is describing: an inner page, or the dashboard. */
   const headerUrl = showing ? showing.url : null;
   const onShopPage = headerUrl !== null && isShopUrl(headerUrl);
   /** Keys are monotonic, so this is mount order: stable for the tree. */
   const mountOrder = [...stack.layers].sort((a, b) => a.key - b.key);
+
+  const accountTop = topScreen(accountScreens);
+  /**
+   * Whether an account screen is the thing on screen.
+   *
+   * Two ways it can be open but not on top, and both matter:
+   *
+   *   - a page layer, which is drawn *over* the section. That is what lets an
+   *     order, or a product opened from Favorites, come back to the screen it
+   *     was opened from instead of to the dashboard.
+   *   - an overlay. Favorites opens the same wishlist screen the tab opens, and
+   *     while that is up the header and the bar have to describe the wishlist --
+   *     otherwise the bag disappears from the one screen the reference app
+   *     shows it counting on.
+   */
+  const overlayOpen = showCart || wishlistOpen || searchOpen;
+  const onAccountScreen =
+    accountTop !== null && showing === null && !overlayOpen;
+  const onOrdersScreen = onAccountScreen && accountTop === 'orders';
+
+  /** Progress is only ever drawn for whatever the user is actually looking at. */
+  const busy =
+    !showCart &&
+    !showError &&
+    loadingTarget !== null &&
+    (onAccountScreen
+      ? // The one account screen that loads anything is login.
+        loadingTarget === 'login'
+      : showing
+      ? loadingTarget === showing.key
+      : loadingTarget === 'home');
+
+  /**
+   * Which tab is lit.
+   *
+   * Null on screens no tab describes -- the cart, search, a product page -- so
+   * nothing is highlighted that would not be returned to by tapping it.
+   */
+  const activeTab: TabKey | null = (() => {
+    // Overlays first: the wishlist opened from the account screen is still the
+    // wishlist tab, not the account tab.
+    if (wishlistOpen) {
+      return 'wishlist';
+    }
+    if (searchOpen || showCart) {
+      return null;
+    }
+    if (accountTop !== null && showing === null) {
+      return 'account';
+    }
+    if (headerUrl === null) {
+      return 'home';
+    }
+    const path = (parseUrl(headerUrl)?.path ?? '').toLowerCase();
+    if (path === '/collections' || path === '/collections/') {
+      return 'collections';
+    }
+    if (path.indexOf('/pages/pet-breeds') === 0) {
+      return 'breeds';
+    }
+    return null;
+  })();
+
+  /**
+   * When the bar stands down.
+   *
+   * Search, because it is keyboard-first and the bar would sit on the keyboard.
+   * Checkout, because that page is Shopify's and not somewhere to offer five
+   * ways out. Listing pages, because the injected Sort / Filter bar already
+   * pins itself there and the reference app shows that bar *instead of* the
+   * tabs. And the login screen, which is a single-purpose screen in the
+   * reference app too.
+   */
+  const showNav =
+    !searchOpen &&
+    !inCheckout &&
+    !(onAccountScreen && accountTop === 'login') &&
+    !(headerUrl !== null && showsSortFilterBar(headerUrl));
 
   return (
     <View style={styles.root}>
@@ -755,7 +1447,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         a scrolling promotion above the field is noise while typing.
       */}
       <AnnouncementBar
-        items={searchOpen || wishlistOpen ? [] : announcements}
+        items={
+          searchOpen ||
+          wishlistOpen ||
+          // The reference app carries the strip on its Account screen but not
+          // on the screens below it, nor on login.
+          (onAccountScreen && accountTop !== 'account')
+            ? []
+            : announcements
+        }
       />
 
       {/*
@@ -772,20 +1472,34 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           (headerUrl === null || onShopPage) &&
           !showCart &&
           !searchOpen &&
-          !wishlistOpen
+          !wishlistOpen &&
+          !onAccountScreen
         }
         // No wishlist on the dashboard -- that matches the reference too. The
         // cart screen is the other place it appears: the reference drops the
         // bag there (you are already in the bag) and shows the heart instead.
         // And never on the wishlist itself, for the same reason.
-        showWishlist={(onShopPage || showCart) && !searchOpen && !wishlistOpen}
+        //
+        // Orders is the one account screen that carries both icons, as the
+        // reference app's Orders screen does; the rest show only back and logo.
+        showWishlist={
+          (onShopPage || showCart || onOrdersScreen) &&
+          !searchOpen &&
+          !wishlistOpen
+        }
         // The bag rides along on every page, so the cart is always one tap
         // away; only the cart and search screens drop it. On the wishlist it
         // carries the count, exactly as the reference shows.
-        showCartIcon={!showCart && !searchOpen}
+        showCartIcon={
+          !showCart && !searchOpen && (!onAccountScreen || onOrdersScreen)
+        }
         searchCollapsed={searchCollapsed}
         showBack={
-          headerUrl !== null || showCart || searchOpen || wishlistOpen
+          headerUrl !== null ||
+          showCart ||
+          searchOpen ||
+          wishlistOpen ||
+          onAccountScreen
         }
         onWishlistPress={openWishlist}
         onBackPress={() => {
@@ -796,13 +1510,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             closeWishlist();
           } else if (showCart) {
             closeCart();
-          } else if (!stepBack() && canGoBackRef.current) {
+          } else if (!stepBack() && !stepBackAccount() && canGoBackRef.current) {
             webRef.current?.goBack();
           }
         }}
         onMenuPress={() => injectInto('home', OPEN_MENU)}
         onCartPress={openCart}
-        onLogoPress={dismissPages}
+        onLogoPress={() => {
+          // The logo means home, so the section comes down with the pages.
+          closeAccountSection();
+          dismissPages();
+        }}
         onSearchPress={openSearch}
       />
 
@@ -857,12 +1575,19 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           onMessage={({nativeEvent}) => {
             try {
               const data = JSON.parse(nativeEvent.data);
+              if (data && handleAccountMessage(data)) {
+                return;
+              }
               if (data && data.tag === 'search-diag') {
                 log('SEARCHDIAG', JSON.stringify(data));
               } else if (data && data.tag === 'cart-count') {
                 setCartCount(typeof data.n === 'number' ? data.n : 0);
               } else if (data && data.tag === 'dashboard-ready') {
                 onFirstLoad();
+                // Who is signed in, asked once the dashboard is settled. The
+                // answer decides what the Account tab opens, and asking now
+                // means the tap does not have to wait for a round trip.
+                probeAccount();
                 // Warm the next pages, but only on an unmetered connection.
                 if (unmeteredRef.current) {
                   injectInto('home', PREFETCH_SCRIPT);
@@ -904,6 +1629,123 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             webRef.current?.reload();
           }}
         />
+
+        {/*
+          The account section.
+
+          Drawn *below* the page layers on purpose. A tap inside the section can
+          open a real page -- an order, or a product from Favorites -- and that
+          page has to come down over the section so that Back returns to the
+          screen it was opened from rather than to the dashboard. It is above the
+          dashboard, which is what makes the section a screen at all.
+
+          One screen at a time: these are cheap native views, so the top of the
+          stack is the only one mounted. The section as a whole is what survives
+          a page opening over it, not each screen's scroll position.
+        */}
+        {accountTop === 'account' ? (
+          <View style={styles.pageLayer}>
+            <AccountScreen
+              customer={customer}
+              notice={accountNotice}
+              onOpenRow={openAccountRow}
+              onLogOut={logOut}
+              onDeleteAccount={requestAccountDeletion}
+            />
+          </View>
+        ) : null}
+
+        {accountTop === 'orders' ? (
+          <View style={styles.pageLayer}>
+            <OrdersScreen
+              orders={orders}
+              onOpenOrder={order => showPage(order.url)}
+            />
+          </View>
+        ) : null}
+
+        {accountTop === 'address' ? (
+          <View style={styles.pageLayer}>
+            <AddressScreen
+              addresses={addresses}
+              notice={addressNotice}
+              onAdd={() => openAddressForm(null)}
+              onEdit={address => openAddressForm(address)}
+              onDelete={deleteAddress}
+            />
+          </View>
+        ) : null}
+
+        {accountTop === 'addressForm' ? (
+          <View style={styles.pageLayer}>
+            <AddressFormScreen
+              // Editing opens on the values Shopify holds, read out of the
+              // theme's own edit form for that address.
+              initial={editing ? editing.fields : EMPTY_ADDRESS_FIELDS}
+              countries={countries}
+              saving={savingAddress}
+              error={addressError}
+              onSave={saveAddress}
+            />
+          </View>
+        ) : null}
+
+        {/*
+          The login screen: Zigly's own OTP widget, restyled into an app screen.
+          Native chrome above and below it, the site's flow inside it -- see
+          ../webview/loginRestyle.ts for why this is not a native form.
+
+          Mounted only while it is the screen, so the widget starts clean on
+          every visit; a half-finished OTP left over from last time would be a
+          worse first impression than a fresh field.
+        */}
+        {accountTop === 'login' ? (
+          <View style={styles.pageLayer}>
+            <WebView<object>
+              {...baseWebViewProps}
+              ref={loginRef}
+              source={{uri: LOGIN_URL}}
+              style={styles.web}
+              // The bespoke restyle only -- the mobile stylesheet is for shop
+              // pages, and this screen is one modal widget on a blank ground.
+              injectedJavaScript={LOGIN_RESTYLE}
+              // Same reason it is used everywhere else: it hides the site's own
+              // header as early as Android will allow, so it never flashes
+              // above ours while the widget is still being built.
+              injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
+              onShouldStartLoadWithRequest={handleLoginShouldStart}
+              onNavigationStateChange={handleLoginNav}
+              onLoadStart={() => setLoadingTarget('login')}
+              onLoadEnd={() => {
+                setLoadingTarget(prev => (prev === 'login' ? null : prev));
+                // Again after the load: the widget is built by a script that
+                // runs later than this, and the restyle is idempotent.
+                injectInto('login', LOGIN_RESTYLE);
+              }}
+              onError={({nativeEvent}) => {
+                warn('login page error:', nativeEvent.description);
+                setLoadingTarget(prev => (prev === 'login' ? null : prev));
+              }}
+              onMessage={({nativeEvent}) => {
+                try {
+                  const data = JSON.parse(nativeEvent.data);
+                  if (data && data.tag === 'login') {
+                    // 'missing' means the widget was not found and the page was
+                    // left exactly as the site serves it. Worth knowing from a
+                    // log rather than from a screenshot.
+                    log('login screen:', data.state, data.detail);
+                  }
+                } catch {
+                  // The page posts for its own reasons too.
+                }
+              }}
+              onRenderProcessGone={() => {
+                warn('login render process gone — reloading');
+                loginRef.current?.reload();
+              }}
+            />
+          </View>
+        ) : null}
 
         {/*
           Every visited page, still mounted: the one on top on screen, the rest
@@ -949,6 +1791,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   const nowInCheckout = isCheckoutUrl(nav.url);
                   if (nowInCheckout !== inCheckoutRef.current) {
                     inCheckoutRef.current = nowInCheckout;
+                    setInCheckout(nowInCheckout);
                   }
                 }}
                 onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
@@ -1121,6 +1964,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           />
         ) : null}
       </View>
+
+      {/*
+        The bottom navigation, outside `body` exactly as the header is: it takes
+        its own space rather than floating over the page, so nothing has to be
+        padded out from under it, and no overlay inside `body` can cover it. That
+        is the whole reason it is native -- the site's own bar is inside the
+        page, so every native screen hid it.
+      */}
+      {showNav ? <BottomNav active={activeTab} onSelect={selectTab} /> : null}
 
       {/* Outside `body`: a toast is the one thing allowed over everything. */}
       <CartToast

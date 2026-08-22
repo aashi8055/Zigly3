@@ -90,6 +90,49 @@ export const isCheckoutUrl = (raw: string): boolean => {
 };
 
 /**
+ * True on the pages the injected Sort / Filter bar pins itself to.
+ *
+ * The native bottom navigation stands down on exactly these, because the
+ * reference app shows that bar *instead of* the tab bar on listing screens and
+ * because two pinned bars would take a third of a phone screen between them.
+ *
+ * The test deliberately mirrors `../webview/sortFilterBar.ts` line for line --
+ * `/collections/` with the trailing slash, so the bare collection *list* is not
+ * included, and `/search` because SearchTap draws that grid too. If one moves,
+ * the other has to, or the bar and the gap for it stop agreeing.
+ */
+export const showsSortFilterBar = (raw: string): boolean => {
+  const parsed = parseUrl(raw);
+  if (!parsed || !isInternalHost(parsed.host)) {
+    return false;
+  }
+  const path = parsed.path.toLowerCase();
+  return path.startsWith('/collections/') || path.startsWith('/search');
+};
+
+/**
+ * True for the customer account area: the pages this app draws natively.
+ *
+ * Used to keep the WebView out of them. A tap that lands on /account inside a
+ * page layer would show Shopify's own account page, which is the web experience
+ * the native account section exists to replace.
+ */
+export const isAccountUrl = (raw: string): boolean => {
+  const parsed = parseUrl(raw);
+  if (!parsed || !isInternalHost(parsed.host)) {
+    return false;
+  }
+  const path = parsed.path.toLowerCase();
+  if (path.startsWith('/account/orders/')) {
+    // The one account page that stays on the web: an order's own page carries
+    // line items, tax, shipping and tracking, none of which this app has a
+    // second source for. Opened in a layer, inside the app.
+    return false;
+  }
+  return path === '/account' || path.startsWith('/account/');
+};
+
+/**
  * Android `intent://` URLs carry a browser fallback. Prefer it when present,
  * so a missing payment app degrades to the web flow instead of a dead tap.
  */
