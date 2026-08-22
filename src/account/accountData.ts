@@ -142,6 +142,96 @@ export const parseCustomer = (message: Record<string, unknown>): Customer => {
   };
 };
 
+/* ------------------------------------------------------------------------- *
+ * Editing the profile
+ *
+ * WHAT THIS IS, PLAINLY: a device-local overlay. Shopify's classic customer
+ * accounts expose no storefront endpoint that changes a customer's name or
+ * email -- addresses are the only thing the storefront can write, which is why
+ * the Address screen is fully working and this is not. Zigly's own app edits
+ * these through a backend this app has no access to.
+ *
+ * So an edit made here changes what THIS app shows and nothing else. It does
+ * not reach Zigly, it is not on the customer's Shopify record, and it will not
+ * appear on their orders, their invoices or the website. The screen says so in
+ * as many words -- see ../components/EditProfileScreen -- because a form that
+ * silently kept a change to itself would be worse than no form.
+ *
+ * It is held in memory for the session, deliberately. This app has no storage
+ * dependency anywhere (recents are session-scoped for the same reason), and
+ * adding one to persist a value that is already not the real one would be
+ * buying permanence for a fiction.
+ * ------------------------------------------------------------------------- */
+
+/** A profile edit, as the form collects it. */
+export interface ProfileEdits {
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+export const NO_PROFILE_EDITS: ProfileEdits | null = null;
+
+/**
+ * Split a rendered name into the form's two fields.
+ *
+ * The theme renders one string; the form has First and Last. The first word is
+ * the first name and everything after it is the last, so a three-part name
+ * keeps its middle rather than losing it -- "Lux Kumar Bhati" comes back as
+ * "Lux" and "Kumar Bhati", and rejoining returns exactly what arrived.
+ */
+export const splitName = (
+  name: string,
+): {firstName: string; lastName: string} => {
+  const trimmed = name.trim().replace(/\s+/g, ' ');
+  if (trimmed.length === 0) {
+    return {firstName: '', lastName: ''};
+  }
+  const at = trimmed.indexOf(' ');
+  return at === -1
+    ? {firstName: trimmed, lastName: ''}
+    : {firstName: trimmed.slice(0, at), lastName: trimmed.slice(at + 1)};
+};
+
+/** The two fields back into one name, with no stray space when Last is empty. */
+export const joinName = (firstName: string, lastName: string): string =>
+  [firstName.trim(), lastName.trim()].filter(part => part.length > 0).join(' ');
+
+/** What the form should open with, for the customer as the app knows them. */
+export const editsFromCustomer = (customer: Customer): ProfileEdits => ({
+  ...splitName(customer.name),
+  email: customer.email,
+});
+
+/**
+ * The customer as the app should display them: what was read, with any local
+ * edit laid over the top.
+ *
+ * Phone is never overlaid, because the form does not offer it -- Zigly's own
+ * app takes the phone from the OTP login, which is the one part of this that is
+ * genuinely authoritative, and letting it be typed over would put a number on
+ * screen that no one can be reached on.
+ *
+ * An edit that is blank does not erase what the site rendered: clearing the
+ * email field falls back to the real one rather than hiding it.
+ */
+export const applyProfileEdits = (
+  customer: Customer,
+  edits: ProfileEdits | null,
+): Customer => {
+  if (edits === null) {
+    return customer;
+  }
+  const name = joinName(edits.firstName, edits.lastName) || customer.name;
+  const email = edits.email.trim() || customer.email;
+  if (name === customer.name && email === customer.email) {
+    // Same array-identity rule as mergePlaceholders: an unchanged object keeps
+    // the screens from re-rendering on every probe.
+    return customer;
+  }
+  return {...customer, name, email, initials: initialsFrom(name)};
+};
+
 const parseOrder = (raw: unknown, origin: string): Order | null => {
   if (typeof raw !== 'object' || raw === null) {
     return null;
