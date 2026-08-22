@@ -642,6 +642,29 @@ describe('getInjectionForUrl', () => {
       // Replaced in place, never appended alongside the original.
       expect(s).toContain('replaceChild');
     });
+
+    it('lets the category circles be scrolled by thumb', () => {
+      // The transplanted rail has no Swiper -- markup inserted through the DOM
+      // never runs its scripts -- so the track sat wider than a box that clips
+      // it, and every circle past the fifth was on the page and unreachable.
+      const s = home();
+      expect(s).toContain('data-zigly-native-scroll');
+      expect(s).toContain('.home-category-swiper');
+      expect(s).toContain('overflow-x: auto !important');
+    });
+
+    it('never turns a live Swiper rail into a scroller as well', () => {
+      // Two markers, and only the one set on a copy that actually landed drives
+      // the CSS. When the fetch fails, the rail the site rendered keeps its own
+      // Swiper, and it must not also be scrolling natively.
+      const s = home();
+      expect(s).toContain(
+        "replacement.setAttribute('data-zigly-native-scroll'",
+      );
+      expect(s).not.toContain(
+        "current.setAttribute('data-zigly-native-scroll'",
+      );
+    });
   });
 
   it('relocates sections the homepage already has rather than copying them', () => {

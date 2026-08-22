@@ -89,6 +89,20 @@ export const HOME_LAYOUT_SCRIPT = `
         // Same section id would collide with the node being replaced.
         var replacement = document.importNode(sec, true);
         replacement.setAttribute('data-zigly-swapped', 'true');
+        /*
+         * A second marker, and the difference between the two matters.
+         *
+         * 'swapped' goes on the node we are REPLACING as well, the moment we
+         * start, so that a re-run cannot swap twice. If the fetch then fails,
+         * that original node keeps the marker -- and keeps its live Swiper,
+         * because it is the section the page rendered and its script ran.
+         *
+         * This one goes only on the copy that has landed, and a copy has no
+         * Swiper: markup inserted through the DOM never executes its scripts.
+         * That is what the CSS keys the native horizontal scroller off, so it
+         * can never be applied to a rail Swiper is already sliding.
+         */
+        replacement.setAttribute('data-zigly-native-scroll', 'true');
         if (current.parentNode) {
           current.parentNode.replaceChild(replacement, current);
         }

@@ -590,6 +590,46 @@ body.zigly-listing .quick-add__submit {
 }
 
 /* ------------------------------------------------------------------
+   Category circles: scrollable by thumb.
+
+   They were not. The section's own CSS lays the track out as
+
+     .home-category-swiper .swiper-wrapper { display: inline-flex; width: auto }
+
+   inside .home-category-swiper, which is the Swiper element and therefore
+   carries Swiper's own overflow: hidden. On a page the site rendered that is
+   fine, because Swiper slides the track with a transform. On the dashboard it
+   is not: the rail here is a copy transplanted by homeLayout, and markup
+   inserted through the DOM never runs its scripts, so no Swiper ever
+   initialises. The track was simply wider than a box that clips it -- every
+   circle past the fifth was on the page and unreachable.
+
+   So the box scrolls natively instead. Nothing about the circles changes: the
+   80px slides, their 30px gaps, the 70px images and the labels are all the
+   section's own and are not touched here.
+
+   It stops at both ends, deliberately -- six items, a short slide, and the
+   customer brings it back. No wrap-around.
+
+   Keyed on data-zigly-native-scroll, which homeLayout sets ONLY on a copy that
+   has actually landed. The rail the site rendered keeps that marker off it even
+   when the swap fails, so this can never fight a Swiper that is running.
+   ------------------------------------------------------------------ */
+[id*="home_category_section"][data-zigly-native-scroll="true"] .home-category-swiper {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch;
+}
+[id*="home_category_section"][data-zigly-native-scroll="true"] .home-category-swiper::-webkit-scrollbar {
+  display: none;
+}
+/* A transform left behind by a Swiper that ran before the copy replaced it
+   would offset the track with nothing to scroll it back. */
+[id*="home_category_section"][data-zigly-native-scroll="true"] .home-category-swiper .swiper-wrapper {
+  transform: none !important;
+}
+
+/* ------------------------------------------------------------------
    The wishlist heart: filled once the product is saved.
 
    Tapping a card's heart already worked -- what it does not do is *look* like it
