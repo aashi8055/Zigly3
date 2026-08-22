@@ -1,21 +1,22 @@
 /**
- * Book An Appointment, on the Breed-verse pages.
+ * Book An Appointment.
  *
  * The button is Zigly's own and is fixed at `bottom: 9rem` by the theme's
  * mobile media query -- an offset that clears the website's own bottom bar and
- * chat bubble, neither of which exists in the app. Verified on 2026-08-22: the
- * same button is also on /pages/vet-care-page and /pages/grooming-experience-
- * page, which is why nothing here touches the class outright.
+ * chat bubble, neither of which exists in the app. Verified on 2026-08-22 it is
+ * on four pages: the Breed-verse index, every breed's own page, Vetcare and
+ * Grooming.
  *
- * So the property worth pinning is the scoping, not the offsets: the index
- * hides it, a breed's own page moves it, and every other page that happens to
- * carry the same button is left exactly as the site has it.
+ * The index hides it, since no breed has been chosen there yet; the other three
+ * pin it bottom right. What these tests hold to is that it stays the site's
+ * button -- only its offsets are ours -- and that a page which starts carrying
+ * it later is not moved by a rule written before anyone looked at it.
  */
 import {
-  BREED_INDEX_FLAG,
+  APPOINTMENT_HIDE_FLAG,
+  APPOINTMENT_PIN_FLAG,
   BREED_INDEX_PATH,
   BREED_PAGE_CSS,
-  BREED_PAGE_FLAG,
   BREED_PAGE_SCRIPT,
 } from '../src/webview/breedPage';
 import {getInjectionForUrl} from '../src/webview/injectedScripts';
@@ -27,12 +28,12 @@ import {getInjectionForUrl} from '../src/webview/injectedScripts';
  * rather than reaching for jsdom keeps this a test of the script, and this
  * project's jest environment is node.
  */
-const flagsFor = (path: string, headings: string[]): string => {
+const flagsFor = (path: string, hasButton: boolean): string => {
   const body = {className: 'template-page'};
   const document = {
     body,
     querySelector: (selector: string) =>
-      selector === 'h1.hidden-h1' && headings.length > 0 ? {} : null,
+      selector === '.sticky-appointment-btn' && hasButton ? {} : null,
     addEventListener: () => {},
   };
   const window = {location: {pathname: path}, console};
@@ -53,21 +54,21 @@ describe('the appointment button', () => {
   });
 
   it('is not offered on the index, where no breed has been chosen yet', () => {
-    expect(flagsFor(BREED_INDEX_PATH, ['Pet Breeds'])).toContain(
-      BREED_INDEX_FLAG,
+    expect(flagsFor(BREED_INDEX_PATH, true)).toContain(
+      APPOINTMENT_HIDE_FLAG,
     );
     expect(BREED_PAGE_CSS).toContain(
-      `body.${BREED_INDEX_FLAG} .sticky-appointment-btn`,
+      `body.${APPOINTMENT_HIDE_FLAG} .sticky-appointment-btn`,
     );
     expect(BREED_PAGE_CSS).toContain('display: none !important');
   });
 
   it('sits bottom right on a breed’s own page', () => {
-    expect(flagsFor(BREED_PAGE, ['Beagle'])).toContain(BREED_PAGE_FLAG);
-    expect(flagsFor(BREED_PAGE, ['Beagle'])).not.toContain(BREED_INDEX_FLAG);
+    expect(flagsFor(BREED_PAGE, true)).toContain(APPOINTMENT_PIN_FLAG);
+    expect(flagsFor(BREED_PAGE, true)).not.toContain(APPOINTMENT_HIDE_FLAG);
 
     const rule = BREED_PAGE_CSS.slice(
-      BREED_PAGE_CSS.indexOf(`body.${BREED_PAGE_FLAG}`),
+      BREED_PAGE_CSS.indexOf(`body.${APPOINTMENT_PIN_FLAG}`),
     );
     expect(rule).toContain('bottom: 14px !important');
     expect(rule).toContain('right: 14px !important');
@@ -77,13 +78,20 @@ describe('the appointment button', () => {
     expect(rule).toContain('left: auto !important');
   });
 
-  it('leaves the same button alone on the pages that were not asked about', () => {
-    // Vetcare and Grooming carry it too, and have no hidden page heading.
-    expect(flagsFor('/pages/vet-care-page', [])).toBe('template-page');
-    expect(flagsFor('/pages/grooming-experience-page', [])).toBe(
-      'template-page',
+  it('pins it on Vetcare and Grooming, which carry the same button', () => {
+    expect(flagsFor('/pages/vet-care-page', true)).toContain(
+      APPOINTMENT_PIN_FLAG,
     );
-    // Which is what the scoping is for: no rule reaches the class on its own.
+    expect(flagsFor('/pages/grooming-experience-page', true)).toContain(
+      APPOINTMENT_PIN_FLAG,
+    );
+  });
+
+  it('touches no page that does not carry the button', () => {
+    expect(flagsFor('/collections/dog-dry-food', false)).toBe('template-page');
+    expect(flagsFor('/', false)).toBe('template-page');
+    // Which is what the body-class scoping is for: no rule in the stylesheet
+    // reaches the site's class on its own.
     expect(BREED_PAGE_CSS).not.toContain('\n.sticky-appointment-btn');
   });
 
@@ -109,13 +117,13 @@ describe('the appointment button', () => {
     run(window, document);
     run(window, document);
     run(window, document);
-    expect(body.className.split(BREED_PAGE_FLAG).length - 1).toBe(1);
+    expect(body.className.split(APPOINTMENT_PIN_FLAG).length - 1).toBe(1);
   });
 
   it('rides along with the rest of the injection', () => {
     const script = getInjectionForUrl('https://zigly.com' + BREED_PAGE);
     expect(script).toContain('sticky-appointment-btn');
-    expect(script).toContain(BREED_PAGE_FLAG);
+    expect(script).toContain(APPOINTMENT_PIN_FLAG);
     // And never on the money flow, like everything else.
     expect(getInjectionForUrl('https://zigly.com/checkouts/c/x')).toBeNull();
   });
