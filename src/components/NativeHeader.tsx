@@ -74,8 +74,8 @@ interface Props {
    * The prompts the search bar types through, in order.
    *
    * Zigly's own, read off the site's search box at runtime -- see
-   * ../search/placeholders.ts. An empty list simply means nothing has been read
-   * yet, and the bar shows its resting label.
+   * ../search/placeholders.ts. Never empty in practice: it is seeded with
+   * Zigly's observed copy, because there is no resting label to fall back to.
    */
   searchPlaceholders: string[];
   /** The site's own per-letter cadence, once it has been measured. */
@@ -157,9 +157,9 @@ const SearchPrompt = React.memo(({phrases, typeMs, running}: PromptProps) => {
   }, [running, frame, phrases, typeMs]);
 
   /**
-   * "Search For" is the resting label: it is what shows before the first phrase
-   * has been read, and between phrases -- the site erases all the way to empty,
-   * and an empty search bar reads as broken rather than as animated.
+   * Only ever the phrase being typed. There is no resting label: the cycle
+   * hands from the last erased character straight to the next phrase's first
+   * one, so the bar is never empty for longer than a single frame.
    */
   const typed = frameText(frame, phrases);
 
@@ -174,7 +174,7 @@ const SearchPrompt = React.memo(({phrases, typeMs, running}: PromptProps) => {
       accessibilityElementsHidden
       importantForAccessibility="no"
     >
-      {typed.length > 0 ? typed : 'Search For'}
+      {typed}
     </Text>
   );
 });

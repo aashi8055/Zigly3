@@ -15,10 +15,12 @@
  *   erase  -> one character every 50ms until the field is empty
  *   pause  -> 1000ms, then the next phrase, wrapping at the end
  *
- * So the app's header does exactly that, with those timings, and that is what
- * the constants below are. Nothing is smoothed or rounded: a placeholder that
- * moves at a different speed from the website's is a placeholder that came from
- * somewhere else.
+ * The app types and erases at exactly those speeds. It does NOT keep the site's
+ * final pause: an empty search bar sitting still for a second reads as a bar
+ * that has lost its label, so the next phrase starts the moment the last
+ * character comes off. That is the one deliberate difference from the website
+ * here, and it is the reason there is no resting label either -- the bar is
+ * never empty for long enough to need one.
  *
  * WHERE THE PHRASES COME FROM. SearchTap keeps its list inside a minified
  * bundle, not in an attribute, so there is nothing to read out of the DOM
@@ -56,7 +58,6 @@ export const MAX_PLACEHOLDERS = 12;
 export const TYPE_MS = 100;
 export const HOLD_MS = 1000;
 export const ERASE_MS = 50;
-export const PAUSE_MS = 1000;
 
 /**
  * Cadence used until the site's own has been measured.
@@ -172,8 +173,14 @@ export const acceptInterval = (raw: unknown, current: number): number => {
  * the previous frame.
  * ------------------------------------------------------------------------- */
 
-/** Which part of the cycle a frame is in. */
-export type TypePhase = 'typing' | 'holding' | 'erasing' | 'pausing';
+/**
+ * Which part of the cycle a frame is in.
+ *
+ * There is no 'pausing': the site holds an empty field for a second before
+ * starting the next phrase, and the app does not. Erasing the last character
+ * hands straight to the next phrase's first one.
+ */
+export type TypePhase = 'typing' | 'holding' | 'erasing';
 
 export interface TypeFrame {
   /** Index into the phrase list. */
@@ -199,10 +206,8 @@ export const frameDelay = (frame: TypeFrame, typeMs: number): number => {
       return typeMs;
     case 'holding':
       return HOLD_MS;
-    case 'erasing':
-      return ERASE_MS;
     default:
-      return PAUSE_MS;
+      return ERASE_MS;
   }
 };
 
@@ -240,16 +245,11 @@ export const nextFrame = (frame: TypeFrame, phrases: string[]): TypeFrame => {
     case 'holding':
       return {...frame, phase: 'erasing'};
 
-    case 'erasing':
-      return frame.chars <= 0
-        ? {...frame, chars: 0, phase: 'pausing'}
-        : {...frame, chars: frame.chars - 1};
-
     default:
-      return {
-        phrase: (frame.phrase + 1) % count,
-        chars: 0,
-        phase: 'typing',
-      };
+      // Erasing. At nothing left, straight on to the next phrase -- no frame
+      // spent holding an empty bar.
+      return frame.chars <= 1
+        ? {phrase: (frame.phrase + 1) % count, chars: 0, phase: 'typing'}
+        : {...frame, chars: frame.chars - 1};
   }
 };

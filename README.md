@@ -512,9 +512,15 @@ phrases = ['Search For Dry Food',
 type  100ms/char → hold 1000ms → erase 50ms/char → pause 1000ms → next, wrapping
 ```
 
-The header does exactly that, at those timings. Nothing is smoothed or rounded:
-a prompt moving at a speed the website does not use is a prompt that came from
-somewhere else.
+The header types and erases at exactly those speeds. Nothing is smoothed or
+rounded: a prompt moving at a speed the website does not use is a prompt that
+came from somewhere else.
+
+It drops one thing deliberately — **the site's closing pause**. The next phrase
+starts the moment the last character comes off, so the bar is never empty for
+longer than a single keystroke. That is also why there is **no resting label**:
+the bar shows only the phrase being typed, never a static "Search For", because
+there is no gap long enough to need one.
 
 **The phrases are read, not written down.** SearchTap keeps its list inside a
 minified bundle, so there is nothing to lift out of the DOM up front — but the

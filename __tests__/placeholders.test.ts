@@ -14,7 +14,6 @@ import {
   FIRST_FRAME,
   HOLD_MS,
   MAX_PLACEHOLDERS,
-  PAUSE_MS,
   SEED_PLACEHOLDERS,
   TYPE_MS,
   acceptInterval,
@@ -50,8 +49,8 @@ describe("the typewriter follows SearchTap's own cycle", () => {
     expect(texts).toEqual(['', 'a', 'ab', 'abc']);
   });
 
-  it('holds the whole phrase, erases it, then pauses on empty', () => {
-    const phases = run(one, 10).map(f => f.phase);
+  it('holds the whole phrase, then erases it', () => {
+    const phases = run(one, 9).map(f => f.phase);
     expect(phases).toEqual([
       'typing',
       'typing',
@@ -61,32 +60,52 @@ describe("the typewriter follows SearchTap's own cycle", () => {
       'erasing',
       'erasing',
       'erasing',
-      'erasing',
-      'pausing',
+      'typing',
     ]);
   });
 
-  it('erases back to empty before moving on', () => {
-    const texts = run(one, 10).map(f => f.text);
-    // The tail of the cycle walks the phrase back down to nothing.
-    expect(texts.slice(5)).toEqual(['abc', 'ab', 'a', '', '']);
+  it('never rests on an empty bar', () => {
+    // A phrase necessarily starts at nought characters, so an empty frame
+    // exists -- but it is the first frame of the next phrase, and it lasts one
+    // keystroke. The site instead holds an empty field for a full second, which
+    // with no resting label would read as a bar that had lost its text.
+    const frames = run(['ab', 'cd'], 24);
+    const blanks = frames.filter(f => f.text === '');
+    expect(blanks.length).toBeGreaterThan(0);
+    for (const blank of blanks) {
+      expect(blank.phase).toBe('typing');
+      expect(blank.delay).toBe(TYPE_MS);
+    }
+    // And no frame anywhere waits longer than the hold on a finished phrase.
+    for (const frame of frames) {
+      expect(frame.delay).toBeLessThanOrEqual(HOLD_MS);
+      if (frame.delay === HOLD_MS) {
+        expect(frame.text.length).toBeGreaterThan(0);
+      }
+    }
   });
 
-  it("uses the site's four durations, one per phase", () => {
+  it('erases down to one character, then starts the next phrase', () => {
+    const texts = run(one, 9).map(f => f.text);
+    expect(texts.slice(4)).toEqual(['abc', 'abc', 'ab', 'a', '']);
+    // That last '' is the first frame of the NEXT phrase, not a pause.
+    expect(run(one, 9)[8].phase).toBe('typing');
+  });
+
+  it("uses the site's three durations, one per phase", () => {
     const byPhase = (phase: string) =>
-      run(one, 10).find(f => f.phase === phase)?.delay;
+      run(one, 9).find(f => f.phase === phase)?.delay;
     expect(byPhase('typing')).toBe(TYPE_MS);
     expect(byPhase('holding')).toBe(HOLD_MS);
     expect(byPhase('erasing')).toBe(ERASE_MS);
-    expect(byPhase('pausing')).toBe(PAUSE_MS);
     // Erasing is faster than typing, as it is on the site. A cycle where they
     // matched would look like the app chose its own speed.
     expect(ERASE_MS).toBeLessThan(TYPE_MS);
   });
 
   it('measures the cadence rather than choosing it', () => {
-    // The reader can only measure the per-letter gap; the holds are not
-    // something a customer can time against the website.
+    // The reader can only measure the per-letter gap; the hold is not something
+    // a customer can time against the website.
     expect(frameDelay({phrase: 0, chars: 1, phase: 'typing'}, 137)).toBe(137);
     expect(frameDelay({phrase: 0, chars: 3, phase: 'holding'}, 137)).toBe(
       HOLD_MS,
@@ -127,6 +146,14 @@ describe('the typewriter survives a list that changes under it', () => {
     expect(frameText(FIRST_FRAME, [])).toBe('');
     expect(nextFrame({phrase: 2, chars: 5, phase: 'erasing'}, [])).toEqual(
       FIRST_FRAME,
+    );
+  });
+
+  it('wraps to the first phrase off the end of the list', () => {
+    // The hand-off happens on the last erased character, so this is where the
+    // wrap lives now rather than in a pause frame.
+    expect(nextFrame({phrase: 1, chars: 1, phase: 'erasing'}, ['ab', 'cd'])).toEqual(
+      {phrase: 0, chars: 0, phase: 'typing'},
     );
   });
 

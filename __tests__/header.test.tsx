@@ -77,10 +77,13 @@ describe('the search bar types its prompt out', () => {
     jest.useRealTimers();
   });
 
-  it('starts on the resting label rather than an empty box', () => {
-    // The cycle starts with nothing typed, and a blank search bar reads as
-    // broken rather than as animated.
-    expect(barLabel(render().root)).toBe('Search For');
+  it('shows only the phrase being typed, never a static label', () => {
+    // The cycle starts with nothing typed and the first character lands one
+    // frame later. There is no "Search For" resting text to fall back to.
+    const tree = render();
+    expect(barLabel(tree.root)).toBe('');
+    tick(1, TYPE_MS);
+    expect(barLabel(tree.root)).toBe('S');
   });
 
   it('adds one letter per tick, at the site’s cadence', () => {
@@ -101,7 +104,7 @@ describe('the search bar types its prompt out', () => {
   it('waits the full interval before each letter', () => {
     const tree = render();
     tick(1, TYPE_MS - 1);
-    expect(barLabel(tree.root)).toBe('Search For');
+    expect(barLabel(tree.root)).toBe('');
     tick(1, 1);
     expect(barLabel(tree.root)).toBe('S');
   });
@@ -126,6 +129,24 @@ describe('the search bar types its prompt out', () => {
 
     tick(1, ERASE_MS);
     expect(barLabel(tree.root)).toBe(phrase.slice(0, -1));
+  });
+
+  it('starts the next phrase the instant the last one is erased', () => {
+    // No second of empty bar between phrases, which is what the site does and
+    // what this deliberately does not.
+    const tree = render({searchPlaceholders: ['ab', 'xy']});
+
+    tick(3, TYPE_MS); // 'a', 'ab', then into the hold
+    expect(barLabel(tree.root)).toBe('ab');
+
+    tick(1, HOLD_MS); // hold ends, erasing begins
+    tick(1, ERASE_MS); // 'a'
+    expect(barLabel(tree.root)).toBe('a');
+
+    tick(1, ERASE_MS); // erased, and already on the next phrase
+    expect(barLabel(tree.root)).toBe('');
+    tick(1, TYPE_MS);
+    expect(barLabel(tree.root)).toBe('x');
   });
 
   it('moves on to the next prompt and comes back to the first', () => {
@@ -156,7 +177,7 @@ describe('the typewriter costs nothing when it cannot be seen', () => {
   it('does not run while the band is collapsed', () => {
     const tree = render({searchCollapsed: true});
     tick(50, TYPE_MS);
-    expect(barLabel(tree.root)).toBe('Search For');
+    expect(barLabel(tree.root)).toBe('');
   });
 
   it('does not run when the band is not drawn at all', () => {
@@ -167,10 +188,11 @@ describe('the typewriter costs nothing when it cannot be seen', () => {
   });
 
   it('does not run before any prompt has been read', () => {
+    // Only reachable if the seed list were emptied; the bar simply stays blank
+    // rather than falling back to a label.
     const tree = render({searchPlaceholders: []});
     tick(50, TYPE_MS);
-    // And the bar still says something.
-    expect(barLabel(tree.root)).toBe('Search For');
+    expect(barLabel(tree.root)).toBe('');
   });
 
   it('stops when the band closes and picks up where it left off', () => {
