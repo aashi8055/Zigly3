@@ -83,8 +83,40 @@ describe('the screen owns the deadline', () => {
   const src = () =>
     require('fs').readFileSync('src/screens/ZiglyWebViewScreen.tsx', 'utf8');
 
-  it('reveals on the page’s own load event', () => {
-    expect(src()).toContain('markPainted(layer.key)');
+  it('reveals when the page reports itself ready, not when it loads', () => {
+    /*
+     * This was the bug. A load ending is the *document* arriving, not the page:
+     * the app's stylesheet is installed by the script that runs at that moment,
+     * and a listing page's grid is rendered by SearchTap after first paint. So
+     * revealing on load end showed the mobile website for a beat and then it
+     * visibly became this app's page. The page says when it is ready -- see
+     * ../src/webview/readySignal.
+     */
+    const s = src();
+    const at = s.indexOf("data.tag === 'page-ready'");
+    expect(at).toBeGreaterThan(-1);
+    expect(s.slice(at, at + 700)).toContain('markPainted(layer.key)');
+  });
+
+  it('reveals a page with no injection to wait for', () => {
+    // Checkout is never styled by this app, so nothing there will ever report
+    // itself ready -- and the money flow is the worst place to hold a cover.
+    const s = src();
+    const at = s.indexOf('if (getInjectionForUrl(url) === null)');
+    expect(at).toBeGreaterThan(-1);
+    expect(s.slice(at, at + 120)).toContain('markPainted(layer.key)');
+  });
+
+  it('covers the layer again when a link inside it navigates', () => {
+    // A product opened from a collection navigates the layer it is in, and that
+    // second document arrives as unstyled as the first. The cover used to be a
+    // one-off per layer, so every page after the first was the website
+    // assembling itself in full view.
+    const s = src();
+    // The layer's own handler, not the dashboard's -- that one has no cover.
+    const at = s.indexOf('setLoadingTarget(layer.key);');
+    expect(at).toBeGreaterThan(-1);
+    expect(s.slice(at, at + 400)).toContain('unmarkPainted(layer.key)');
   });
 
   it('reveals a failed page too, rather than hiding it behind a spinner', () => {

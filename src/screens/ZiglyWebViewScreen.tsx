@@ -424,6 +424,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   /**
+   * Cover this layer again: it is loading a different page.
+   *
+   * A link tapped inside a page navigates the layer it is in -- a product from
+   * a collection, a collection from a breed page -- and that second document
+   * arrives every bit as unstyled as the first one did. Without this the cover
+   * was a one-off per layer, so the first page of a layer was covered and every
+   * page after it was the mobile website assembling itself in full view.
+   *
+   * Re-showing a *parked* layer is untouched and still instant: that goes
+   * through `showPage`, which loads nothing.
+   */
+  const unmarkPainted = useCallback((key: number) => {
+    setPaintedLayers(prev =>
+      prev.includes(key) ? prev.filter(existing => existing !== key) : prev,
+    );
+  }, []);
+
+  /**
    * Reveal the covered layer no later than PAGE_COVER_CAP_MS, whatever the
    * network does.
    *
@@ -915,6 +933,26 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, [injectInto]);
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
+
+  /**
+   * What the hamburger does.
+   *
+   * A toggle, not an open: the drawer is drawn under the header precisely so
+   * the button that opened it stays where it was, and a button that stays put
+   * has to undo itself when it is pressed again -- that is the first thing
+   * anyone tries. The scrim beside the panel closes it too; this is the same
+   * gesture from the other side.
+   *
+   * Read from the ref rather than the state so the closure does not have to be
+   * rebuilt every time the drawer opens or closes.
+   */
+  const toggleMenu = useCallback(() => {
+    if (menuOpenRef.current) {
+      closeMenu();
+      return;
+    }
+    openMenu();
+  }, [closeMenu, openMenu]);
 
   /**
    * A row in the drawer was tapped.
@@ -1665,7 +1703,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         showCartIcon={
           !showCart && !searchOpen && (!onAccountScreen || onOrdersScreen)
         }
-        searchCollapsed={searchCollapsed}
+        // Collapsed by a scroll, and collapsed while the drawer is open: the
+        // drawer is drawn under the header, so a search band left standing
+        // would sit above the panel as a pale blue strip belonging to a page
+        // nobody is looking at. Closing it hands the space to the drawer, which
+        // then reaches the bar the hamburger is on -- and the same 180ms
+        // animation carries it, so the band folds away as the panel slides in
+        // rather than vanishing.
+        searchCollapsed={searchCollapsed || menuOpen}
         searchPlaceholders={searchPlaceholders}
         searchTypeMs={searchTypeMs}
         showBack={
@@ -1688,7 +1733,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             webRef.current?.goBack();
           }
         }}
-        onMenuPress={openMenu}
+        onMenuPress={toggleMenu}
         onCartPress={openCart}
         onLogoPress={() => {
           // The logo means home, so the section comes down with the pages.
@@ -2000,14 +2045,35 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 onLoadStart={() => {
                   setLoadingTarget(layer.key);
                   injectInto(layer.key, EARLY_HEADER_CSS);
+                  // A link inside the page navigates this layer in place, so
+                  // the cover has to come back for the page now arriving.
+                  unmarkPainted(layer.key);
                 }}
                 onLoadEnd={e => {
                   setLoadingTarget(prev =>
                     prev === layer.key ? null : prev,
                   );
-                  // The page has a document; the cover can come off.
-                  markPainted(layer.key);
-                  applyStyles(layer.key, e.nativeEvent.url);
+                  const url = e.nativeEvent.url;
+                  /*
+                   * The cover used to come off here, and that was the bug: a
+                   * load ending is the *document* arriving, not the page. The
+                   * app's own stylesheet is installed by the script that runs
+                   * at this moment, the sections of a listing page are rendered
+                   * by SearchTap after first paint, and revealing now showed
+                   * the mobile website for a beat before it became this app's
+                   * page. The page says when it is ready -- see the
+                   * `page-ready` message below, and PAGE_COVER_CAP_MS for the
+                   * deadline that guarantees a reveal either way.
+                   *
+                   * Except where there is no injection to wait for. Checkout is
+                   * never styled by this app, so no page there will ever report
+                   * itself ready, and holding a cover over the money flow for
+                   * the whole cap would be the worst place to do it.
+                   */
+                  if (getInjectionForUrl(url) === null) {
+                    markPainted(layer.key);
+                  }
+                  applyStyles(layer.key, url);
                 }}
                 onError={({nativeEvent}) => {
                   // Not promoted to the offline screen: the header's back arrow
@@ -2026,6 +2092,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       setCartToast(true);
                     } else if (data && data.tag === 'cart-count') {
                       setCartCount(typeof data.n === 'number' ? data.n : 0);
+                    } else if (
+                      data &&
+                      (data.tag === 'page-ready' ||
+                        // A layer that happens to be the homepage -- a drawer
+                        // row pointing at '/' -- reports itself with the
+                        // dashboard's tag. Same meaning here.
+                        data.tag === 'dashboard-ready')
+                    ) {
+                      // Styled, laid out, and its own top imagery decoded: this
+                      // is the page rather than the website, so it can be
+                      // shown. See ../webview/readySignal.
+                      markPainted(layer.key);
                     }
                   } catch {
                     // Page scripts may postMessage for their own reasons.

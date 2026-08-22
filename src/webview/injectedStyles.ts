@@ -11,7 +11,7 @@
  *   - never applied on checkout or payment pages
  *   - must degrade silently if the selector disappears
  */
-import {HEADER_DRAWER_CSS} from './headerBridge';
+import {HEADER_DRAWER_CSS, LIFT_PAINT_GATE} from './headerBridge';
 import {BREED_PAGE_CSS} from './breedPage';
 
 export const MOBILE_CSS = `
@@ -968,6 +968,17 @@ ${BREED_PAGE_CSS}
  */
 export const buildStyleInjection = (css: string): string => `
 (function () {
+  /*
+   * Lift the paint gate installed by EARLY_HEADER_CSS.
+   *
+   * The gate holds the document invisible so nobody sees the mobile website in
+   * the beat before this stylesheet lands; installing the stylesheet is exactly
+   * the moment it has done its job. Called on every path out of this function,
+   * including the ones that give up -- a gate that is not lifted is a blank
+   * page, so it must never depend on the happy case being reached.
+   */
+  var liftGate = function () {${LIFT_PAINT_GATE}};
+
   try {
     // Mark inner pages so CSS can differentiate them from the dashboard.
     // Path is read at execution time, so this is correct on every navigation.
@@ -1006,13 +1017,14 @@ export const buildStyleInjection = (css: string): string => `
       host.indexOf('shop.app') !== -1 ||
       host.indexOf('razorpay') !== -1 ||
       host.indexOf('payu') !== -1;
-    if (isMoneyFlow) { return; }
+    if (isMoneyFlow) { liftGate(); return; }
 
     var ID = 'zigly-app-styles';
     var existing = document.getElementById(ID);
     var css = ${JSON.stringify(css)};
     if (existing) {
       if (existing.textContent !== css) { existing.textContent = css; }
+      liftGate();
       return;
     }
     var el = document.createElement('style');
@@ -1020,8 +1032,12 @@ export const buildStyleInjection = (css: string): string => `
     el.type = 'text/css';
     el.textContent = css;
     (document.head || document.documentElement).appendChild(el);
+    // Last, and only now: the page is this app's rather than the website's.
+    liftGate();
   } catch (e) {
-    // Never let presentation break the page.
+    // Never let presentation break the page. Including the gate: a page shown
+    // unstyled is a bad page, a page never shown at all is a broken app.
+    liftGate();
     if (window.console && console.warn) {
       console.warn('[ZiglyWebView] style injection failed:', e);
     }

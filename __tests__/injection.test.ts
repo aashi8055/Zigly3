@@ -861,15 +861,29 @@ describe('getInjectionForUrl', () => {
       expect(s).toContain('zigly-breed-dogs');
     });
 
-    it('reports immediately on pages with nothing to assemble', () => {
-      // Inner pages must not sit behind the splash waiting for a dashboard.
+    it('waits for the app’s own stylesheet before an inner page is shown', () => {
+      // The bug this closes: a load ending is the document arriving, not the
+      // page. Revealing on load end showed the mobile website for a beat and
+      // then it became this app's page.
       const s = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(s).toContain('if (!isHome()) { send(); return; }');
+      expect(s).toContain("document.getElementById('zigly-app-styles')");
+      expect(s).toContain('page-ready');
+    });
+
+    it('waits for a listing grid, which SearchTap renders after first paint', () => {
+      // A collection that has loaded is usually still an empty column.
+      const s = getInjectionForUrl('https://zigly.com/collections/x') as string;
+      expect(s).toContain('#zigly-sortfilter-bar, initial-search-sort');
     });
 
     it('reports even if a section never arrives', () => {
-      // A missing section must delay the splash, never trap the user.
-      expect(getInjectionForUrl('https://zigly.com/')).toContain('tries > 40');
+      // A missing section must delay the reveal, never trap the user. Located
+      // inside the ready watcher, not by the first cap in the payload -- the
+      // sort/filter retry loop has one of its own.
+      const s = getInjectionForUrl('https://zigly.com/') as string;
+      const at = s.indexOf('__ziglyReadyWatch');
+      expect(at).toBeGreaterThan(-1);
+      expect(s.slice(at)).toContain('tries > cap');
     });
   });
 

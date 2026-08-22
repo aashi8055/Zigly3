@@ -35,8 +35,15 @@ import {COLORS} from '../constants/appConstants';
  * already pulled the images for the category destinations -- and short enough
  * that a genuinely slow page is shown half-drawn, with the header's back arrow
  * right there, rather than hidden behind a spinner.
+ *
+ * It used to be 2200ms, when the cover came off on the page's load event and
+ * this was only the fallback for a load that never finished. It is now the
+ * fallback for a page that never reports itself *ready* -- styled, laid out,
+ * top imagery decoded (see ../webview/readySignal) -- which is a later moment,
+ * so the cap has to be a little later too or the thing it was raised to hide
+ * shows through at the end of it anyway.
  */
-export const PAGE_COVER_CAP_MS = 2200;
+export const PAGE_COVER_CAP_MS = 3000;
 
 /**
  * The spinner waits before appearing.

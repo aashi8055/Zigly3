@@ -35,6 +35,8 @@
  * it is. A login screen that fails visibly is recoverable; a blank one is not.
  */
 
+import {LIFT_PAINT_GATE} from './headerBridge';
+
 /** How long to wait for a third-party widget that renders after first paint. */
 export const LOGIN_POLL_MS = 250;
 export const LOGIN_TRIES = 40;
@@ -409,5 +411,16 @@ export const LOGIN_RESTYLE = `
   window.__ziglyLogin = {run: run};
   run();
 })();
+
+/*
+ * The paint gate comes off here rather than with the mobile stylesheet: this
+ * screen does not get that stylesheet -- it is one modal widget on a blank
+ * ground, not a shop page -- so nothing else on this page would ever lift it,
+ * and the login form would sit invisible until the gate's own deadline.
+ *
+ * After run(), which hides the site's own furniture. Before it, the site's
+ * login page would be revealed for the beat it takes to run.
+ */
+${LIFT_PAINT_GATE}
 true;
 `;

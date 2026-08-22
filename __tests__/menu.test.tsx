@@ -421,3 +421,39 @@ describe('urls the drawer must not mangle', () => {
     expect(node({href: null}).href).toBeNull();
   });
 });
+
+/**
+ * The hamburger, which is the drawer's other half.
+ *
+ * The drawer is deliberately drawn *under* the header, so the button that
+ * opened it never moves -- and a button that stays put has to undo itself when
+ * it is pressed again, because that is the first thing anyone tries. The other
+ * half of that is the search band: it belongs to the page, and the page is what
+ * the drawer is covering.
+ *
+ * Asserted against the screen's source, as the page cover's deadline is: the
+ * wiring is the claim, and the screen is 2,000 lines of WebView plumbing that
+ * cannot be mounted in a unit test.
+ */
+describe('the hamburger', () => {
+  const src = (): string =>
+    require('fs').readFileSync('src/screens/ZiglyWebViewScreen.tsx', 'utf8');
+
+  it('closes the drawer when it is pressed again', () => {
+    const s = src();
+    const at = s.indexOf('const toggleMenu');
+    expect(at).toBeGreaterThan(-1);
+    const body = s.slice(at, at + 260);
+    expect(body).toContain('menuOpenRef.current');
+    expect(body).toContain('closeMenu()');
+    // And it is the toggle the header is given, not the bare open.
+    expect(s).toContain('onMenuPress={toggleMenu}');
+    expect(s).not.toContain('onMenuPress={openMenu}');
+  });
+
+  it('folds the search band away while the drawer is over the page', () => {
+    // Otherwise the band stands above the panel as a pale blue strip belonging
+    // to a page nobody is looking at.
+    expect(src()).toContain('searchCollapsed={searchCollapsed || menuOpen}');
+  });
+});

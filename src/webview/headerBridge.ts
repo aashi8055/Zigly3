@@ -74,12 +74,62 @@ header[data-hide-header-in-app] details[open] + .menu-drawer__overlay {
 `;
 
 /**
+ * How long the paint gate may hold the page back on its own.
+ *
+ * The gate is lifted by the app's own stylesheet the moment that lands, so this
+ * is only the failure case: an injection that never ran. Kept under
+ * PAGE_COVER_CAP_MS so the app's cover is still over the page when the gate
+ * gives up, rather than the customer watching a bare website appear.
+ */
+export const PAINT_GATE_MAX_MS = 2500;
+
+/** The style node that holds the page back. Removed by the app's own CSS. */
+export const PAINT_GATE_ID = 'zigly-paint-gate';
+
+/**
+ * Lift the gate.
+ *
+ * Every script that installs this app's own presentation on a page has to end
+ * with this, because that is what the gate was waiting for -- and a gate that
+ * is never lifted is not a slow page, it is a blank one. Two callers today:
+ * `buildStyleInjection`, for every shop page, and `LOGIN_RESTYLE`, which styles
+ * the one screen the mobile stylesheet does not cover.
+ *
+ * Idempotent, and safe on a page that was never gated at all.
+ */
+export const LIFT_PAINT_GATE = `
+(function () {
+  try {
+    window.__ziglyGateLifted = true;
+    var gate = document.getElementById(${JSON.stringify(PAINT_GATE_ID)});
+    if (gate && gate.parentNode) { gate.parentNode.removeChild(gate); }
+  } catch (e) {}
+})();
+`;
+
+/**
  * Installed before the page's own scripts run.
+ *
+ * Two jobs, both about the same window -- the moment between the document
+ * arriving and the app's own CSS being installed on it.
  *
  * The site hides its header on DOMContentLoaded, which is late enough that the
  * web header is visible for a moment first -- and with our native header also
  * on screen, that reads as a duplicate header flashing. Hiding it up front
  * removes the flash entirely.
+ *
+ * The paint gate is the general case of that same flash. `injectedJavaScript`
+ * runs when the document has finished loading, so for a beat before it the page
+ * is the mobile *website*: the site's own grid, its own type scale, its own
+ * bottom bar -- and then it visibly becomes the app. The gate holds the
+ * document invisible until the app's stylesheet is in, and
+ * `buildStyleInjection` lifts it as its last act. Nothing about it is a
+ * deadline the customer can be stuck behind: it lifts itself after
+ * PAINT_GATE_MAX_MS whatever happens.
+ *
+ * `visibility: hidden`, not `display: none`: layout still runs and images still
+ * download behind it, so the gate costs nothing in load time -- it only decides
+ * when the result is shown.
  */
 export const EARLY_HEADER_CSS = `
 (function () {
@@ -122,6 +172,61 @@ export const EARLY_HEADER_CSS = `
           (document.head || document.documentElement).appendChild(again);
         }
       }, {once: true});
+    }
+  } catch (e) {}
+
+  // ------------------------------------------------------------- paint gate
+  try {
+    var p = (window.location.pathname || '').toLowerCase();
+    var host = (window.location.hostname || '').toLowerCase();
+    /*
+     * Never over the money flow. Nothing in this app styles checkout, so
+     * nothing would ever lift a gate installed there -- it would hold a payment
+     * page invisible for two and a half seconds for no benefit at all.
+     */
+    var isMoneyFlow =
+      p.indexOf('/checkouts/') === 0 ||
+      p.indexOf('/checkout') === 0 ||
+      p.indexOf('/wallets/') === 0 ||
+      p.indexOf('/payments/') === 0 ||
+      host.indexOf('gokwik') !== -1 ||
+      host.indexOf('shop.app') !== -1 ||
+      host.indexOf('razorpay') !== -1 ||
+      host.indexOf('payu') !== -1;
+
+    /*
+     * Document-start only.
+     *
+     * This payload is injected again on the native onLoadStart as a backstop,
+     * and that one lands in the *outgoing* document -- gating there would blank
+     * a page the customer is still looking at, and a cancelled navigation would
+     * leave it blank until the gate timed out. readyState is 'loading' only
+     * for the document this run belongs to.
+     */
+    if (!isMoneyFlow && document.readyState === 'loading') {
+      var GATE = ${JSON.stringify(PAINT_GATE_ID)};
+      var gateCss = 'html{visibility:hidden!important;background:#fff!important}';
+
+      var install = function () {
+        if (window.__ziglyGateLifted) { return; }
+        if (document.getElementById(GATE)) { return; }
+        var node = document.createElement('style');
+        node.id = GATE;
+        node.textContent = gateCss;
+        (document.head || document.documentElement).appendChild(node);
+      };
+
+      install();
+
+      // Same reason as the header tag above: at document-start there may be no
+      // <head> yet, so the node can be dropped when the parser builds the real
+      // document. Skipped if the gate has already been lifted by then.
+      document.addEventListener('DOMContentLoaded', install, {once: true});
+
+      // The deadline. A page whose injection never ran must still be shown.
+      setTimeout(function () {
+        ${LIFT_PAINT_GATE}
+      }, ${PAINT_GATE_MAX_MS});
     }
   } catch (e) {}
 })();
