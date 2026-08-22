@@ -161,3 +161,152 @@ export const WISHLIST_SCRIPT = `
 })();
 true;
 `;
+
+/**
+ * Remove one product from the wishlist, by driving the site's own control.
+ *
+ * There is no endpoint to call: the write belongs to Swym, and this app has no
+ * Swym credential. What the page does have is the remove control Swym renders
+ * next to each saved item — so this finds that control and clicks it, which
+ * performs the real write with the site's own session and its own shopper id.
+ * The same principle as the sort and filter bar: relocate or press Zigly's
+ * controls, never reimplement what is behind them.
+ *
+ * Two things keep this honest rather than hopeful:
+ *
+ *   - the control is found structurally, from the tile that links to this
+ *     product, and by fragment on the attributes a remove control carries.
+ *     Nothing is hardcoded to one release of Swym's markup.
+ *   - the result is *verified*. After the click it re-reads the product links
+ *     and reports whether the handle actually left the list. A removal that
+ *     silently failed would leave the app showing a wishlist that is not the
+ *     customer's, which is worse than saying so.
+ */
+export const removeFromWishlistScript = (handle: string): string => `
+(function () {
+  var handle = ${JSON.stringify(handle)};
+  var MARK = '/products/';
+  var sent = false;
+
+  function send(ok, reason) {
+    if (sent) { return; }
+    sent = true;
+    try {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          tag: 'wishlist-removed',
+          handle: handle,
+          ok: ok,
+          reason: reason || ''
+        }));
+      }
+    } catch (e) {}
+  }
+
+  function root() {
+    var swym = document.querySelector(
+      '[class*="swym-wishlist"], [id*="swym-wishlist"], [class*="swym"]'
+    );
+    if (swym) { return swym; }
+    return document.querySelector('main, #MainContent') || document;
+  }
+
+  /** Every link in the container that points at this product. */
+  function linksFor(node) {
+    var out = [];
+    var links = node.querySelectorAll('a[href*="/products/"]');
+    for (var i = 0; i < links.length; i++) {
+      // Split rather than a regex: a backslash inside a template literal is
+      // eaten before the page ever sees it, which is exactly how this shipped
+      // broken once -- /\/products\// arrived as //products//.
+      var href = links[i].getAttribute('href') || '';
+      var at = href.indexOf(MARK);
+      if (at === -1) { continue; }
+      var seg = href.slice(at + MARK.length).split('/')[0];
+      seg = seg.split('?')[0].split('#')[0];
+      if (seg === handle) { out.push(links[i]); }
+    }
+    return out;
+  }
+
+  /**
+   * The remove control for that product: searched from the link outwards, so
+   * it is always the one belonging to this tile and never a neighbour's.
+   * Six levels is deep enough for a card and shallow enough not to reach the
+   * grid, whose own controls belong to other items.
+   */
+  var REMOVE = [
+    '[class*="swym"][class*="delete"]',
+    '[class*="swym"][class*="remove"]',
+    '[class*="wishlist"][class*="remove"]',
+    '[class*="remove-from"]',
+    '[aria-label*="emove"]',
+    '[title*="emove"]',
+    '[data-action*="remove"]'
+  ].join(', ');
+
+  function controlFor(link) {
+    var node = link.parentElement;
+    for (var depth = 0; node && depth < 6; depth++) {
+      var found = node.querySelector(REMOVE);
+      if (found) { return found; }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function stillListed() {
+    return linksFor(root()).length > 0;
+  }
+
+  var container = root();
+  var links = linksFor(container);
+  if (!links.length) {
+    // Already gone -- most likely removed on the product page. Nothing to do,
+    // and the app is right to have dropped the tile.
+    send(true, 'already-absent');
+    return;
+  }
+
+  var control = controlFor(links[0]);
+  if (!control) {
+    send(false, 'no-control');
+    return;
+  }
+
+  /**
+   * Some Swym configurations confirm before removing. This page is parked off
+   * screen, so a native dialog would appear over the app with no context; and
+   * the customer has already asked for the removal by tapping the heart.
+   * Stubbed for the click only, then put back -- deliberately narrow, and never
+   * touching fetch, storage or cookies.
+   */
+  var realConfirm = window.confirm;
+  window.confirm = function () { return true; };
+  try {
+    control.click();
+  } catch (e) {
+    window.confirm = realConfirm;
+    send(false, 'click-failed');
+    return;
+  }
+  setTimeout(function () { window.confirm = realConfirm; }, 0);
+
+  // Verify. Swym re-renders the list after its own request completes, so this
+  // waits for the tile to actually leave rather than trusting the click.
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    var gone = false;
+    try { gone = !stillListed(); } catch (e) { gone = false; }
+    if (gone) {
+      clearInterval(timer);
+      send(true, '');
+    } else if (tries >= 16) {
+      clearInterval(timer);
+      send(false, 'still-listed');
+    }
+  }, 250);
+})();
+true;
+`;

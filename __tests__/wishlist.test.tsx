@@ -20,6 +20,7 @@ import {
   WISHLIST_LIMIT,
   WISHLIST_SCRIPT,
   WISHLIST_TRIES,
+  removeFromWishlistScript,
 } from '../src/webview/wishlistBridge';
 import {httpsUrl, parseWishlist} from '../src/wishlist/wishlistItems';
 import type {WishlistItem} from '../src/wishlist/wishlistItems';
@@ -86,6 +87,19 @@ const item = (over: Partial<WishlistItem> = {}): WishlistItem => ({
 });
 
 const noop = () => {};
+
+/** The screen with everything defaulted; pass only what the case is about. */
+const screen = (
+  props: Partial<React.ComponentProps<typeof WishlistScreen>> = {},
+): React.ReactElement => (
+  <WishlistScreen
+    items={[item()]}
+    onOpenItem={noop}
+    onAddToBag={noop}
+    onRemove={noop}
+    {...props}
+  />
+);
 
 describe('reading the wishlist reply', () => {
   it('keeps the paise Shopify reported, without parsing a rendered price', () => {
@@ -200,6 +214,59 @@ describe('the bridge that reads the page', () => {
   });
 });
 
+describe('removing from the wishlist', () => {
+  const script = removeFromWishlistScript('zl-bobo-bear-squeaker-dog-toy');
+
+  it("presses the site's own control instead of calling an API", () => {
+    // The write belongs to Swym and this app has no Swym credential; the page
+    // has the control, so the control is what gets pressed.
+    expect(script).toContain('.click()');
+    expect(script).not.toContain('swymcdn');
+    expect(script).not.toContain('api-key');
+    expect(script).not.toContain('regid');
+  });
+
+  it('finds the control from the tile that links to that product', () => {
+    // Searching outwards from the link is what stops it pressing a
+    // neighbour's remove button.
+    expect(script).toContain('zl-bobo-bear-squeaker-dog-toy');
+    expect(script).toContain('node.parentElement');
+    expect(script).toContain('depth < 6');
+  });
+
+  it('verifies the removal rather than trusting the click', () => {
+    // A removal that silently failed would leave the app showing a wishlist
+    // that is not the customer's.
+    expect(script).toContain('stillListed');
+    expect(script).toContain("send(false, 'still-listed')");
+    expect(script).toContain("send(false, 'no-control')");
+    expect(script).toContain('setInterval');
+  });
+
+  it('treats an item already gone as success', () => {
+    // It may have been removed on the product page; the app is right to have
+    // dropped the tile either way.
+    expect(script).toContain("send(true, 'already-absent')");
+  });
+
+  it('stubs confirm only for the click, and touches nothing else', () => {
+    // The page is parked off screen, so a native dialog would appear over the
+    // app with no context -- and the customer already asked for the removal.
+    expect(script).toContain('var realConfirm = window.confirm');
+    expect(script).toContain('window.confirm = realConfirm');
+    // The rules that matter: never the page's network, storage or cookies.
+    expect(script).not.toContain('window.fetch =');
+    expect(script).not.toContain('localStorage');
+    expect(script).not.toContain('document.cookie');
+  });
+
+  it('parses as valid JavaScript', () => {
+    // eslint-disable-next-line no-new-func
+    expect(() => new Function(script)).not.toThrow();
+    expect(script.trimEnd().endsWith('true;')).toBe(true);
+  });
+});
+
 describe('adding to the bag from the wishlist', () => {
   it('posts to the same cart endpoint the theme uses', () => {
     const script = addToCartScript(44123456789);
@@ -224,28 +291,18 @@ describe('adding to the bag from the wishlist', () => {
 describe('the wishlist screen', () => {
   it('waits rather than claiming nothing is saved', () => {
     // Swym renders client-side, so null is a real state and it is not "empty".
-    const tree = render(
-      <WishlistScreen items={null} onOpenItem={noop} onAddToBag={noop} />,
-    );
+    const tree = render(screen({items: null}));
     expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
     expect(textOf(tree)).not.toContain('No items');
   });
 
   it('shows the box and "No items" when nothing is saved', () => {
-    const tree = render(
-      <WishlistScreen items={[]} onOpenItem={noop} onAddToBag={noop} />,
-    );
+    const tree = render(screen({items: []}));
     expect(textOf(tree)).toContain('No items');
   });
 
   it('draws a tile per saved product, priced as the reference prices it', () => {
-    const tree = render(
-      <WishlistScreen
-        items={[item(), item({handle: 'second', title: 'Trixie Carrot'})]}
-        onOpenItem={noop}
-        onAddToBag={noop}
-      />,
-    );
+    const tree = render(screen({items: [item(), item({handle: 'second', title: 'Trixie Carrot'})]}));
     const text = textOf(tree);
     expect(text).toContain('ZL Bobo Bear Squeaker Dog Toy');
     expect(text).toContain('Trixie Carrot');
@@ -259,21 +316,13 @@ describe('the wishlist screen', () => {
     const many = Array.from({length: 12}, (_, i) =>
       item({handle: 'h' + i, title: 'Toy ' + i}),
     );
-    const tree = render(
-      <WishlistScreen items={many} onOpenItem={noop} onAddToBag={noop} />,
-    );
+    const tree = render(screen({items: many}));
     expect(textOf(tree)).toContain('Toy 11');
   });
 
   it('adds a single-variant product straight to the bag', () => {
     const added: string[] = [];
-    const tree = render(
-      <WishlistScreen
-        items={[item()]}
-        onOpenItem={noop}
-        onAddToBag={product => added.push(product.handle)}
-      />,
-    );
+    const tree = render(screen({items: [item()], onAddToBag: product => added.push(product.handle)}));
     press(tree, 'Add to Bag: ' + RAW.title);
     expect(added).toEqual([RAW.handle]);
   });
@@ -281,43 +330,44 @@ describe('the wishlist screen', () => {
   it('sends a multi-variant product to its page instead of guessing', () => {
     const added: string[] = [];
     const opened: string[] = [];
-    const tree = render(
-      <WishlistScreen
-        items={[item({variantId: null})]}
-        onOpenItem={product => opened.push(product.handle)}
-        onAddToBag={product => added.push(product.handle)}
-      />,
-    );
+    const tree = render(screen({items: [item({variantId: null})], onOpenItem: product => opened.push(product.handle), onAddToBag: product => added.push(product.handle)}));
     press(tree, 'Choose options for ' + RAW.title);
     expect(added).toEqual([]);
     expect(opened).toEqual([RAW.handle]);
   });
 
   it('does not offer to add something out of stock', () => {
-    const tree = render(
-      <WishlistScreen
-        items={[item({available: false})]}
-        onOpenItem={noop}
-        onAddToBag={noop}
-      />,
-    );
+    const tree = render(screen({items: [item({available: false})]}));
     const text = textOf(tree);
     expect(text).toContain('Sold out');
     expect(text).not.toContain('Add to Bag');
   });
 
-  it('opens the product from the heart, where the site owns the control', () => {
-    // Removing from the wishlist is a write to Swym, which this app has no
-    // sanctioned way to make -- so the heart leads to Zigly's own control.
+  it('un-saves from the heart, and opens the product from the tile', () => {
+    const removed: string[] = [];
     const opened: string[] = [];
     const tree = render(
-      <WishlistScreen
-        items={[item()]}
-        onOpenItem={product => opened.push(product.handle)}
-        onAddToBag={noop}
-      />,
+      screen({
+        onRemove: product => removed.push(product.handle),
+        onOpenItem: product => opened.push(product.handle),
+      }),
     );
-    press(tree, 'Saved: ' + RAW.title);
+    press(tree, 'Remove from wishlist: ' + RAW.title);
+    expect(removed).toEqual([RAW.handle]);
+    // The heart no longer navigates; the image and title still do.
+    expect(opened).toEqual([]);
+    press(tree, RAW.title);
     expect(opened).toEqual([RAW.handle]);
+  });
+
+  it('says so when a removal could not be confirmed', () => {
+    // The tile comes back rather than the app showing a wishlist that is not
+    // the customer's -- so the screen has to explain why it reappeared.
+    const tree = render(screen({notice: 'Could not remove that.'}));
+    expect(textOf(tree)).toContain('Could not remove that.');
+  });
+
+  it('shows no notice when nothing has gone wrong', () => {
+    expect(textOf(render(screen()))).not.toContain('Could not');
   });
 });

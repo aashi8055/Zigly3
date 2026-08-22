@@ -11,8 +11,11 @@
  * this screen is computed locally except the discount percentage.
  *
  * The heart is filled because everything here is, by definition, saved. Tapping
- * it opens the product, where Zigly's own wishlist control lives — removing an
- * item is a write to Swym, and this app has no sanctioned way to make it.
+ * it removes the item, and the tile goes at once: the write itself belongs to
+ * Swym and is performed by pressing the site's own control off screen, which
+ * takes a moment, so waiting for it would make the tap feel broken. If that
+ * write turns out not to have happened, the tile comes back and the screen says
+ * so — see the notice strip below.
  */
 import React from 'react';
 import {
@@ -38,6 +41,10 @@ interface Props {
    * the screen sends multi-variant products to their page instead.
    */
   onAddToBag: (item: WishlistItem) => void;
+  /** Un-saves the item. The tile is expected to disappear immediately. */
+  onRemove: (item: WishlistItem) => void;
+  /** Shown when a removal could not be confirmed, and the tile came back. */
+  notice?: string | null;
 }
 
 const FilledHeart = ({size = 22}: {size?: number}) => {
@@ -90,10 +97,12 @@ const Tile = ({
   item,
   onOpen,
   onAdd,
+  onRemove,
 }: {
   item: WishlistItem;
   onOpen: () => void;
   onAdd: () => void;
+  onRemove: () => void;
 }) => (
   <View style={styles.tile}>
     <Pressable
@@ -111,12 +120,12 @@ const Tile = ({
       )}
     </Pressable>
 
-    {/* Saved, by definition. Opens the product, where the site's own control is. */}
+    {/* Filled because it is saved; tapping it un-saves and the tile goes. */}
     <Pressable
-      onPress={onOpen}
-      hitSlop={8}
+      onPress={onRemove}
+      hitSlop={10}
       accessibilityRole="button"
-      accessibilityLabel={'Saved: ' + item.title}
+      accessibilityLabel={'Remove from wishlist: ' + item.title}
       style={styles.heart}>
       <FilledHeart />
     </Pressable>
@@ -154,7 +163,13 @@ const Tile = ({
   </View>
 );
 
-const WishlistScreen = ({items, onOpenItem, onAddToBag}: Props) => {
+const WishlistScreen = ({
+  items,
+  onOpenItem,
+  onAddToBag,
+  onRemove,
+  notice,
+}: Props) => {
   if (items === null) {
     // Swym renders client-side, so there is a real wait here. Showing the empty
     // screen during it would tell the customer their saved items were gone.
@@ -175,6 +190,12 @@ const WishlistScreen = ({items, onOpenItem, onAddToBag}: Props) => {
 
   return (
     <View style={styles.root}>
+      {notice ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>{notice}</Text>
+        </View>
+      ) : null}
+
       <ScrollView contentContainerStyle={styles.grid}>
         {items.map(item => (
           <Tile
@@ -182,6 +203,7 @@ const WishlistScreen = ({items, onOpenItem, onAddToBag}: Props) => {
             item={item}
             onOpen={() => onOpenItem(item)}
             onAdd={() => onAddToBag(item)}
+            onRemove={() => onRemove(item)}
           />
         ))}
       </ScrollView>
@@ -199,6 +221,21 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  /** Only ever appears when a removal could not be confirmed. */
+  notice: {
+    backgroundColor: '#FDF2F2',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F6DADA',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  noticeText: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 13.5,
+    lineHeight: 19,
+    color: '#8A2B2B',
   },
 
   grid: {

@@ -277,10 +277,21 @@ Two consequences worth stating plainly:
   document — the header and footer link to products too, and those are not
   saved. Which root it used is reported in the reply and logged, so one device
   run confirms it.
-- **Removing from the wishlist is not implemented.** That is a write to Swym,
-  and this app has no sanctioned way to make one. The heart is filled, because
-  everything on the screen is saved by definition, and tapping it opens the
-  product — where Zigly's own wishlist control lives.
+- **Removing works by pressing Zigly's own control.** There is no endpoint to
+  call — the write belongs to Swym and this app holds no Swym credential — but
+  the page has the remove control Swym renders next to each saved item, so the
+  bridge finds that control and clicks it. The real write, with the site's own
+  shopper id. The control is located *outwards from the link to that product*,
+  which is what stops it pressing a neighbour's button, and by attribute
+  fragment rather than one release of Swym's class names.
+
+  The tile disappears the moment the heart is tapped, because the click happens
+  in an off-screen page and waiting for it would make the tap feel broken. Then
+  the removal is **verified**: the bridge re-reads the product links and reports
+  whether the handle actually left. If it did not, the tile returns to the
+  position it held and the screen says why. A removal that silently failed would
+  leave the app showing a wishlist that is not the customer's, which is worse
+  than saying so.
 
 Add to Bag posts to `/cart/add.js`, the same endpoint the theme's own button
 uses, so the line lands in the one shared cart. It is only offered for
@@ -378,6 +389,7 @@ there -- so device testing is the only trustworthy signal.
 | Spinner floating in the top-right of every page | Removed; replaced by the hairline under the header |
 | Every inner page reloaded on Back and on re-entry | Fixed by the keep-alive page stack |
 | Search did nothing until enter, and the pre-typing screen was blank | Fixed by the native search screen |
+| A backslash inside a template literal is eaten before the page sees it — `/\/products\//` shipped as `//products//` | Watch for it: the removal bridge splits strings instead, and `__tests__/injection-syntax.test.ts` parses every payload |
 | Sort/Filter bar emptied itself after a filter change, and never appeared on `/search` | Fixed in sortFilterBar.ts |
 | Listing cards showed the compact variant picker, not the reference's full-width Add to Bag | Fixed via `body.zigly-listing` |
 | Some homepage sections not visible | Under investigation -- compare against zigly.com in mobile Chrome first; if absent there too it is the site's own mobile design, not an app defect |
@@ -392,5 +404,4 @@ there -- so device testing is the only trustworthy signal.
 | Geolocation prompt for the site's pincode widget | 6 |
 | Cookie flush on background (session persistence) | validate in gate first |
 | Native facets and sort on search results | needs Zigly's SearchTap account |
-| Removing an item from the wishlist | needs Zigly's Swym account; the heart opens the product, where their own control is |
 | Wishlist count badge on the header heart | that total lives in Swym, not Shopify |

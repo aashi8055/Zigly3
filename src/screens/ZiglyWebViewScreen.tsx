@@ -59,7 +59,10 @@ import {
   changeQtyScript,
 } from '../webview/cartBridge';
 import WishlistScreen from '../components/WishlistScreen';
-import {WISHLIST_SCRIPT} from '../webview/wishlistBridge';
+import {
+  WISHLIST_SCRIPT,
+  removeFromWishlistScript,
+} from '../webview/wishlistBridge';
 import {parseWishlist} from '../wishlist/wishlistItems';
 import type {WishlistItem} from '../wishlist/wishlistItems';
 import {
@@ -177,6 +180,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const [wishlist, setWishlist] = useState<WishlistItem[] | null>(null);
   const wishlistRef = useRef<Web>(null);
   const wishlistOpenRef = useRef(false);
+  /** Shown only when a removal could not be confirmed. */
+  const [wishlistNotice, setWishlistNotice] = useState<string | null>(null);
+  /**
+   * Tiles taken off screen optimistically, kept with the position they held so
+   * one that turns out not to have been removed goes back where it was rather
+   * than reappearing at the end of the grid.
+   */
+  const pendingRemovals = useRef<Map<string, {item: WishlistItem; at: number}>>(
+    new Map(),
+  );
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * Search. The screen is native, but the suggestions come from Shopify's own
@@ -258,6 +272,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   useEffect(() => cancelSuggestTimers, [cancelSuggestTimers]);
+
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) {
+        clearTimeout(noticeTimer.current);
+      }
+    },
+    [],
+  );
 
   /**
    * The search band describes whatever is on screen, so it opens when a
@@ -470,6 +493,62 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
   const closeWishlist = useCallback(() => {
     setWishlistOpen(false);
+    setWishlistNotice(null);
+  }, []);
+
+  /**
+   * Un-save an item.
+   *
+   * The tile goes immediately, because the write is a click on the site's own
+   * control in an off-screen page and that takes a moment -- waiting for it
+   * would make the tap feel broken. The reply then either confirms it or puts
+   * the tile back; see ../webview/wishlistBridge for why it is verified at all.
+   */
+  const removeFromWishlist = useCallback(
+    (item: WishlistItem) => {
+      setWishlist(prev => {
+        if (!prev) {
+          return prev;
+        }
+        const at = prev.findIndex(saved => saved.handle === item.handle);
+        if (at === -1) {
+          return prev;
+        }
+        pendingRemovals.current.set(item.handle, {item, at});
+        return prev.filter(saved => saved.handle !== item.handle);
+      });
+      setWishlistNotice(null);
+      injectInto('wishlist', removeFromWishlistScript(item.handle));
+    },
+    [injectInto],
+  );
+
+  /** Put a tile back, at the position it held, and say why. */
+  const restoreWishlistItem = useCallback((handle: string, why: string) => {
+    const pending = pendingRemovals.current.get(handle);
+    pendingRemovals.current.delete(handle);
+    if (!pending) {
+      return;
+    }
+    setWishlist(prev => {
+      if (!prev) {
+        return prev;
+      }
+      const next = prev.slice();
+      next.splice(Math.min(pending.at, next.length), 0, pending.item);
+      return next;
+    });
+    warn('wishlist removal not confirmed:', handle, why);
+    setWishlistNotice(
+      'Could not remove that from your wishlist. Open the product to remove it there.',
+    );
+    if (noticeTimer.current) {
+      clearTimeout(noticeTimer.current);
+    }
+    noticeTimer.current = setTimeout(() => {
+      noticeTimer.current = null;
+      setWishlistNotice(null);
+    }, 6000);
   }, []);
 
   const closeCart = useCallback(() => {
@@ -946,6 +1025,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           <View style={styles.pageLayer}>
             <WishlistScreen
               items={wishlist}
+              notice={wishlistNotice}
+              onRemove={removeFromWishlist}
               onOpenItem={item => {
                 closeWishlist();
                 showPage(item.url);
@@ -994,7 +1075,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       'of',
                       data.found,
                     );
+                    pendingRemovals.current.clear();
                     setWishlist(read.items);
+                  } else if (data && data.tag === 'wishlist-removed') {
+                    if (data.ok) {
+                      // Already off screen; nothing left to do but forget it.
+                      pendingRemovals.current.delete(data.handle);
+                    } else {
+                      restoreWishlistItem(data.handle, data.reason || '');
+                    }
                   }
                 } catch {
                   // The page posts for its own reasons too.
