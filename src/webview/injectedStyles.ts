@@ -242,6 +242,35 @@ html, body {
    stands down on these pages for the same reason -- see showsSortFilterBar in
    ../utils/urlUtils.ts, which mirrors the path test this script uses.
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   One Sort and one Filter, never two.
+
+   SearchTap re-renders its controls on every filter change and every page of
+   results, and it recreates them where they started -- at the top of the grid.
+   sortFilterBar.ts moves them into the pinned bar, and now re-pins from a
+   MutationObserver rather than a poll, but no amount of JavaScript makes that
+   race impossible: there is always a frame between their render and our move.
+
+   This closes it. A control anywhere on a listing page is hidden; the same
+   control inside our bar is shown, and wins because an id beats a class. So the
+   duplicate at the top of the grid is never visible, whatever the timing --
+   and if the move fails outright, the bar is empty rather than doubled.
+
+   Hidden, never removed: these are SearchTap's own custom elements, and their
+   scripts re-render into them. An element they cannot find is how a script
+   starts throwing on every filter change.
+   ------------------------------------------------------------------ */
+body.zigly-listing .st-filter-count-sort-wrap,
+body.zigly-listing initial-search-filters,
+body.zigly-listing initial-search-sort {
+  display: none !important;
+}
+#zigly-sortfilter-bar .st-filter-count-sort-wrap,
+#zigly-sortfilter-bar initial-search-filters,
+#zigly-sortfilter-bar initial-search-sort {
+  display: flex !important;
+}
+
 #zigly-sortfilter-bar {
   position: fixed !important;
   left: 0;

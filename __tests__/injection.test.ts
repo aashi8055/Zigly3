@@ -467,9 +467,46 @@ describe('getInjectionForUrl', () => {
       // Moving preserves their listeners, so they stay SearchTap's controls.
       // Cloning would produce buttons that look right and do nothing.
       const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(script).toContain('bar.appendChild(parts[i])');
+      expect(script).toContain('bar.appendChild(toMove[m])');
       expect(script).toContain('initial-search-sort');
       expect(script).not.toContain('cloneNode');
+    });
+
+    it('collects every control, not just the first of each', () => {
+      // One of three reasons Sort and Filter showed up twice: querySelector
+      // moved the first of each and left any others where they were.
+      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
+      expect(script).toContain("querySelectorAll('initial-search-filters')");
+      expect(script).toContain("querySelectorAll('initial-search-sort')");
+      expect(script).toContain("querySelectorAll('.st-filter-count-sort-wrap')");
+    });
+
+    it('leaves a control that is already in the bar alone', () => {
+      // Re-appending is a detach and re-attach: it loses focus and can
+      // interrupt SearchTap's own transition.
+      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
+      expect(script).toContain('found[i].parentNode !== bar');
+    });
+
+    it('re-pins on a re-render instead of polling for one', () => {
+      // The poll ran every 500ms and gave up after forty tries, so a filter
+      // change after the first twenty seconds left the duplicates up for the
+      // rest of the page's life. An observer fires in the same task as the
+      // render and does not expire.
+      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
+      expect(script).toContain('new MutationObserver');
+      expect(script).toContain('childList: true, subtree: true');
+      // Coalesced: SearchTap replacing a toolbar is many records, and each one
+      // would otherwise cost a full sweep.
+      expect(script).toContain('if (pending) { return; }');
+    });
+
+    it('hides any control that is not in the bar, whatever the timing', () => {
+      // There is always a frame between SearchTap's render and our move, so
+      // the CSS closes the race rather than relying on the JavaScript winning.
+      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
+      expect(script).toContain('body.zigly-listing initial-search-sort');
+      expect(script).toContain('#zigly-sortfilter-bar initial-search-sort');
     });
 
     it('is not injected into checkout', () => {
@@ -488,13 +525,17 @@ describe('getInjectionForUrl', () => {
     });
 
     it('refills a bar that SearchTap has emptied', () => {
-      // SearchTap re-renders its controls on a filter change; when it replaces
-      // the nodes we moved, the container is left holding nothing. Testing for
-      // the element alone stopped at the first success and left an empty bar.
+      // SearchTap re-renders its controls on a filter change, and the bar is
+      // then holding the stale nodes it moved earlier while the fresh ones sit
+      // at the top of the grid. The old early-out tested the bar for content,
+      // which is exactly the state that leaves -- so it stopped collecting and
+      // the page showed two of each. There is no early-out on content now.
       const script = getInjectionForUrl(
         'https://zigly.com/collections/x',
       ) as string;
-      expect(script).toContain('existing.children.length > 0');
+      expect(script).not.toContain('existing.children.length > 0');
+      // It early-outs only when there is genuinely nothing left to move.
+      expect(script).toContain('if (!toMove.length) { return; }');
     });
 
     it("clears SearchTap's paginating loader above the bar", () => {
