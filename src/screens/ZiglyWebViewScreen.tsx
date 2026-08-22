@@ -79,6 +79,7 @@ import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
 import NativeHeader from '../components/NativeHeader';
 import AnnouncementBar from '../components/AnnouncementBar';
 import CartToast from '../components/CartToast';
+import MessageToast from '../components/MessageToast';
 import CartScreen from '../components/CartScreen';
 import type {CartData} from '../components/CartScreen';
 import {
@@ -132,6 +133,7 @@ import {
 import type {PageStack} from '../navigation/pageStack';
 import BottomNav from '../components/BottomNav';
 import AccountScreen from '../components/AccountScreen';
+import EditProfileScreen from '../components/EditProfileScreen';
 import OrdersScreen from '../components/OrdersScreen';
 import AddressScreen from '../components/AddressScreen';
 import AddressFormScreen from '../components/AddressFormScreen';
@@ -147,6 +149,8 @@ import {
 import {LOGIN_RESTYLE} from '../webview/loginRestyle';
 import {
   EMPTY_ADDRESS_FIELDS,
+  NO_PROFILE_EDITS,
+  applyProfileEdits,
   parseAddresses,
   parseCountries,
   parseCustomer,
@@ -159,6 +163,7 @@ import type {
   Country,
   Customer,
   Order,
+  ProfileEdits,
 } from '../account/accountData';
 import {
   EMPTY_ACCOUNT_STACK,
@@ -259,6 +264,23 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * already here.
    */
   const [paintedLayers, setPaintedLayers] = useState<number[]>([]);
+  /**
+   * A profile edit, laid over what the site rendered.
+   *
+   * Device-local and session-only. Shopify's storefront cannot change a
+   * customer's name or email, so this changes what the app shows and nothing
+   * else -- the form says as much. See ../account/accountData.
+   */
+  const [profileEdits, setProfileEdits] = useState<ProfileEdits | null>(
+    NO_PROFILE_EDITS,
+  );
+  /**
+   * A brief message at the foot of the screen, outside the account section.
+   *
+   * The delete notice cannot live on the account screen: by the time it shows,
+   * signing out has already replaced that screen with the login one.
+   */
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   /** True once scrolled away from the top; collapses the search band. */
   const [searchCollapsed, setSearchCollapsed] = useState(false);
   /** Shown when the page reports an add; the site still owns the cart. */
@@ -917,6 +939,23 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     [openWishlist, orders, probeAccount, probeAddresses],
   );
 
+  const openEditProfile = useCallback(() => {
+    setAccountScreens(prev => pushScreen(prev, 'editProfile'));
+  }, []);
+
+  /**
+   * Keep a profile edit, and come back.
+   *
+   * Kept, not sent. Shopify's storefront has no endpoint that changes a
+   * customer's name or email, so this is an overlay over what the site
+   * rendered -- see ../account/accountData, and the notice on the form itself.
+   * When a profile endpoint exists this is the one function that changes.
+   */
+  const saveProfile = useCallback((edits: ProfileEdits) => {
+    setProfileEdits(edits);
+    setAccountScreens(prev => popScreen(prev));
+  }, []);
+
   // ------------------------------------------------------------- menu drawer
   /**
    * Open the drawer, and re-read the menu while it slides in.
@@ -1092,18 +1131,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, [injectInto]);
 
   /**
-   * Delete account.
+   * Delete Account.
    *
-   * Shopify's storefront has no endpoint that deletes a customer -- the
-   * reference app must call a Zigly backend this app does not have, and there is
-   * no honest way to fake it. So the button does what Zigly actually needs to
-   * happen: it offers their contact form, in the app, and names the support
-   * address for anyone who would rather write.
+   * READ THIS BEFORE THIS BUILD GOES TO ANY REAL CUSTOMER.
+   *
+   * It signs the customer out and tells them their account was deleted. Nothing
+   * is deleted. Shopify's storefront exposes no endpoint that deletes a
+   * customer -- only Zigly's own backend can, and this app has no access to it,
+   * so the record, the orders and the addresses are all still there and signing
+   * in again brings them back.
+   *
+   * This was asked for explicitly, with that consequence spelled out, to match
+   * Zigly's own app while there is no endpoint behind it. It is written down
+   * here rather than left to be discovered because it is the one screen in this
+   * app that tells the customer something untrue about their own data.
+   *
+   * When a delete endpoint exists: call it here, and only sign out and show the
+   * notice once it answers. The confirmation step below stays either way.
    */
   const requestAccountDeletion = useCallback(() => {
     Alert.alert(
       'Delete account',
-      'Zigly deletes accounts on request rather than from the app. Open their contact form to ask, or email ' +
+      'This signs you out of the app. To have your Zigly account and its data ' +
+        'removed for good, ask through their contact form or email ' +
         SUPPORT_EMAIL +
         '.',
       [
@@ -1112,9 +1162,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           text: 'Open contact form',
           onPress: () => showPage(SUPPORT_PAGE_URL),
         },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            // logOut clears accountNotice, and the account screen is replaced
+            // by the login screen a moment later -- so the confirmation has to
+            // be the toast, which is drawn outside the section.
+            logOut();
+            setToastMessage('Deleted user');
+          },
+        },
       ],
     );
-  }, [showPage]);
+  }, [logOut, showPage]);
 
   /**
    * A bottom-navigation tab.
@@ -1583,6 +1644,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     accountTop !== null && showing === null && !overlayOpen;
   const onOrdersScreen = onAccountScreen && accountTop === 'orders';
 
+  /**
+   * The customer as the screens should show them.
+   *
+   * What the site rendered, with any local edit over the top. Composed once,
+   * here, so the account screen, the profile form and the drawer cannot drift
+   * from one another -- the drawer's account block reads the same object.
+   */
+  const shownCustomer =
+    customer === null ? null : applyProfileEdits(customer, profileEdits);
+
   /** Progress is only ever drawn for whatever the user is actually looking at. */
   const busy =
     !showCart &&
@@ -1891,11 +1962,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         {accountTop === 'account' ? (
           <View style={styles.pageLayer}>
             <AccountScreen
-              customer={customer}
+              customer={shownCustomer}
               notice={accountNotice}
               onOpenRow={openAccountRow}
+              onEditProfile={openEditProfile}
               onLogOut={logOut}
               onDeleteAccount={requestAccountDeletion}
+            />
+          </View>
+        ) : null}
+
+        {accountTop === 'editProfile' && shownCustomer !== null ? (
+          <View style={styles.pageLayer}>
+            <EditProfileScreen
+              customer={shownCustomer}
+              onSave={saveProfile}
             />
           </View>
         ) : null}
@@ -2227,7 +2308,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           open={menuOpen}
           items={menu}
           auth={auth}
-          customer={customer}
+          customer={shownCustomer}
           onClose={closeMenu}
           onNavigate={openFromMenu}
           onAccountPress={openAccountFromMenu}
@@ -2257,6 +2338,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       {showNav ? <BottomNav active={activeTab} onSelect={selectTab} /> : null}
 
       {/* Outside `body`: a toast is the one thing allowed over everything. */}
+      <MessageToast
+        message={toastMessage}
+        onHidden={() => setToastMessage(null)}
+      />
+
       <CartToast
         visible={cartToast}
         onHidden={() => setCartToast(false)}

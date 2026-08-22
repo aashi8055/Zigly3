@@ -12,13 +12,12 @@
  *   for that link to change. A row that emailed a reset for a password that does
  *   not exist would be a row that does nothing, so it is not drawn.
  *
- *   **No Edit Profile button.** Shopify's storefront can create and edit
- *   *addresses* -- which is why the Address screen is fully working -- but it
- *   exposes no way to change a customer's name, email or phone. The only place
- *   those are editable is inside SimplyOTP's login flow, which is not somewhere
- *   this screen can send anyone. The alternative was a button that opened the
- *   website's account page, and leaving the app is the exact thing this whole
- *   feature exists to stop.
+ *   **Edit Profile does not reach Zigly.** Shopify's storefront can create and
+ *   edit *addresses* -- which is why the Address screen is fully working -- but
+ *   it exposes no way to change a customer's name, email or phone. The button
+ *   is here because Zigly's own app has it, and it opens a real form; what it
+ *   saves is a device-local overlay over what the site rendered, and the form
+ *   says so. See ../account/accountData and ./EditProfileScreen.
  *
  * The profile block shows what the site actually renders for this customer,
  * which on a stock theme can be very little; see ../account/accountData.ts for
@@ -49,6 +48,8 @@ interface Props {
   /** null while the probe is still out. */
   customer: Customer | null;
   onOpenRow: (row: AccountRow) => void;
+  /** Opens the Edit Profile form. */
+  onEditProfile: () => void;
   onLogOut: () => void;
   onDeleteAccount: () => void;
   /** Shown when a sign-out did not take, rather than pretending it did. */
@@ -84,6 +85,7 @@ const ROWS: {
 const AccountScreen = ({
   customer,
   onOpenRow,
+  onEditProfile,
   onLogOut,
   onDeleteAccount,
   notice,
@@ -131,6 +133,16 @@ const AccountScreen = ({
               </Text>
             ) : null}
           </View>
+
+          {/* To the right of the details, as Zigly's own app places it. */}
+          <Pressable
+            onPress={onEditProfile}
+            accessibilityRole="button"
+            accessibilityLabel="Edit profile"
+            style={({ pressed }) => [styles.edit, pressed && styles.pressed]}
+          >
+            <Text style={styles.editText}>Edit Profile</Text>
+          </Pressable>
         </View>
 
         {notice ? <Text style={styles.notice}>{notice}</Text> : null}
@@ -224,6 +236,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   who: { flex: 1, minWidth: 0, gap: 2 },
+  /**
+   * Sized to its label rather than stretched. `flexShrink: 0` because the
+   * details beside it are `flex: 1` with `numberOfLines`, and without it a long
+   * email would squeeze the button until "Edit Profile" wrapped.
+   */
+  edit: {
+    flexShrink: 0,
+    borderWidth: 1,
+    borderColor: '#D6DBE3',
+    borderRadius: 8,
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  editText: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 14.5,
+    fontWeight: '600',
+    color: '#1B1B1B',
+  },
   name: {
     fontFamily: FONT_FAMILY,
     fontSize: 19,
