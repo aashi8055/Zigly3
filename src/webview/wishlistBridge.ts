@@ -120,6 +120,17 @@ export const WISHLIST_SCRIPT = `
               available: p.available !== false,
               variantCount: variants.length,
               /*
+               * Zigly tags prescription medicines 'rx', and the theme turns
+               * that tag into the line item property that makes the cart show
+               * its prescription block. Carried through so Add to Bag can post
+               * the same property -- see ./cartBridge.
+               *
+               * Quotes, not backticks: this comment ships inside a template
+               * literal, and a backtick would close it.
+               */
+              requiresPrescription:
+                (p.tags || []).indexOf('rx') !== -1,
+              /*
                * Only meaningful when there is exactly one variant. With more,
                * the app opens the product page rather than choosing on the
                * customer's behalf.

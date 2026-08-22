@@ -878,6 +878,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                         totalPrice: data.totalPrice ?? 0,
                         originalTotalPrice: data.originalTotalPrice ?? 0,
                         totalDiscount: data.totalDiscount ?? 0,
+                        // Only ever true when the bridge says so. A dropped
+                        // flag must fail towards "no prescription needed"
+                        // being wrong loudly at /cart, never towards skipping
+                        // the step silently.
+                        requiresPrescription:
+                          data.requiresPrescription === true,
+                        prescriptionKey:
+                          typeof data.prescriptionKey === 'string'
+                            ? data.prescriptionKey
+                            : '',
                         items: Array.isArray(data.items) ? data.items : [],
                       },
                 );
@@ -1003,7 +1013,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               onCheckout={() => {
                 // Checkout stays entirely on the website.
                 setShowCart(false);
-                showPage(`${ZIGLY_ORIGIN}/checkout`);
+                /*
+                 * A cart with a prescription medicine goes to /cart, not
+                 * /checkout.
+                 *
+                 * The site's prescription step -- upload to Zigly's own
+                 * uploader, tag the cart with the returned key, block checkout
+                 * until that lands, and catch the order being placed by
+                 * watching the Fastrr overlay -- all lives in one document
+                 * alongside the cart. Jumping straight to /checkout leaves
+                 * every part of it behind: verified 2026-08-22 that /cart
+                 * renders the block and its gated checkout button, so this is
+                 * the handoff that keeps them.
+                 */
+                showPage(
+                  cart && cart.requiresPrescription
+                    ? `${ZIGLY_ORIGIN}/cart`
+                    : `${ZIGLY_ORIGIN}/checkout`,
+                );
               }}
               onOpenItem={url => {
                 setShowCart(false);
@@ -1040,7 +1067,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 }
                 // Into the same cart as everything else, via the dashboard
                 // WebView. The toast and the badge follow from its reply.
-                injectInto('home', addToCartScript(item.variantId));
+                //
+                // The Rx flag has to be carried: the site gates its
+                // prescription step on a line item property, so an Rx medicine
+                // added without it looks ordinary to the cart and would ship
+                // with neither a prescription nor a consult.
+                injectInto(
+                  'home',
+                  addToCartScript(item.variantId, 1, item.requiresPrescription),
+                );
               }}
             />
           </View>

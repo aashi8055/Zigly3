@@ -205,4 +205,43 @@ describe('native cart', () => {
     );
     expect(src).toContain('/checkout`');
   });
+
+  /*
+   * Prescription medicines.
+   *
+   * Zigly's prescription step -- upload to their own uploader, tag the cart
+   * with the returned key, hold checkout until that lands, then catch the order
+   * being placed by watching the Fastrr overlay -- all runs in one document
+   * next to the cart. Sending an Rx cart straight to /checkout leaves all of it
+   * behind, which is why the native Checkout button routes those to /cart.
+   */
+  it('reads the prescription property and the staged-upload attribute', () => {
+    const {
+      READ_CART_SCRIPT,
+      RX_PROPERTY,
+      RX_CART_ATTRIBUTE,
+    } = require('../src/webview/cartBridge');
+    expect(RX_PROPERTY).toBe('_requires_prescription');
+    expect(RX_CART_ATTRIBUTE).toBe('prescription_upload_key');
+    // Both names must appear in the script the page actually runs.
+    expect(READ_CART_SCRIPT).toContain(RX_PROPERTY);
+    expect(READ_CART_SCRIPT).toContain(RX_CART_ATTRIBUTE);
+    expect(READ_CART_SCRIPT).toContain('requiresPrescription');
+  });
+
+  it('sends a prescription cart to the site cart, not to checkout', () => {
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    // The conditional, not just the string: /cart appears elsewhere.
+    expect(src).toContain('cart && cart.requiresPrescription');
+    expect(src).toContain('/cart`');
+  });
+
+  it('parses as valid JavaScript with the new fields in place', () => {
+    const {READ_CART_SCRIPT} = require('../src/webview/cartBridge');
+    // eslint-disable-next-line no-new-func
+    expect(() => new Function(READ_CART_SCRIPT)).not.toThrow();
+  });
 });

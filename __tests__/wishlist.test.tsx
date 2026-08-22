@@ -286,6 +286,42 @@ describe('adding to the bag from the wishlist', () => {
     // eslint-disable-next-line no-new-func
     expect(() => new Function(addToCartScript(1))).not.toThrow();
   });
+
+  /*
+   * Prescription medicines. Zigly's theme gates its whole prescription flow on
+   * a line item property, not on the product, so an Rx item added without the
+   * property lands in the cart looking ordinary -- verified against the live
+   * store on 2026-08-22, where the same variant added bare reported
+   * data-rx-active="false" and no prescription block rendered at all. That is a
+   * medicine shipped with neither an uploaded prescription nor a consult, so
+   * these two cases are the ones worth having.
+   */
+  it('carries the prescription property for an Rx medicine', () => {
+    const script = addToCartScript(53804370657596, 1, true);
+    expect(script).toContain('_requires_prescription');
+    // The string, not the boolean: the theme's own hidden input posts "true".
+    expect(script).toContain('"_requires_prescription":"true"');
+  });
+
+  it('does not claim an ordinary product needs one', () => {
+    const script = addToCartScript(53804370657596, 1, false);
+    expect(script).not.toContain('_requires_prescription');
+  });
+
+  it('defaults to not flagging, so the flag is always deliberate', () => {
+    expect(addToCartScript(1)).not.toContain('_requires_prescription');
+  });
+
+  it('reads the tag off the product rather than guessing from the title', () => {
+    const rx = parseWishlist(
+      {items: [{...RAW, requiresPrescription: true}]},
+      ORIGIN,
+    ).items[0];
+    expect(rx.requiresPrescription).toBe(true);
+    // A row that never mentions it is not a prescription item.
+    expect(parseWishlist({items: [RAW]}, ORIGIN).items[0]
+      .requiresPrescription).toBe(false);
+  });
 });
 
 describe('the wishlist screen', () => {

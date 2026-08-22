@@ -68,6 +68,7 @@ const LINE: CartLine = {
   originalPrice: 8000,
   linePrice: 14000,
   originalLinePrice: 16000,
+  requiresPrescription: false,
 };
 
 const CART: CartData = {
@@ -76,6 +77,8 @@ const CART: CartData = {
   originalTotalPrice: 16000,
   totalDiscount: 2000,
   items: [LINE],
+  requiresPrescription: false,
+  prescriptionKey: '',
 };
 
 const noop = () => {};
@@ -86,6 +89,8 @@ const EMPTY: CartData = {
   originalTotalPrice: 0,
   totalDiscount: 0,
   items: [],
+  requiresPrescription: false,
+  prescriptionKey: '',
 };
 
 /** The screen with everything defaulted; pass only what the case is about. */
@@ -287,6 +292,62 @@ describe('changing a line', () => {
       tree,
       'Checkout, 2 items, ₹140',
     );
+    expect(handed).toBe(1);
+  });
+});
+
+describe('a cart with a prescription medicine', () => {
+  const RX_LINE: CartLine = {
+    ...LINE,
+    key: '55:rx',
+    title: 'TEST - Rx Dummy Medicine',
+    requiresPrescription: true,
+  };
+  const RX_CART: CartData = {
+    ...CART,
+    items: [RX_LINE],
+    requiresPrescription: true,
+  };
+
+  it('says the step is coming, rather than inventing the control', () => {
+    // The upload itself belongs to the site: it stages the file to Zigly's own
+    // uploader and tags the cart with the returned key. This screen only has to
+    // stop the handoff being a surprise.
+    const tree = render(screen({cart: RX_CART}));
+    const text = textOf(tree);
+    expect(text).toContain('Prescription needed');
+    expect(text).toContain('upload a prescription');
+    // The doctor consult is free, and saying so is the reason a customer picks
+    // it; the site puts "No extra charges" on the same block.
+    expect(text).toContain('no extra charge');
+  });
+
+  it('reports a prescription already attached to the cart', () => {
+    const tree = render(
+      screen({cart: {...RX_CART, prescriptionKey: 'rx/2026/abc123'}}),
+    );
+    const text = textOf(tree);
+    expect(text).toContain('Prescription received');
+    expect(text).not.toContain('Prescription needed');
+  });
+
+  it('stays silent for an ordinary cart', () => {
+    expect(textOf(render(screen({cart: CART})))).not.toContain('Prescription');
+  });
+
+  it('still hands checkout off, so the site can gate it', () => {
+    // The app must not draw its own conclusion about whether the order may
+    // proceed -- that is the site's gate, on the site's cart.
+    let handed = 0;
+    const tree = render(
+      screen({
+        cart: RX_CART,
+        onCheckout: () => {
+          handed += 1;
+        },
+      }),
+    );
+    press(tree, 'Checkout, 2 items, ₹140');
     expect(handed).toBe(1);
   });
 });

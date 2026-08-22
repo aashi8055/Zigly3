@@ -187,10 +187,41 @@ through a stage named `dev`. Not your bug, but flag it: a `dev` stage can be
 redeployed or throttled without notice, and the PDP delivery-estimate widget
 depends on it.
 
-The prescription endpoints matter for the app: they take **file uploads**, and
-the README already lists "file chooser for `<input type=file>`" as a Phase 6 gap.
-Prescription upload is therefore broken in the current WebView, not merely
-unpolished.
+### The prescription flow — traced 2026-08-22
+
+The endpoints above are only half of it; the rest is Shopify's own cart, and the
+join between them is what the app has to respect.
+
+| Step | Where |
+| --- | --- |
+| Product is Rx | product tag `rx` |
+| Add to Bag marks the line | `properties[_requires_prescription] = "true"` on `/cart/add.js` |
+| Cart shows the block | theme, **conditional on that property** |
+| File goes up | `POST …/api/prescription/stage-upload` (multipart, field `prescription`) → `{success, key}` |
+| Cart is tagged | `POST /cart/update.js {attributes: {prescription_upload_key: key}}` |
+| Order is matched | `orders/create` webhook reads that note attribute |
+| No-prescription path | `…/api/prescription/auto-consult`, fired on order placement |
+
+Limits read out of the theme: `image/*` or `application/pdf`, 10 MB, multiple
+files allowed.
+
+Two findings worth keeping:
+
+- **The property, not the tag, is what the cart checks.** Verified by adding
+  variant `53804370657596` both ways: with the property the cart reports
+  `data-rx-active="true"` and renders the block; without it,
+  `data-rx-active="false"` and no block at all. Anything in the app that adds to
+  the cart must post the property or the whole flow silently vanishes.
+- **Upload is not broken in a WebView.** An earlier note here said it was, on
+  the basis of the README's Phase 6 "file chooser" gap. That was wrong:
+  `onShowFileChooser` is implemented in `RNCWebChromeClient.java`, so picking an
+  image or PDF works today. Only capturing a new photo from inside the chooser
+  needs `android.permission.CAMERA`, which the manifest does not request.
+
+Both `stage-upload` and `auto-consult` are unauthenticated and take no session,
+so they are callable from anywhere — but the *cart tag* and the order watcher are
+not, which is why the app hands an Rx cart to `/cart` rather than reimplementing
+the step. See the README's "Prescription medicines".
 
 ## 5. Third-party services
 

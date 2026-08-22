@@ -24,6 +24,13 @@ export interface WishlistItem {
    * customer — adding the wrong size is worse than one extra tap.
    */
   variantId: number | null;
+  /**
+   * True for a prescription medicine (product tag `rx`). Add to Bag must post
+   * the theme's `_requires_prescription` property for these, or the cart shows
+   * no prescription block and the medicine ships without one — see
+   * ../webview/cartBridge.
+   */
+  requiresPrescription: boolean;
 }
 
 export interface Wishlist {
@@ -75,6 +82,9 @@ const parseItem = (raw: unknown, origin: string): WishlistItem | null => {
       typeof row.variantId === 'number' && row.variantCount === 1
         ? row.variantId
         : null,
+    // Absent means "not known to need one", which is the safe default only
+    // because the flag exists to ADD a requirement, never to drop one.
+    requiresPrescription: row.requiresPrescription === true,
   };
 };
 

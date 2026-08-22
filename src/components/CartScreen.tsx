@@ -52,6 +52,8 @@ export interface CartLine {
   originalPrice: number;
   linePrice: number;
   originalLinePrice: number;
+  /** Prescription medicine: the line carries the theme's Rx property. */
+  requiresPrescription: boolean;
 }
 
 export interface CartData {
@@ -60,6 +62,16 @@ export interface CartData {
   originalTotalPrice: number;
   totalDiscount: number;
   items: CartLine[];
+  /**
+   * Any line is a prescription medicine. Checkout then has to run on the site's
+   * own cart, which is where the prescription step lives.
+   */
+  requiresPrescription: boolean;
+  /**
+   * Non-empty once the site has staged a prescription file against this cart.
+   * Read-only: uploading belongs to the site.
+   */
+  prescriptionKey: string;
 }
 
 interface Props {
@@ -180,6 +192,31 @@ const CartScreen = ({
             </View>
           );
         })}
+
+        {/*
+          Prescription medicines. The step itself is deliberately NOT rebuilt
+          here: the site stages the file to Zigly's own uploader, tags the cart
+          with the returned key, and blocks checkout until that lands -- and it
+          detects the order being placed by watching the Fastrr overlay from
+          inside the same document. None of that is reachable from native, and
+          a half-copy would be a medicine shipped with no prescription and no
+          consult. So this says what is coming and Checkout hands over to the
+          site's cart, which has the real control. See ZiglyWebViewScreen.
+        */}
+        {cart.requiresPrescription ? (
+          <View style={styles.rxCard}>
+            <Text style={styles.rxTitle}>
+              {cart.prescriptionKey
+                ? 'Prescription received'
+                : 'Prescription needed'}
+            </Text>
+            <Text style={styles.rxBody}>
+              {cart.prescriptionKey
+                ? 'Your prescription is attached to this order. Checkout to continue.'
+                : 'Your cart has a prescription medicine. At the next step you can upload a prescription, or let a Zigly doctor consult after the order — at no extra charge.'}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.summaryCard}>
           <Text style={styles.sectionTitle}>Order Details</Text>
@@ -355,6 +392,31 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
 
+  /*
+   * Full-bleed white on the grey ground, like the line cards and the summary,
+   * with the brand red edge the site uses for its own prescription panel.
+   */
+  rxCard: {
+    backgroundColor: COLORS.white,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.red,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  rxTitle: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.navy,
+    marginBottom: 3,
+  },
+  rxBody: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: COLORS.inkMuted,
+  },
   summaryCard: {paddingBottom: 10, backgroundColor: COLORS.white},
   sectionTitle: {
     fontFamily: FONT_FAMILY,

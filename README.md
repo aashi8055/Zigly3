@@ -246,6 +246,49 @@ Covered by `__tests__/cart.test.tsx`, which renders the screen rather than
 grepping it — including that a not-yet-loaded cart waits instead of claiming to
 be empty, and that removing a line asks Shopify for quantity zero.
 
+### Prescription medicines
+
+Zigly sells Rx items, and the site asks the customer to either upload a
+prescription or accept a free post-order vet consult. **The app does not rebuild
+that step. It makes sure the step still happens.**
+
+The mechanism, verified against the live store on 2026-08-22 using
+`/products/test-rx-dummy-medicine`:
+
+- the product carries the tag `rx`, and the theme's Add to Bag form posts
+  `properties[_requires_prescription] = "true"` with the variant
+- the cart renders its prescription block **only when a line carries that
+  property** — the same variant added without it reports
+  `data-rx-active="false"` and no block appears at all
+- picking a file uploads it immediately to Zigly's own uploader, then tags the
+  cart with the returned key via `/cart/update.js`, and checkout stays blocked
+  for the whole round trip. An order placed before the tag lands loses the file
+- the consult path instead fires on order placement, which the theme detects by
+  watching the Fastrr checkout overlay from inside the same document
+
+Two things follow, and both were bugs here:
+
+- **The app must post the property.** Its own Add to Bag (the wishlist tile)
+  posted only `{id, quantity}`, so an Rx medicine added from the app looked
+  ordinary to the cart: no block, no upload, no consult. The `rx` tag is already
+  in the `/products/{handle}.js` reply the wishlist reads, so it is carried
+  through to `addToCartScript` and posted as the theme posts it.
+- **Checkout for an Rx cart goes to `/cart`, not `/checkout`.** The block, the
+  gate and the order watcher all live in one document beside the cart; jumping
+  straight to `/checkout` left every part of it behind. `/cart` renders the
+  block and its gated checkout button, so that is the handoff.
+
+The native cart says a prescription is needed and what the next step offers, and
+reports when one is already attached (the `prescription_upload_key` cart
+attribute). It draws no control of its own — deliberately. A half-copy of this
+flow is a medicine shipped with neither a prescription nor a consult, and unlike
+a wrong price that is not something the customer can see and correct.
+
+The file picker this depends on already works: `onShowFileChooser` is
+implemented in the WebView library, so gallery and file selection need nothing
+from us. Only in-chooser camera capture would want `android.permission.CAMERA`,
+which the manifest does not request.
+
 ## The wishlist
 
 Native: a two-column grid of saved products, an empty screen, and a wait. The
@@ -400,7 +443,7 @@ there -- so device testing is the only trustworthy signal.
 | --- | --- |
 | SMS OTP autofill — WebViews get none | 6, needs native SMS Retriever |
 | `window.open` disabled, so Shop Pay's popup will not open | 6 |
-| File chooser for `<input type=file>` | 6 |
+| In-chooser camera capture for `<input type=file>` (picking an existing file already works) | 6, needs `CAMERA` |
 | Geolocation prompt for the site's pincode widget | 6 |
 | Cookie flush on background (session persistence) | validate in gate first |
 | Native facets and sort on search results | needs Zigly's SearchTap account |
