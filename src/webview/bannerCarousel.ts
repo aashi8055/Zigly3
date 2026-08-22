@@ -20,10 +20,20 @@
  * 1. `loop` is nested INSIDE `autoplay`, where Swiper never reads it. So the
  *    carousel does not loop: swipe to the last banner and it is a dead end --
  *    the strip sits there and nothing you do advances it. That is the "banner
- *    stuck" report. Swiper 11's own `rewind` is the documented no-cloning
- *    answer, and it is read at call time, so setting it on the live instance is
- *    enough for the arrows and for autoplay. A manual drag past the end is the
- *    one path `rewind` does not cover, so that is handled explicitly below.
+ *    stuck" report.
+ *
+ *    The fix is the theme's own stated intent: real loop mode. `loop` cannot be
+ *    turned on by assignment, because Swiper reads it while building the track,
+ *    so the instance is destroyed and rebuilt from its OWN passed parameters
+ *    with `loop: true` added -- see `enableLoop`. Last slide continues forward
+ *    into the first and first runs back into the last, both as one movement.
+ *
+ *    `rewind` was tried first and is kept only as the fallback for when loop
+ *    cannot be established. It is not the same thing: rewind animates
+ *    *backwards* through every slide to get from the last to the first, which is
+ *    a long scrub rather than a step, and it does not cover a manual drag off
+ *    the end at all -- hence the explicit drag wrap, which loop mode does not
+ *    need.
  *
  * 2. Nothing restarts autoplay. A carousel that has stopped -- because Android
  *    throttled its timers while the app was in the background, or because a
@@ -112,6 +122,72 @@ export const BANNER_CAROUSEL_SCRIPT = `
     var named = document.querySelectorAll('.homepageMainBanner');
     for (var n = 0; n < named.length; n++) { out.push(named[n]); }
     return out;
+  }
+
+  /**
+   * Turn the theme's misplaced loop: true into a real one.
+   *
+   * Loop cannot be switched on by writing params.loop: Swiper consults it
+   * while it builds the track and works out its snap grid, so a live instance
+   * that was built without it never rearranges. The supported route is to build
+   * a new instance, and the parameters to build it from are the ones the theme
+   * itself passed -- Swiper keeps them on passedParams, so nothing about the
+   * carousel is guessed at or re-specified here. Only loop is added.
+   *
+   * Ordered so a failure cannot leave a dead carousel: the constructor is looked
+   * up and the parameters copied BEFORE anything is destroyed, and if the rebuild
+   * throws, the original parameters are used to put an instance back. A banner
+   * with no instance and cleaned styles would be a static stack of slides, which
+   * is worse than one that does not loop.
+   *
+   * Returns the instance to work with -- the new one, the recovered one, or the
+   * original untouched -- and whether it is looping.
+   */
+  function enableLoop(root, sw) {
+    if (sw.params.loop) { return {sw: sw, looping: true}; }
+
+    var Ctor = window.Swiper;
+    if (typeof Ctor !== 'function') {
+      warn('Swiper constructor unavailable; banner keeps rewind');
+      return {sw: sw, looping: false};
+    }
+    // Loop needs something to loop through.
+    if (!sw.slides || sw.slides.length < 2) { return {sw: sw, looping: false}; }
+
+    var passed = sw.passedParams;
+    if (!passed) { return {sw: sw, looping: false}; }
+
+    var withLoop = {};
+    var original = {};
+    for (var key in passed) {
+      if (Object.prototype.hasOwnProperty.call(passed, key)) {
+        withLoop[key] = passed[key];
+        original[key] = passed[key];
+      }
+    }
+    withLoop.loop = true;
+    // Belt and braces: the two are mutually exclusive in Swiper, and leaving a
+    // stale rewind on would make slideNext take the rewind branch instead.
+    withLoop.rewind = false;
+
+    try {
+      sw.destroy(true, true);
+    } catch (e) {
+      warn('banner destroy failed; keeping the instance we have: ' + e);
+      return {sw: sw, looping: false};
+    }
+
+    try {
+      return {sw: new Ctor(root, withLoop), looping: true};
+    } catch (e) {
+      warn('banner loop rebuild failed: ' + e);
+      try {
+        return {sw: new Ctor(root, original), looping: false};
+      } catch (e2) {
+        warn('banner could not be rebuilt at all: ' + e2);
+        return {sw: null, looping: false};
+      }
+    }
   }
 
   function delayOf(sw) {
@@ -203,10 +279,18 @@ export const BANNER_CAROUSEL_SCRIPT = `
 
     root.setAttribute('data-zigly-banner', 'true');
 
+    // The theme's own intent, made real. This may replace the instance.
+    var result = enableLoop(root, sw);
+    if (!result.sw) { return; }
+    sw = result.sw;
+
     try {
-      // The theme's own intent, put where Swiper reads it. rewind is checked on
-      // every slideNext/slidePrev, so the live instance honours it at once.
-      sw.params.rewind = true;
+      if (!result.looping) {
+        // Fallback only. Checked on every slideNext/slidePrev, so the live
+        // instance honours it at once -- but it scrubs backwards through the
+        // whole strip to reach the first slide, which is why loop is preferred.
+        sw.params.rewind = true;
+      }
       if (sw.params.autoplay) {
         sw.params.autoplay.stopOnLastSlide = false;
         sw.params.autoplay.disableOnInteraction = false;
@@ -216,7 +300,9 @@ export const BANNER_CAROUSEL_SCRIPT = `
       return;
     }
 
-    bindDragWrap(sw);
+    // Loop mode carries a drag off either end by itself. The wrap is only for
+    // the rewind fallback, which does not.
+    if (!result.looping) { bindDragWrap(sw); }
 
     // Our own reordering moved this section's neighbours, and Swiper caches its
     // geometry, so make it measure again before anything else.

@@ -216,24 +216,49 @@ describe('getInjectionForUrl', () => {
       }
     });
 
-    it('puts the theme’s misplaced loop where Swiper reads it', () => {
-      // The section passes `loop: true` nested inside `autoplay`, where Swiper
-      // ignores it -- so the last banner was a dead end. rewind is Swiper 11's
-      // own no-cloning equivalent and is read on every slideNext.
+    it('turns the theme’s misplaced loop into a real one', () => {
+      // The section passes loop: true nested inside autoplay, where Swiper
+      // ignores it -- so the last banner was a dead end. Loop cannot be switched
+      // on by assignment either: Swiper reads it while building the track. So
+      // the instance is rebuilt with loop added, from its OWN passed parameters.
       const s = home();
-      expect(s).toContain('sw.params.rewind = true');
+      expect(s).toContain('enableLoop');
+      expect(s).toContain('sw.passedParams');
+      expect(s).toContain('withLoop.loop = true');
+      expect(s).toContain('new Ctor(root, withLoop)');
       expect(s).toContain('stopOnLastSlide = false');
     });
 
-    it('wraps a drag off either end, after Swiper has settled', () => {
-      // Swiper emits touchEnd near the top of its own handler and only then
-      // decides where to land, so moving the carousel from inside the event
-      // would be overwritten a moment later.
+    it('re-specifies nothing about the carousel', () => {
+      // Every parameter comes from what the theme passed. A hardcoded
+      // slidesPerView or delay here would be this app deciding how Zigly's
+      // banner behaves.
       const s = home();
+      expect(s).not.toContain('slidesPerView:');
+      expect(s).not.toContain('spaceBetween:');
+    });
+
+    it('cannot leave a dead carousel if the rebuild fails', () => {
+      // Destroy comes after the constructor is found and the parameters are
+      // copied, and a failed rebuild puts an instance back with the originals.
+      // No instance plus cleaned styles is a static stack of slides.
+      const s = home();
+      const at = s.indexOf('function enableLoop');
+      const body = s.slice(at, at + 2600);
+      expect(body.indexOf('window.Swiper')).toBeLessThan(
+        body.indexOf('sw.destroy(true, true)'),
+      );
+      expect(body).toContain('new Ctor(root, original)');
+    });
+
+    it('keeps rewind only as the fallback, with its own drag wrap', () => {
+      // rewind is not the same thing: it scrubs backwards through every slide
+      // to reach the first, and it does not cover a manual drag off the end --
+      // which loop mode does, so the wrap is bound only when loop failed.
+      const s = home();
+      expect(s).toContain('if (!result.looping) { bindDragWrap(sw); }');
       expect(s).toContain("sw.on('touchEnd'");
-      expect(s).toContain('sw.isEnd');
       expect(s).toContain('sw.isBeginning');
-      expect(s).toContain('sw.slideTo(0)');
       expect(s).toContain('setTimeout(function () {');
     });
 

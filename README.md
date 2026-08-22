@@ -563,9 +563,28 @@ Three findings, all read off the live section (Swiper 11.2.4):
 
 | Read on the site | Consequence | What the app does |
 | --- | --- | --- |
-| `loop: true` is nested inside `autoplay`, where Swiper never reads it | the last banner is a dead end — swipe to it and nothing moves. This is the "banner stuck" report | sets `rewind`, Swiper 11's own no-cloning equivalent, which `slideNext` checks at call time |
-| a drag past the end is the one path `rewind` does not cover | same dead end, by thumb | wraps on `touchEnd`, deferred one task because Swiper emits that event before it decides where to settle |
+| `loop: true` is nested inside `autoplay`, where Swiper never reads it | the last banner is a dead end — swipe to it and nothing moves. This is the "banner stuck" report | rebuilds the instance in real loop mode, from the parameters the theme itself passed |
 | nothing ever restarts autoplay | a carousel stopped by throttled timers or an interrupted transition stays stopped | re-arms whenever the section comes back into view, and stops it while it is out of view |
+
+**Why a rebuild rather than an assignment.** `loop` cannot be switched on after
+the fact: Swiper consults it while it builds the track and works out its snap
+grid, so a live instance that was built without it never rearranges. The
+supported route is a new instance, and the parameters to build it from are the
+ones the theme itself passed — Swiper keeps them on `passedParams`, so nothing
+about the carousel is guessed at here. Only `loop` is added.
+
+The ordering is deliberate, because a failure here is expensive: the constructor
+is looked up and the parameters copied *before* anything is destroyed, and a
+rebuild that throws puts an instance back with the originals. A banner with no
+instance and cleaned styles is a static stack of slides, which is worse than one
+that does not loop.
+
+`rewind` was the first attempt and is kept only as that fallback. It is not the
+same thing — it animates *backwards* through every slide to get from the last to
+the first, which is a scrub rather than a step, and it does not carry a manual
+drag off the end at all. That is why the explicit `touchEnd` wrap exists, and why
+it is bound only when loop could not be established: loop mode carries both ends
+by itself.
 
 And because reading a configuration cannot prove a carousel is moving, there is
 a watchdog: a visible banner that has not changed slide within twice its own
