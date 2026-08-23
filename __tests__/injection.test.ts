@@ -387,7 +387,7 @@ describe('getInjectionForUrl', () => {
       // A collection page is fetched whole, so neither tab may become eager.
       const s = home();
       expect(s).toContain('whenNear(section, function () {');
-      expect(s).toContain('loadCards(HOT_SOURCE, paneHot, LIMIT)');
+      expect(s).toContain("loadCards(HOT_SOURCE, paneHot, LIMIT)");
     });
 
     it('loads the New Arrivals collection only when that tab is opened', () => {
@@ -457,6 +457,82 @@ describe('getInjectionForUrl', () => {
     // Tabs are matched by their label so the merge cannot mis-pair Food
     // tiles into the Toys tab if Zigly reorders them.
     expect(script).toContain('tabMap');
+  });
+
+  it('does not treat a dog and a cat tile as the same tile', () => {
+    // This is what made the section dog-only. Deduping on the label collapsed
+    // dog "Dry Food" and cat "Dry Food" into one tile and kept the first, and
+    // the dog set merges in first -- so on the Food tab only 1 of 4 cat tiles
+    // survived. They go to different collections, so neither was a duplicate.
+    // Keying on the destination is the fix; the counts are in explorePicker.ts.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    expect(script).toContain('function destOf(slide)');
+    expect(script).toContain("var key = 'k' + (destOf(slides[i])");
+    // The old label-keyed pass and its name must both be gone.
+    expect(script).not.toContain('combineDuplicates');
+    expect(script).not.toContain("var label = squash(slides[i].textContent");
+  });
+
+  it("reads a tile's link from the anchor that wraps it, not its first one", () => {
+    // Zigly close each tile's link by repeating the opening <a> instead of
+    // writing </a>. The parser leaves an empty copy of it loose -- sometimes
+    // inside the following tile -- so a tile's FIRST anchor is often the
+    // previous tile's. Read that way, three of the four Food tiles report the
+    // wrong destination and two are then deleted as duplicates of a neighbour.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    expect(script).toContain("querySelector('.card-wrapper_info-heading')");
+    expect(script).toContain("node.tagName === 'A' && node.getAttribute('href')");
+    // The naive read is what caused it and must not come back.
+    expect(script).not.toContain("var link = slide.querySelector('a')");
+  });
+
+  it('clears the empty anchors that broken markup leaves in the rail', () => {
+    // Two per rail. One sits in the rail itself, which is a flex row with a
+    // gap, so it spends a gap and the tiles sit unevenly. Only an anchor with
+    // no elements and no text is removed -- a real tile link wraps that tile's
+    // image and heading, so it can never match.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    expect(script).toContain('stripStrayAnchors(imported)');
+    expect(script).toContain('stripStrayAnchors(catSec)');
+    expect(script).toContain('if (link.children.length) { continue; }');
+  });
+
+  it('alternates the two pets so cat tiles are on screen, not just present', () => {
+    // The rail shows about two tiles at a time, so four dog tiles followed by
+    // four cat tiles still reads as dog-only. Alternating puts a cat tile
+    // second in every tab.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    expect(script).toContain('function interleave(wrap, catSlides)');
+    expect(script).toContain('interleave(into, slidesIn(catTabs[label]))');
+  });
+
+  it('keeps every merged explore tile, rather than capping them away', () => {
+    // Each pet page ships four tiles per tab and none of the eight is a real
+    // duplicate, so a cap of 8 sat exactly on the real count -- one tile added
+    // by Zigly would have vanished silently. It was 4 once, which dropped
+    // every cat tile.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    expect(script).toContain('var MAX_TILES = 16;');
+  });
+
+  it('labels which pet an explore tile is for without touching its heading', () => {
+    // Four labels collide once both pets share a rail -- Dry Food, Wet Food,
+    // Meaty Treats, Plush Toys -- so two identical headings would look broken.
+    // The pet goes in the subheading <p> Zigly render and leave empty; their
+    // heading text is never rewritten.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    expect(script).toContain("tagSpecies(imported, 'For Dogs')");
+    expect(script).toContain("tagSpecies(catSec, 'For Cats')");
+    expect(script).toContain('card-wrapper_info-subheading');
+    // Anything Zigly put there themselves wins over our line.
+    expect(script).toContain("if (squash(sub.textContent || '')) { continue; }");
+    // The heading is read -- destOf walks up from it -- but never written to,
+    // so Zigly's category names stay their words.
+    expect(script).not.toMatch(/info-heading[^;]*textContent\s*=[^=]/);
+    // Styled through the flag we set, so the site's own empty ones are untouched.
+    expect(script).toContain(
+      '.card-wrapper_info-subheading[data-zigly-species]',
+    );
   });
 
   it('leaves every explore tile pointing where Zigly pointed it', () => {
@@ -684,11 +760,11 @@ describe('getInjectionForUrl', () => {
   });
 
   it('keeps every category both source pages ship, deduplicated', () => {
-    // Four per page, so eight is "everything both pets have" and the cap is a
-    // runaway guard. At four it silently dropped every cat-only category,
-    // because the dog tiles are merged in first.
+    // Four per page and no genuine duplicates among them, so eight is
+    // "everything both pets have" and the cap must sit above it -- see the
+    // explore tests above for the two numbers that were wrong before.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain('MAX_TILES = 8');
+    expect(script).toContain('MAX_TILES = 16');
   });
 
   describe('full dashboard match', () => {

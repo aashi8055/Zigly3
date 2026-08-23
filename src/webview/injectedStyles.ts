@@ -188,6 +188,23 @@ html body {
 #zigly-explore .swiper-pagination {
   display: none;
 }
+/* The "For Dogs" / "For Cats" line added to each tile by explorePicker.ts.
+
+   Zigly render this <p> under every tile heading and ship it empty, so the room
+   for it is already in their layout and no tile grows. It is only needed because
+   both pets now share one rail, where four of their labels collide -- Dry Food,
+   Wet Food, Meaty Treats, Plush Toys -- so it is deliberately quieter than the
+   heading it sits under: the category is still what you read first. Colour is
+   inherited from the tile's own coloured panel rather than set here. */
+#zigly-explore .card-wrapper_info-subheading[data-zigly-species] {
+  margin: 2px 0 0;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
 
 /* ------------------------------------------------------------------
    Breed Ready Picks rails (see breedSection.ts).
