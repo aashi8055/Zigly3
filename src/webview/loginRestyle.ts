@@ -31,8 +31,10 @@
  *     removing the thing that makes the tap lawful.
  *
  * And if the widget is not there -- a config change to page view, a script that
- * failed to load -- nothing is hidden and the site's own login page shows as
- * it is. A login screen that fails visibly is recoverable; a blank one is not.
+ * failed to load -- the site's own login page shows as it is, minus the bar,
+ * the footer and the scroll-to-top button, which are chrome on any reading and
+ * are hidden unconditionally. A login screen that fails visibly is
+ * recoverable; a blank one is not.
  */
 
 import {LIFT_PAINT_GATE} from './headerBridge';
@@ -45,13 +47,61 @@ export const LOGIN_TRIES = 40;
 export const REQUEST_OTP_LABEL = 'Receive OTP';
 
 const LOGIN_CSS = `
+/* ------------------------------------------------------------------
+   The site's own furniture. Hidden whether or not the widget is found.
+
+   Deliberately NOT gated on .zigly-otp, unlike everything after it. The
+   rules below this block style the OTP popup, so they can wait for it to
+   exist; these three are chrome, and the customer sees them either way --
+   which is exactly how they came to be reported, on a screen where the
+   widget had not been found:
+
+     - .fixed-icons, the site's own bottom bar. It carries the same four
+       destinations as the app's native one, so it showed as a second row of
+       tabs directly above it. It survives EARLY_HEADER_CSS because that
+       hides the <header> element, and this is a sibling of that header
+       inside the header section rather than a child of it -- and it is
+       position:fixed, so it anchors to the viewport regardless of where the
+       section sits. The mobile stylesheet hides it on every shop page; this
+       screen does not get that stylesheet.
+     - the footer, whose decorative navy wave read as a stray blue band
+       across an otherwise empty screen.
+     - the scroll-to-top button, the third thing anchored to a corner of a
+       screen that should have nothing in its corners.
+
+   Hidden, never removed, for the reason the mobile stylesheet gives for the
+   same bar: the theme's scripts mark the active tab in it on navigation, and
+   an element they cannot find is how a script starts throwing.
+
+   The login form itself is untouched. If the widget never appears this is
+   still the site's own working login page, just without the furniture.
+   ------------------------------------------------------------------ */
+.fixed-icons,
+.shopify-section-group-footer-group,
+.scrollUpBtn {
+  display: none !important;
+}
+
+/* The app ground, on the same terms and for the same reason: with the footer
+   gone this is most of the screen, so it cannot wait for the widget either.
+
+   "html body" rather than "body" because the store appends
+   <style> body {background-color: #ffffff !important;} </style>
+   to the end of every page. A bare body ties it on importance and on
+   specificity and loses on source order; two elements settles it before
+   source order is reached. Same rule, same reason, as the mobile stylesheet's
+   ground -- see injectedStyles.ts. */
+html,
+html body {
+  background-color: #FFFAF1 !important;
+}
+
 /* Nothing below applies until the widget has actually been found: the class is
-   added by the script, so a missing widget leaves the page untouched. */
+   added by the script, so a missing widget leaves the form as the site built
+   it. The furniture above is gone by then either way. */
 
 html.zigly-otp, html.zigly-otp body {
-  /* The app's ground. The widget is flattened to a full screen below, so this
-     is the page the customer sees, not a backdrop behind a card. */
-  background: #FFFAF1 !important;
+  /* Ground is set unconditionally above; this is the widget's own layout. */
   overflow-x: hidden !important;
 }
 
@@ -387,6 +437,10 @@ export const LOGIN_RESTYLE = `
   function run() {
     tries = 0;
     if (timer) { clearInterval(timer); }
+    // Before the first look for the widget, not after finding it: the sheet
+    // opens with rules that hide the site's own bar and footer, and those
+    // have to land on the screens where the widget never turns up too.
+    addStyle();
     if (present()) {
       report('ready', step());
     }
@@ -402,8 +456,8 @@ export const LOGIN_RESTYLE = `
         clearInterval(timer);
         timer = null;
         if (!found) {
-          // Nothing hidden, nothing styled: the site's own login page is
-          // showing, which is a working screen even if it is not ours.
+          // The site's own login form is showing, unstyled by us but stripped
+          // of its bar and footer: a working screen even if it is not ours.
           report('missing', 'widget not found');
         }
       }
