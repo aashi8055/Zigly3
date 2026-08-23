@@ -20,6 +20,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -212,10 +213,11 @@ const NativeHeader = ({
           accessibilityLabel="Zigly home"
           style={styles.logoWrap}
         >
-          <Text style={styles.logoWord}>zigly</Text>
-          <View style={styles.logoPill}>
-            <Text style={styles.logoPillText}>Pet Care</Text>
-          </View>
+          <Image
+            source={require('../assets/zigly-logo.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </Pressable>
 
         {showWishlist ? (
@@ -364,24 +366,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
-  logoWord: {
-    fontFamily: FONT_FAMILY,
-    fontSize: 25,
-    fontWeight: '800',
-    letterSpacing: -0.9,
-    color: COLORS.navy,
-  },
-  logoPill: {
-    backgroundColor: COLORS.red,
-    borderRadius: 5,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-  },
-  logoPillText: {
-    fontFamily: FONT_FAMILY,
-    color: COLORS.white,
-    fontSize: 12.5,
-    fontWeight: '700',
+  logoImage: {
+    width: 40,
+    height: 40,
   },
 
   badge: {

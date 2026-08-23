@@ -280,8 +280,18 @@ html body {
   z-index: auto !important;
   transform: none !important;
 }
+/*
+   relative, never static: the theme's button carries ::before and ::after,
+   both position:absolute with inset:1px, drawing its border and focus ring.
+   Made static, the button stops being their containing block and they resolve
+   against the nearest positioned ancestor instead -- .card-wrapper, right
+   below. The ring then covers the WHOLE CARD as an invisible layer that
+   hit-tests as the button, so every tap anywhere on the card -- the heart, the
+   photo, the title -- submitted its add-to-cart form. relative is the theme's
+   own value and leaves the button in flow exactly as static did.
+ */
 #zigly-hot-picks .quick-add__submit {
-  position: static !important;
+  position: relative !important;
   width: 100% !important;
 }
 /* The rail must not paint over anything below it. */
@@ -379,15 +389,67 @@ body.zigly-listing .mobile-compact-variant-more,
 body.zigly-listing .card-variant-wrapper {
   display: none !important;
 }
+/* relative, for the reason spelled out on the Hot Picks rule above: static
+   hands the button's absolutely-positioned ::before / ::after to .card-wrapper
+   and they cover the card, swallowing every tap into add-to-cart. */
 body.zigly-listing .quick-add__submit {
   display: block !important;
-  position: static !important;
+  position: relative !important;
   width: 100% !important;
 }
 /* Cards clip their own contents, so nothing can paint over the row below. */
 body.zigly-listing .card-wrapper {
   position: relative;
   overflow: hidden;
+}
+
+/* ------------------------------------------------------------------
+   The whole card opens the product.
+
+   The theme ships Dawn's full-card link -- .card__heading a::after, an
+   absolutely positioned overlay over the whole card -- and then switches it off
+   with content:unset (component-card.aio.min.css, read on 2026-08-23). So on
+   the site only the photo and the two title links are tappable, and the brand
+   line, the price and the discount strip between them are dead. In an app whose
+   grid is a list of tap targets that reads as broken.
+
+   This puts Dawn's own overlay back, on the below-image title only, so there is
+   one of them per card and it is the card's own product link.
+
+   The stacking is the whole point of the scoping, and it is verified rather than
+   assumed (Chrome, 390px viewport, real collection page):
+
+     - the heart wins, because .tag-wrapper is z-index:1 and this is z-index:0.
+       The strip it sits in is made transparent to taps so the rest of the top
+       edge still reaches the overlay -- the heart itself takes them back.
+     - Add to Bag wins, because .quick-add comes after the title in the DOM and
+       both are at stacking level 0.
+
+   Result: heart -> wishlist, Add to Bag -> cart, anywhere else -> the product.
+   ------------------------------------------------------------------ */
+body.zigly-listing .card-wrapper .product--below-content .card__heading a::after,
+#zigly-hot-picks .card-wrapper .product--below-content .card__heading a::after,
+[id^="zigly-x-"] .card-wrapper .product--below-content .card__heading a::after {
+  content: '' !important;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+}
+/* The badge strip across the top of the card is a container, not a control:
+   only the heart inside it takes taps, so the rest of that band reaches the
+   product link underneath instead of being dead. */
+body.zigly-listing .card-wrapper .tag-wrapper,
+#zigly-hot-picks .card-wrapper .tag-wrapper,
+[id^="zigly-x-"] .card-wrapper .tag-wrapper {
+  pointer-events: none;
+}
+body.zigly-listing .card-wrapper .swym-add-to-wishlist,
+#zigly-hot-picks .card-wrapper .swym-add-to-wishlist,
+[id^="zigly-x-"] .card-wrapper .swym-add-to-wishlist {
+  pointer-events: auto;
 }
 
 /* ------------------------------------------------------------------
@@ -927,9 +989,9 @@ body.zigly-listing .quick-add__submit {
    anything here; the two halves only work together.
    ------------------------------------------------------------------ */
 .home-brand-section-wrapper .home-shop-brand-swiper-wrapper {
-  /* Swiper's own swiper-horizontal sets touch-action: pan-y here, which tells
-     the browser to ignore horizontal pans outright. brandRail.ts removes that
-     class along with the instance, but the rail must not depend on the release
+  /* Swiper's own swiper-horizontal sets touch-action: pan-y here, which
+     tells the browser to ignore horizontal pans outright. brandRail.ts removes
+     that class with the instance, but the rail must not depend on the release
      having gone through to accept a sideways thumb. */
   touch-action: auto;
 }

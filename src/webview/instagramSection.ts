@@ -56,42 +56,42 @@
  */
 const POSTS: {id: string; isVideo: boolean; alt: string}[] = [
   {
-    id: 'DcTeBeggVFK',
+    id: 'Db-zqY4gkas',
     isVideo: true,
     alt: 'Tell me your dog loves playing in puddles without telling me they love puddles',
   },
   {
-    id: 'DcRHQhWgEuS',
+    id: 'Dbxb4Zdu_0D',
     isVideo: true,
     alt: '5 ways to take care of your pets during monsoon, with our Head Vet',
   },
   {
-    id: 'DcOma77gQxn',
+    id: 'Db3WIPCAN0E',
     isVideo: true,
     alt: 'High pet care bills do not stand a chance during Zigly Prime Week',
   },
   {
-    id: 'DcLt9kbAv0n',
+    id: 'DbiR4bCzd2G',
     isVideo: true,
     alt: 'True care belongs to every street corner, every neighbourhood, and every stray friend who greets us with a wag',
   },
   {
-    id: 'DcGGCd1R0qG',
+    id: 'DbGVo8iDoO2',
     isVideo: true,
     alt: 'Is your pet’s ear trying to tell you something?',
   },
   {
-    id: 'DcC-itPRk2k',
+    id: 'DbASndEhY4',
     isVideo: true,
     alt: 'Celebrating the love, joy and freedom that make India feel like home',
   },
   {
-    id: 'Db-zqY4gkas',
+    id: 'DbAqPUDDgZt',
     isVideo: true,
     alt: 'Is your fur baby scratching their ears or licking their paws more than usual this monsoon?',
   },
   {
-    id: 'DcYOOO2K6_N',
+    id: 'DbaQHxpOCRW',
     isVideo: false,
     alt: 'Taking care of those pearly whites means fresher puppy breath, stronger bites, and way fewer vet worries down the road',
   },
