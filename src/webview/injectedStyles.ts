@@ -948,45 +948,64 @@ body.zigly-listing .quick-add__submit {
 }
 
 /* ------------------------------------------------------------------
-   Footer wave.
+   Footer wave rules intentionally REMOVED.
 
    The footer opens with a decorative 2000px-wide desktop image in
-   .wave-image-wrapper. On a phone it scaled unpredictably as the page grew,
-   showing as the footer stretching. Constrained to its own aspect and clipped,
-   so it stays a band at the top of the footer.
+   .wave-image-wrapper, which scaled unpredictably on a phone; there were rules
+   here constraining it to an 84px band, clipping it, and keeping the footer's
+   images and svgs from widening the page. The footer is hidden on every page
+   now (below), so not one of those selectors can match. They are gone rather
+   than left as dead weight that reads, to the next person, as evidence the
+   footer still renders.
    ------------------------------------------------------------------ */
-footer .wave-image-wrapper {
-  height: auto !important;
-  max-height: 84px !important;
-  overflow: hidden !important;
-  line-height: 0 !important;
-}
-footer .wave-image-wrapper img {
-  display: block !important;
-  width: 100% !important;
-  height: auto !important;
-  max-height: 84px !important;
-  object-fit: cover !important;
-  object-position: top center !important;
-}
-/* Nothing in the footer should be able to widen the page. */
-footer img,
-footer svg {
-  max-width: 100% !important;
-}
-footer {
-  overflow-x: hidden !important;
+
+/* ------------------------------------------------------------------
+   Two banners that lead nowhere, made untappable.
+
+   Both close the dashboard, and both answer a tap with a navigation the
+   customer did not ask for:
+
+     - the brand-claims strip, the trust markers that end the page, wraps its
+       artwork in <a href="">. An empty href is not an inert link -- it
+       resolves to the current URL, so tapping the trust markers reloaded the
+       dashboard. Read on the live site, those are the only empty-href anchors
+       the homepage has, and both the homepage's own copy of the strip and the
+       transplanted one are built that way.
+     - the gift-card half of the double banner points at /collections, while
+       its own artwork is the file GiftCard_1350X535_Coming-Soon.png. The tap
+       offers a gift card and delivers the catalogue. The birthday half beside
+       it points at a real collection and is deliberately left working.
+
+   pointer-events rather than stripping the href: this file is presentation
+   only, and the markup stays exactly where the theme's own scripts expect to
+   find it.
+   ------------------------------------------------------------------ */
+#zigly-x-logos a,
+[id*="custom_single_banner"] a[href=""],
+#zigly-x-double .double-banner-cards-2 a {
+  pointer-events: none !important;
+  cursor: default !important;
 }
 
 /* ------------------------------------------------------------------
-   Footer on the dashboard only.
+   The footer, hidden everywhere.
 
-   The reference app shows the footer at the end of the dashboard; inner pages
-   end at the product grid with Sort and Filter pinned instead. Hidden rather
-   than removed, so nothing the theme's scripts expect disappears.
+   It used to show at the end of the dashboard and be hidden only on inner
+   pages, which is what the reference app does. What that actually put on
+   screen was the footer's decorative navy wave as a blue band across the foot
+   of the page, with the site's link lists under it -- below a native bottom
+   bar that already carries those destinations. So the dashboard now ends
+   where the reference's content ends, at the brand-claims strip, and that
+   strip sits directly above the native bar.
+
+   Hidden rather than removed, and the distinction matters here: drawerExtras
+   clones the About Us row out of the footer's own links, and menuBridge reads
+   the native drawer from that list. display:none leaves the anchors in the
+   DOM for querySelectorAll to find; removing them would quietly drop a row
+   from the menu.
    ------------------------------------------------------------------ */
-html.zigly-inner-page footer,
-html.zigly-inner-page [id*="__footer"] {
+footer,
+[id*="__footer"] {
   display: none !important;
 }
 
@@ -1016,6 +1035,11 @@ export const buildStyleInjection = (css: string): string => `
   try {
     // Mark inner pages so CSS can differentiate them from the dashboard.
     // Path is read at execution time, so this is correct on every navigation.
+    //
+    // No rule reads the class at the moment: hiding the footer on every page
+    // rather than on inner pages only took its last consumer. Kept because it
+    // is the hook any page-type rule would hang off, and because getting it
+    // right on every navigation is the part that is easy to get wrong.
     try {
       var pth = window.location.pathname;
       while (pth.length > 1 && pth.charAt(pth.length - 1) === '/') {

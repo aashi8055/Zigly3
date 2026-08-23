@@ -805,12 +805,16 @@ describe('getInjectionForUrl', () => {
     expect(script).not.toContain('"key":"video_swiper"');
   });
 
-  it('places the logos strip last, above the footer', () => {
+  it('places the logos strip last, and it now closes the page', () => {
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    const logos = script.indexOf('zigly-x-logos');
-    const communities = script.indexOf('about_our_communities');
+    // The declaration, not the bare id: the stylesheet names that id too, in
+    // the rule that makes the strip untappable, and it does so earlier in the
+    // payload -- so a bare indexOf measures the CSS, not the running order.
+    const logos = script.indexOf('"mark":"zigly-x-logos"');
+    const communities = script.indexOf('"move":"about_our_communities"');
     expect(logos).toBeGreaterThan(-1);
-    // Declared after Real Pets, so it lands directly above the footer.
+    // Declared after Real Pets. The footer used to follow it; now nothing
+    // does, so this is what the dashboard ends on.
     expect(logos).toBeGreaterThan(communities);
   });
 
@@ -908,7 +912,10 @@ describe('getInjectionForUrl', () => {
     expect(at('"move":"custom_video_text_banner"')).toBeLessThan(
       at('"move":"about_our_communities"'),
     );
-    expect(at('"move":"about_our_communities"')).toBeLessThan(at('zigly-x-logos'));
+    // The declaration rather than the bare id -- see the note above.
+    expect(at('"move":"about_our_communities"')).toBeLessThan(
+      at('"mark":"zigly-x-logos"'),
+    );
   });
 
   it('fixes Everything For after Bestsellers, not before it', () => {
@@ -944,19 +951,29 @@ describe('getInjectionForUrl', () => {
     expect(OPEN_CART).not.toContain('cart-icon-bubble');
   });
 
-  it('constrains the footer wave so it cannot stretch', () => {
-    // A 2000px desktop image opens the footer; unconstrained it scaled with
-    // the page and read as the footer stretching.
+  it('never lets the footer wave reach the screen', () => {
+    // A 2000px desktop image opens the footer, and it used to be constrained
+    // to a band here because the dashboard showed the footer. The dashboard
+    // does not any more, so the band is gone with it -- and so is the rest of
+    // the footer, on every page.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain('wave-image-wrapper');
-    expect(script).toContain('object-fit: cover');
+    // The rule, not the word: the block that used to hold these rules still
+    // names the wave, in the comment recording why they went.
+    expect(script).not.toContain('footer .wave-image-wrapper {');
+    expect(script).not.toContain('object-fit: cover');
+    // Because the footer itself never renders, on any page. The fragment
+    // rather than the whole selector: the CSS is embedded with JSON.stringify,
+    // so its double quotes are escaped by the time they reach the payload.
+    // dashboardTail.test.ts asserts the exact selector against the stylesheet.
+    expect(script).toContain('__footer');
   });
 
-  it('shows the footer on the dashboard only', () => {
+  it('marks inner pages from the live path, not per injected copy', () => {
+    // No CSS reads this class today -- hiding the footer everywhere took its
+    // last consumer -- but the marking is what any page-type rule would hang
+    // off, and it has to be right on every navigation.
     const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
     expect(script).toContain('zigly-inner-page');
-    // Marked from the live path, so it is right on every navigation rather
-    // than baked in per injected copy.
     expect(script).toContain('window.location.pathname');
   });
 
