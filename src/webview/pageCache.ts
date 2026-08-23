@@ -71,7 +71,6 @@ const SEEDED_IDS: Record<string, string> = {
   '/|shop_by_price': DOG + 'shop_by_price_KEMKVQ',
   '/|best_deals': DOG + 'best_deals_b8xpdj',
   '/|shop_of_concern': DOG + 'shop_of_concern_T9kBGJ',
-  '/|collection_product_section': DOG + 'collection_product_section_eNzYyW',
   '/|everything@dog': DOG + 'everything_czXFGJ',
   '/|everything@cat': CAT + 'everything_czXFGJ',
   '/|redesign_custom_double_banner': DOG + 'redesign_custom_double_banner_FqtJbt',

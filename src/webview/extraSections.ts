@@ -42,24 +42,30 @@ const SECTIONS = [
   /**
    * The bestsellers rail.
    *
-   * This slot used to relocate the homepage's second arrival section here, on
-   * the belief that it held these products. It does not: read on 2026-08-22 the
-   * homepage's two arrival sections are titled "Best Deals" (4 cards) and
-   * "Trending Products" (3 cards), and neither is the rail sitting in this
-   * position in the reference dashboard.
+   * Slot only: bestsellers.ts fills it. Reserved here so the position is
+   * decided by declaration order like every other entry, and no fetch
+   * resolving early or late can move it.
    *
-   * The section that is, by position and by content, is the pet page's
-   * `collection_product_section` -- Zigly title it "Pet Parent Favourites" and
-   * it carries ten real product cards. On /pages/dog it sits exactly here,
-   * between "Zigly Style Steals" and the double banner. So it is transplanted
-   * like every other section in this list, and its own heading is kept: calling
-   * a rail "Bestsellers" would be this app making a sales claim about products
-   * on Zigly's behalf, which is not ours to make.
+   * Two earlier occupants, recorded so neither gets tried again:
    *
-   * It is the heaviest section the dashboard pulls (~262 KB against ~32 KB
-   * typical), so it stays lazy -- it is far below the fold.
+   * 1. The homepage's second arrival section, relocated here on the belief that
+   *    it held these products. It does not -- read 2026-08-22, the homepage's
+   *    two arrival sections are "Best Deals" (4 cards) and "Trending Products"
+   *    (3 cards), and neither is the rail in this position in the reference.
+   *
+   * 2. The pet page's `collection_product_section`, transplanted whole. By
+   *    position and by content that is the right rail -- ten real product cards,
+   *    sitting exactly here on /pages/dog -- and it was kept under Zigly's own
+   *    heading, "Pet Parent Favourites", on the grounds that calling somebody
+   *    else's curated rail "Bestsellers" would be this app making a sales claim
+   *    on their behalf. That reasoning was sound for a relabelled rail.
+   *
+   * It is now a real bestseller list rather than a relabelled one: the products
+   * come from Zigly's own `sort_by=best-selling`, so the heading describes the
+   * store's ordering instead of adding a claim to it. See bestsellers.ts, which
+   * carries the source, the measurements and the fallback.
    */
-  {key: 'collection_product_section', check: 'collection_product_section', mark: 'zigly-x-bestsellers', eager: false},
+  {slot: 'zigly-x-bestsellers'},
   // Neither of the homepage's own arrival sections appears in the reference
   // dashboard: the picks rail is built from the pet pages by hotPicks.ts. They
   // used to be suppressed as a side effect of relocating one of them, so with

@@ -151,6 +151,8 @@ src/
 ├── webview/bannerCarousel.ts   keeping the site's banner Swiper unstuck
 ├── webview/brandRail.ts        standing the brand Swiper down, so the
 │                               rail scrolls by thumb — see below
+├── webview/bestsellers.ts      the Bestsellers rail, from the store's own
+│                               best-selling sort — see below
 ├── webview/couponStrip.ts      the copy button, and stopping the marquee
 ├── webview/facetBridge.ts      reading and driving SearchTap — see below
 ├── webview/listingPage.ts      flagging a listing page for the listing CSS
@@ -794,6 +796,69 @@ comments use plain prose for that reason, and `__tests__/brandRail.test.ts`
 asserts `MOBILE_CSS` contains no backtick at all. This is the same class of
 failure as the eaten-backslash one above, from the same cause.
 
+## Bestsellers
+
+Twelve real product cards, read from `/collections/all?sort_by=best-selling`.
+
+**Why the heading is defensible now and was not before.** This slot has had
+three occupants. It began as the homepage's second arrival section, relocated
+here on the belief that it held these products — it does not; read 2026-08-22,
+the homepage's two arrival sections are "Best Deals" (4 cards) and "Trending
+Products" (3 cards), and neither is the rail the reference shows in this
+position. It then held the pet page's `collection_product_section`, which Zigly
+title **"Pet Parent Favourites"**, transplanted whole and deliberately kept
+under that heading: calling somebody else's curated rail "Bestsellers" would
+have been this app making a sales claim about Zigly's products on Zigly's
+behalf.
+
+That reasoning was right, and it is not being reversed — it was an objection to
+*relabelling*, and nothing is relabelled here. The products come from Zigly's own
+best-selling sort, so "Bestsellers" describes how the store ordered the list
+rather than being a claim this app added to it. Verified 2026-08-24 that the sort
+genuinely reorders: unsorted, `/collections/all` opens on Acana alphabetically;
+sorted, it opens on Applod and Royal Canin.
+
+**Store-wide on purpose.** Dog and cat products are mixed, in whatever order
+they actually sell — the only reading under which the heading is true of the
+whole store. Splitting it evenly between the two pets was considered and
+rejected: that is a curated mix wearing a bestseller label, which is the same
+problem again.
+
+**Real cards, moved not rebuilt.** Each keeps its own `<product-form>`, so Add to
+Bag still posts to Shopify, and each keeps its real product link; the custom
+element upgrades itself on insertion, which is why the buttons stay live.
+Rebuilding cards from a JSON endpoint would be far lighter and would break
+exactly that.
+
+**One section, not the page.** The whole collection page is ~1.4 MB; the product
+grid alone, through Shopify's Section Rendering API, is ~585 KB for the same 22
+cards in the same order. The query string survives into the section render, so
+the sort survives with it. The whole page remains the fallback, because a
+theme-generated section id changes without notice — and the id here *cannot* be
+discovered the way `pageCache` discovers the others: on a collection page
+"product-grid" appears in the section's id, in a bare `<ul id="product-grid">`,
+and in four ids on every single card, so a `[id*=…]` lookup would be resolving by
+document order and hoping. Hence a known id plus a fallback that cannot go stale.
+
+Two smaller decisions worth not re-litigating:
+
+- The fetched markup is parsed with `DOMParser`, not by assigning `innerHTML` to
+  a detached div. A parsed document is inert — no scripts, no image requests —
+  and this markup carries 22 products' worth of photographs, so a div would have
+  the page fetch every one of them just to throw ten away.
+- The rail lives inside the reserved `zigly-x-bestsellers` slot, which is not
+  cosmetic: every card fix the transplanted sections already carry is scoped to
+  `[id^="zigly-x-"]` — the sticky-ATC containment, Add to Bag un-hidden and
+  shaped, the compact variant picker hidden, and `position: relative` on
+  `.quick-add__submit` (without which the button's absolutely positioned
+  `::before`/`::after` cover the whole card and swallow every tap into
+  add-to-cart). Verified 2026-08-24 that all of those class names are present on
+  the collection grid's cards, 22 of each, so the rail needs no new card CSS at
+  all — only its own heading and scroller.
+
+If the rail ends up empty, it removes itself rather than leaving a heading over
+nothing; the dashboard simply ends that block and nothing below it moves.
+
 ## The coupon strip
 
 Two defects, one cause. The strip is transplanted, so its script is dropped —
@@ -884,7 +949,9 @@ there -- so device testing is the only trustworthy signal.
 | Explore tiles opened empty listings | Fixed. Merged tiles had their link rewritten to a collection handle guessed from the label, guarded by a HEAD request — which passes for a published-but-empty collection. Five of sixteen tiles led to zero products. Tiles now keep the link Zigly gave them |
 | Brand cards showed two brands stacked per column | Fixed. The section's Swiper is initialised with `grid: { rows: 2 }`; the rail is laid out as a single-row native scroller instead |
 | The brand rail would not scroll smoothly by thumb | Fixed — see *The brand rail*. The CSS described a native scroller but the section's Swiper was still **alive**, holding the gesture and answering a drag with a transform that CSS pinned to `none`. `src/webview/brandRail.ts` stands the instance down |
-| Bestsellers was the homepage's "Trending Products" | Fixed — the rail in that slot is the pet page's `collection_product_section`, transplanted like every other section, under Zigly's own heading |
+| Bestsellers was the homepage's "Trending Products" | Fixed, then superseded twice — see the two rows below |
+| That slot then showed Zigly's "Pet Parent Favourites" rail, transplanted under its own heading | Deliberate at the time: relabelling somebody else's curated rail "Bestsellers" would have been this app making a sales claim on their behalf. Superseded, not reversed — the objection was about relabelling, and nothing is relabelled now |
+| The dashboard had no bestsellers at all | Fixed — see *Bestsellers*. Twelve real product cards read from Zigly's own `sort_by=best-selling`, so the heading describes the store's ordering rather than adding a claim to it |
 | Logging in left the app: the Account tab, and every `/account` link, opened Shopify's own account page | Fixed — native account section, and account urls are taken over before they navigate |
 | No Account item in the bottom navigation | Fixed — the site's bar has none to restyle, so the bar is native and carries five tabs |
 | Some homepage sections not visible | Resolved. Each had its own cause, none of them the site's mobile design; the last outstanding one, the reference app's closing "From Our Instagram", is now built — see the row below |

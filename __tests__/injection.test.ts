@@ -952,16 +952,17 @@ describe('getInjectionForUrl', () => {
     expect(script).toContain('custom_single_banner');
   });
 
-  it('uses the pet page product section for Bestsellers, not best_deals', () => {
+  it('reserves Bestsellers as a slot, and does not fill it from best_deals', () => {
     // Section names do not match their content here. best_deals holds the
     // Zigly Coins banner and offer cards, and the homepage's arrival sections
-    // are "Best Deals" and "Trending Products" -- neither is the rail in this
-    // slot. collection_product_section is: ten real product cards, sitting in
-    // exactly this position on /pages/dog.
+    // are "Best Deals" and "Trending Products" -- none of them is this rail.
+    // The rail is built by bestsellers.ts from sort_by=best-selling, so this
+    // entry reserves the position and nothing else.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain('"key":"collection_product_section"');
-    expect(script).toContain('"mark":"zigly-x-bestsellers"');
-    // best_deals is used, but for Coins -- a different slot entirely.
+    expect(script).toContain('"slot":"zigly-x-bestsellers"');
+    // The pet page's "Pet Parent Favourites" rail used to stand in here.
+    expect(script).not.toContain('"key":"collection_product_section"');
+    // best_deals is still used, but for Coins -- a different slot entirely.
     expect(script).toContain('"mark":"zigly-x-coins"');
   });
 

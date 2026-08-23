@@ -145,7 +145,8 @@ these eager:
 | --- | --- |
 | `home_arrival_section@dog` | 534 KB |
 | `home_arrival_section@cat` | 360 KB |
-| `collection_product_section` | 258 KB |
+| `template--…__product-grid` (`/collections/all?sort_by=best-selling`) | 585 KB |
+| `collection_product_section` | 258 KB — *no longer fetched, see below* |
 | `coupon_slider` | 80 KB |
 | `everything@cat` / `@dog` | 60 / 50 KB |
 | `home_shop_by_breed_section@dog` | 40 KB |
@@ -159,16 +160,29 @@ these eager:
 | `custom_single_banner#1/#2/#3` | ~4.4 KB each |
 | `redesign_custom_double_banner` | 4.8 KB |
 
-The three largest are **not** on the dashboard's fetch path: `extraSections.ts`
-relocates `home_arrival_section` within the live DOM (`move`, not a fetch), and
-`collection_product_section` and `video_swiper` are seeded but unused there. Of
-what the dashboard does fetch, only `coupon_slider` is eager; the rest wait on an
-IntersectionObserver with a 700 px margin. So first paint costs roughly
-95 KB of section HTML (`coupon_slider` + `home_category_section`), not the 1.6 MB
-the full table might suggest.
+The two arrival sections are **not** on the dashboard's fetch path:
+`extraSections.ts` relocates `home_arrival_section` within the live DOM (`move`,
+not a fetch), and `video_swiper` is seeded but unused. `collection_product_section`
+was fetched, for the "Pet Parent Favourites" rail; the dashboard now shows a real
+Bestsellers rail in that slot instead, so it is no longer fetched and its seeded
+id is gone (see `bestsellers.ts`).
 
-The standing risk is the reverse of a stale id: those three fat sections are one
-`eager: true` away from a very slow dashboard on mobile data.
+The product grid replacing it is the largest thing the dashboard fetches, at
+585 KB. That is the Section Rendering API answer for one section of
+`/collections/all?sort_by=best-selling`; asking for the whole page costs 1.4 MB
+for the same 22 cards in the same order, which is why the section is asked for
+by id and the whole page is only the fallback. Note that the sort **survives
+into the section render** — the query string is honoured — which is what makes a
+one-section fetch possible at all here.
+
+Of what the dashboard does fetch, only `coupon_slider` is eager; the rest wait on
+an IntersectionObserver with a 700 px margin. So first paint costs roughly 95 KB
+of section HTML (`coupon_slider` + `home_category_section`), not the 2 MB the
+full table might suggest.
+
+The standing risk is the reverse of a stale id: those fat sections are one
+`eager: true` away from a very slow dashboard on mobile data. The product grid is
+the one to watch, being both the largest and the newest.
 
 ## 4. Zigly's own APIs (AWS API Gateway, ap-south-1)
 

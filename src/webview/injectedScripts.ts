@@ -21,6 +21,7 @@ import {FACET_BRIDGE_SCRIPT} from './facetBridge';
 import {DRAWER_EXTRAS_SCRIPT} from './drawerExtras';
 import {BREED_PAGE_SCRIPT} from './breedPage';
 import {EXTRA_SECTIONS_SCRIPT} from './extraSections';
+import {BESTSELLERS_SCRIPT} from './bestsellers';
 import {EVERYTHING_SCRIPT} from './everythingSection';
 import {INSTAGRAM_SECTION_SCRIPT} from './instagramSection';
 import {CART_TOAST_SCRIPT} from './cartToast';
@@ -74,6 +75,7 @@ ${HOT_PICKS_SCRIPT}
 ${EXPLORE_SCRIPT}
 ${EXTRA_SECTIONS_SCRIPT}
 ${BRAND_RAIL_SCRIPT}
+${BESTSELLERS_SCRIPT}
 ${EVERYTHING_SCRIPT}
 ${INSTAGRAM_SECTION_SCRIPT}
 ${CART_TOAST_SCRIPT}

@@ -157,6 +157,55 @@ html body {
 }
 
 /* ------------------------------------------------------------------
+   Bestsellers (see bestsellers.ts).
+
+   Only the section chrome is styled here. The product cards inside are Zigly's
+   own markup and pick up the theme's card styles, and the containment they need
+   -- the floating sticky-ATC wrappers that otherwise escape their card and
+   paint over the footer -- comes from the [id^="zigly-x-"] rules further down,
+   because the rail is built inside the reserved zigly-x-bestsellers slot.
+
+   Deliberately its own block rather than joined onto the Hot Picks rules it
+   resembles. The declarations are near-identical, and sharing them would mean
+   one selector list two sections deep in different files depend on; a rail is
+   cheap enough to state twice.
+   ------------------------------------------------------------------ */
+.zigly-bs {
+  padding: 8px 12px 24px;
+}
+.zigly-bs__title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1B1B1B;
+  /* Left-aligned, matching every other rail heading in the app. */
+  text-align: left;
+  margin: 22px 0 14px;
+}
+.zigly-bs__rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  /* A flick that runs off the end stops there, rather than chaining into the
+     page's own scroll or Android's edge-swipe back gesture. */
+  overscroll-behavior-x: contain;
+  padding-bottom: 6px;
+}
+.zigly-bs__rail::-webkit-scrollbar {
+  display: none;
+}
+/* Just under half the viewport, so the next card peeks and the rail reads as
+   scrollable without a visible scrollbar. */
+.zigly-bs__rail > * {
+  flex: 0 0 46%;
+  max-width: 46%;
+  margin: 0 !important;
+  scroll-snap-align: start;
+}
+
+/* ------------------------------------------------------------------
    Explore. Pick. Pamper. (see explorePicker.ts)
 
    The section's Swiper never initialises here -- its init runs inside a
