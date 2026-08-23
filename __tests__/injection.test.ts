@@ -6,6 +6,7 @@
  */
 import {getInjectionForUrl} from '../src/webview/injectedScripts';
 import {EARLY_HEADER_CSS} from '../src/webview/headerBridge';
+import {HOT_PICKS_SCRIPT} from '../src/webview/hotPicks';
 
 describe('getInjectionForUrl', () => {
   it.each([
@@ -365,15 +366,34 @@ describe('getInjectionForUrl', () => {
   describe('hot picks section', () => {
     const home = () => getInjectionForUrl('https://zigly.com/') as string;
 
-    it('sources products from real Zigly sections, not hardcoded data', () => {
+    it("sources both tabs from Zigly's own hot-picks collections", () => {
       const s = home();
-      // Sections resolve by id from '/', with @dog / @cat selecting which
-      // page template's copy to request.
-      expect(s).toContain('home_arrival_section@dog');
-      expect(s).toContain('home_arrival_section@cat');
-      expect(s).toContain('/collections/new-arrivals');
+      // These are the two collections Zigly publish under these names. The
+      // section used to be filled from the /pages/dog and /pages/zigly-cat
+      // arrival rails, which put the wrong products under the right heading.
+      expect(s).toContain('/collections/hot-picks-squeaker-toys');
+      expect(s).toContain('/collections/hot-deals');
+      // Scoped to this section: the full injection still names the arrival
+      // sections, because pageCache seeds their ids and extraSections hides
+      // the homepage's own copy. What matters is that nothing fetches them
+      // to fill this one.
+      expect(HOT_PICKS_SCRIPT).not.toContain('home_arrival_section');
+      expect(HOT_PICKS_SCRIPT).not.toContain('__ziglyFetchSection');
       // No product titles, prices or handles baked in.
       expect(s).not.toMatch(/₹\s?\d/);
+    });
+
+    it('still defers both collection fetches until the section nears view', () => {
+      // A collection page is fetched whole, so neither tab may become eager.
+      const s = home();
+      expect(s).toContain('whenNear(section, function () {');
+      expect(s).toContain('loadCards(HOT_SOURCE, paneHot, LIMIT)');
+    });
+
+    it('loads the New Arrivals collection only when that tab is opened', () => {
+      const s = home();
+      expect(s).toContain('if (newLoaded) { return; }');
+      expect(s).toContain('loadCards(NEW_SOURCE, paneNew, LIMIT)');
     });
 
     it('defaults to the Hot Picks tab', () => {
