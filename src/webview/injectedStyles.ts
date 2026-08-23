@@ -517,8 +517,16 @@ body.zigly-listing .card-wrapper .tag-wrapper,
 body.zigly-listing .card-wrapper .swym-add-to-wishlist,
 #zigly-hot-picks .card-wrapper .swym-add-to-wishlist,
 [id^="zigly-x-"] .card-wrapper .swym-add-to-wishlist {
+  position: relative;
   pointer-events: auto;
    z-index: 30 !important;
+}
+
+/* Heart icon on product detail pages (inner pages). */
+body.zigly-inner-page .product-form .swym-add-to-wishlist {
+  position: relative;
+  pointer-events: auto;
+  z-index: 30 !important;
 }
 
 /* ------------------------------------------------------------------
