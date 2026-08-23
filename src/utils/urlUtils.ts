@@ -132,6 +132,11 @@ const withoutMarket = (path: string): string => {
  * screen, in the slot the tab bar wants. A plain `/products/{handle}` already
  * answered false here, so this only makes the collection-scoped form of the
  * same page behave like the page it is.
+ *
+ * `ziglyIsListing()` in ../webview/listingPage makes the same exclusion, in the
+ * same order, so the app and the page still give one answer: a bar with no
+ * engine behind it, or an engine nobody can reach, is what disagreement here
+ * looks like.
  */
 export const showsSortFilterBar = (raw: string): boolean => {
   const parsed = parseUrl(raw);

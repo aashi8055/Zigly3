@@ -420,8 +420,11 @@ body.zigly-listing.st-open-filter-section {
    where the site draws the grid itself.
 
    Scoped to body.zigly-listing, which listingPage.ts sets on collection and
-   search pages only. It must never reach a product page: there,
-   .mobile-atc-main IS the site's sticky Add to Bag bar and is meant to float.
+   search pages only. It must never reach a product page: that page carries the
+   same card markup in its "recently viewed" and recommendation rails, and a
+   rule written for a two-column grid would stretch a rail chip across the whole
+   page. (This note used to say .mobile-atc-main IS the sticky Add to Bag bar
+   there. It is not -- see the product-page block below.)
    ------------------------------------------------------------------ */
 body.zigly-listing .mobile-atc-main,
 body.zigly-listing .atc-wrapper,
@@ -442,6 +445,39 @@ body.zigly-listing .card--variant--main-wrapper,
 body.zigly-listing .mobile-compact-variant-display,
 body.zigly-listing .mobile-compact-variant-more,
 body.zigly-listing .card-variant-wrapper {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------
+   Product pages: one Add to Bag, not two.
+
+   The served PDP was read on 2026-08-24 and it draws the control twice:
+
+     .product__buy-buttons-container    in the flow, under the quantity
+                                        stepper. <product-form> with
+                                        button.product-form__submit, "Add to
+                                        Bag". This is the one that stays.
+     .sticky-bar-container              pinned to the foot of the screen: a
+                                        thumbnail, the title, the price, a
+                                        second quantity stepper, "Buy Now" and
+                                        a second "Add to Bag". Hidden here.
+
+   The theme reveals the pinned bar once the in-flow one has scrolled off the
+   top, so the two are never a deliberate pair -- the second is a stand-in for
+   the first. Removing it also removes Buy Now, which exists only on that bar;
+   that is the trade this was asked for, and Buy Now is one tap from the bag.
+
+   display:none, and the element is left in the page on purpose. The theme's own
+   scroll handler is stickyBar.classList.add(...) with no null guard -- it
+   only guards atcSection -- so a bar removed from the DOM would throw on every
+   scroll event. Hidden, offsetHeight reads 0, and the theme's own
+   --bottomBarHeight resolves to zero: no reserved gap where the bar used to be.
+
+   Scoped to body.zigly-product, from ./listingPage. Not scoped by class alone:
+   an unscoped .sticky-bar-container would be this file reaching a page it has
+   not read.
+   ------------------------------------------------------------------ */
+body.zigly-product .sticky-bar-container {
   display: none !important;
 }
 /* relative, for the reason spelled out on the Hot Picks rule above: static

@@ -7,6 +7,11 @@
 import {getInjectionForUrl} from '../src/webview/injectedScripts';
 import {FACET_BRIDGE_SCRIPT} from '../src/webview/facetBridge';
 import {LISTING_PATHS} from '../src/constants/appConstants';
+import {
+  LISTING_FLAG,
+  LISTING_PAGE_SCRIPT,
+  PRODUCT_FLAG,
+} from '../src/webview/listingPage';
 import {EARLY_HEADER_CSS} from '../src/webview/headerBridge';
 import {HOT_PICKS_SCRIPT} from '../src/webview/hotPicks';
 
@@ -719,9 +724,137 @@ describe('getInjectionForUrl', () => {
         'https://zigly.com/products/x',
       ) as string;
       expect(script).toContain('function ziglyIsListing()');
-      expect(script).toContain('if (!ziglyIsListing() || !document.body)');
+      expect(script).toContain('if (ziglyIsListing()) { flag(LISTING_FLAG); }');
       // Nothing keys the card rules on a product path.
       expect(script).not.toContain("indexOf('/products/') === 0");
+    });
+
+    describe('the flag the card fixes hang on', () => {
+      /*
+       * Run the real script against a page, and report whether it flagged it.
+       *
+       * The tests around this one read the script as text, which is enough to
+       * prove a rule is scoped but cannot prove the scope is ever *set*
+       * correctly -- the bug below lived under a passing text assertion for
+       * exactly that reason. Enough of a DOM for what the script touches,
+       * built by hand: this project's jest environment is node, and the
+       * pattern is __tests__/breedPage.test.ts's.
+       */
+      const flagsOn = (pathname: string): string => {
+        const body = {className: 'template-collection'};
+        // eslint-disable-next-line no-new-func
+        const run = new Function('window', 'document', LISTING_PAGE_SCRIPT);
+        run({location: {pathname}}, {body});
+        return body.className;
+      };
+      const flagged = (pathname: string): boolean =>
+        flagsOn(pathname).indexOf(LISTING_FLAG) !== -1;
+      const productFlagged = (pathname: string): boolean =>
+        flagsOn(pathname).indexOf(PRODUCT_FLAG) !== -1;
+
+      it('is set on the listings the card fixes are written for', () => {
+        expect(flagged('/collections/dog-toys')).toBe(true);
+        expect(flagged('/collections/dog-food/grain-free')).toBe(true);
+        expect(flagged('/search')).toBe(true);
+        // And behind a Shopify market prefix, which would otherwise retire the
+        // card fixes silently on the day one is added in the admin.
+        expect(flagged('/en-in/collections/dog-toys')).toBe(true);
+      });
+
+      it('is not set on a product opened from a collection', () => {
+        /*
+         * The bug this test exists for. Every card in a Zigly grid links to
+         * /collections/{collection}/products/{handle}, so the ordinary way into
+         * a product page starts with '/collections/' -- and the flag landed on
+         * the one page the file above says it must never reach. There,
+         * .mobile-atc-main IS the sticky Add to Bag bar, and the card fix
+         * forces position:relative on it: the bar stopped floating and went
+         * into the flow of the page.
+         *
+         * The bare form has always been unflagged; these are the same page.
+         */
+        expect(flagged('/collections/dog-toys/products/a-dog-bed')).toBe(false);
+        expect(flagged('/products/a-dog-bed')).toBe(false);
+        expect(flagged('/en-in/collections/dog-toys/products/a-dog-bed')).toBe(
+          false,
+        );
+      });
+
+      it('leaves the classes the page already carries alone', () => {
+        // The flag is appended to <body>'s className, never assigned over it:
+        // the theme keys its own layout off template-collection.
+        const body = {className: 'template-collection gradient'};
+        // eslint-disable-next-line no-new-func
+        const run = new Function('window', 'document', LISTING_PAGE_SCRIPT);
+        run({location: {pathname: '/collections/dog-toys'}}, {body});
+        expect(body.className).toContain('template-collection gradient');
+        expect(body.className).toContain(LISTING_FLAG);
+      });
+
+      it('marks a product page, by either route to it', () => {
+        // The counterpart flag. Both ways in are the same page, so both carry
+        // it -- and neither carries the listing flag.
+        for (const path of [
+          '/products/a-dog-bed',
+          '/collections/dog-toys/products/a-dog-bed',
+          '/en-in/collections/dog-toys/products/a-dog-bed',
+        ]) {
+          expect(productFlagged(path)).toBe(true);
+          expect(flagged(path)).toBe(false);
+        }
+      });
+
+      it('marks nothing a product that is not one', () => {
+        expect(productFlagged('/collections/dog-toys')).toBe(false);
+        expect(productFlagged('/search')).toBe(false);
+        expect(productFlagged('/pages/dog')).toBe(false);
+        expect(productFlagged('/')).toBe(false);
+      });
+    });
+
+    describe('the second Add to Bag', () => {
+      /*
+       * The PDP draws the control twice: once in the flow under the quantity
+       * stepper (.product__buy-buttons-container), and once in a bar pinned to
+       * the foot of the screen (.sticky-bar-container) that also carries Buy
+       * Now. Read off the served page on 2026-08-24. The pinned one is hidden.
+       */
+      const productPage = () =>
+        getInjectionForUrl(
+          'https://zigly.com/collections/dog-toys/products/bionic-bone-small-dog-chew-toy',
+        ) as string;
+
+      it('hides the pinned bar on a product page', () => {
+        expect(productPage()).toContain(
+          `body.${PRODUCT_FLAG} .sticky-bar-container`,
+        );
+      });
+
+      it('leaves the in-flow Add to Bag alone', () => {
+        /*
+         * The one that stays. A rule hiding the form, its submit button or
+         * its container would leave the page with no way to add to the bag at
+         * all, which is the failure this block must never become. Matched
+         * with the opening brace so the prose above the rule does not count.
+         */
+        const script = productPage();
+        expect(script).not.toContain('.product__buy-buttons-container {');
+        expect(script).not.toContain('.product-form__submit {');
+        expect(script).not.toContain('product-form {');
+      });
+
+      it('never hides a sticky bar off a product page', () => {
+        /*
+         * Unscoped, this would reach any page the theme pins a bar to. Every
+         * rule for it carries the product flag -- counted rather than sampled,
+         * because one unscoped copy added later is the whole of the bug.
+         */
+        const script = productPage();
+        const count = (needle: string): number =>
+          script.split(needle).length - 1;
+        expect(count('.sticky-bar-container {')).toBe(1);
+        expect(count(`body.${PRODUCT_FLAG} .sticky-bar-container {`)).toBe(1);
+      });
     });
 
     it('makes SearchTap’s own grid read as the grid it replaces', () => {
@@ -788,7 +921,7 @@ describe('getInjectionForUrl', () => {
       const script = getInjectionForUrl(
         'https://zigly.com/collections/x',
       ) as string;
-      expect(script).toContain('flagListing()');
+      expect(script).toContain('flagPage()');
       expect(script).toContain("var LISTING_FLAG = 'zigly-listing'");
     });
   });
