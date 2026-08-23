@@ -469,6 +469,7 @@ body.zigly-listing .card-wrapper .swym-add-to-wishlist,
 #zigly-hot-picks .card-wrapper .swym-add-to-wishlist,
 [id^="zigly-x-"] .card-wrapper .swym-add-to-wishlist {
   pointer-events: auto;
+   z-index: 30 !important;
 }
 
 /* ------------------------------------------------------------------
@@ -637,12 +638,16 @@ body.zigly-listing .st-main-content-wrap {
 [id^="zigly-x-"] .atc-wrapper,
 [id^="zigly-x-"] .quick-add,
 [id^="zigly-x-"] .st-collection-atc {
-  position: static !important;
+  position: relative !important;
   inset: auto !important;
   width: 100% !important;
-  z-index: auto !important;
   transform: none !important;
 }
+
+[id^="zigly-x-"] .quick-add {
+  z-index: 20 !important;
+}
+
 [id^="zigly-x-"] {
   isolation: isolate;
 }
