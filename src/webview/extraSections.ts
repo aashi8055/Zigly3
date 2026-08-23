@@ -12,6 +12,10 @@
  * Every entry self-disables if the site is already rendering that section --
  * so if Zigly restores their homepage, these quietly stop doing anything and
  * the page loads in a single request again, with no code change.
+ *
+ * Re-entrant by requirement, not by accident: the payload is injected once on
+ * load and then six more times on a timer. See the note on the loop for what
+ * that demands of every branch in it.
  */
 
 /**
@@ -172,6 +176,27 @@ export const EXTRA_SECTIONS_SCRIPT = `
           || document.getElementById('zigly-breed-cats')
           || banner;
 
+  /*
+   * This loop runs SEVEN times per page load, and every pass has to end with
+   * the page in the same shape.
+   *
+   * ../screens/ZiglyWebViewScreen re-injects the whole payload on
+   * RESTYLE_DELAYS -- [0, 500, 1500, 3000, 6000, 10000]ms -- because the page
+   * keeps pulling in third-party scripts long after onLoadEnd and a single pass
+   * loses to whichever of them restyles the header last. That is the right call
+   * for a stylesheet. It is only safe for this loop because of what follows.
+   *
+   * The rule: an entry that finds its work already done must carry tail
+   * past it, never just return. A bare return leaves tail behind at
+   * zigly-explore while the loop keeps walking, and the move entries -- the
+   * only ones with no placeholder of their own to find -- then re-insert
+   * themselves after it. That put Top Pets Brands, Pet Parenting, the video and
+   * Real Pets directly under Explore on the second pass, ahead of the eleven
+   * sections declared before them, and it held there for every pass after.
+   *
+   * The order was right on the first pass and wrong from the second, which is
+   * why reading this file, or running it once, does not show it.
+   */
   for (var i = 0; i < SECTIONS.length; i++) {
     (function (spec) {
       // Sections the homepage already carries are relocated into the reference
@@ -217,7 +242,11 @@ export const EXTRA_SECTIONS_SCRIPT = `
       // A reserved slot: create the container and move on. Another module
       // fills it, but its position in the order is fixed here.
       if (spec.slot) {
-        if (document.getElementById(spec.slot)) { return; }
+        var standing = document.getElementById(spec.slot);
+        // Already reserved, so this is a re-run: carry the tail past it. See
+        // the note on the loop -- returning from under the tail here is what
+        // let the moved sections climb the page.
+        if (standing) { tail = standing; return; }
         var reserved = document.createElement('div');
         reserved.id = spec.slot;
         if (tail.parentNode) {
@@ -227,7 +256,21 @@ export const EXTRA_SECTIONS_SCRIPT = `
         return;
       }
 
-      if (document.getElementById(spec.mark)) { return; }
+      /*
+       * Already placed, so this is a re-run: carry the tail past it.
+       *
+       * This check stays FIRST, ahead of spec.check, and that ordering is load
+       * bearing. Several of these sections carry their own fragment as their
+       * check -- shop_by_price checks for 'shop_by_price' -- and once the
+       * transplant has landed, that fragment is on the page: inside our own
+       * slot. Reaching spec.check on a re-run would find our own work and read
+       * it as Zigly having restored the section.
+       */
+      var done = document.getElementById(spec.mark);
+      if (done) {
+        if (spec.key !== 'coupon_slider') { tail = done; }
+        return;
+      }
 
       // Already on the page: nothing to do, and never duplicate it. Banners and
       // offer sections repeat, so those carry no check and are always placed.
