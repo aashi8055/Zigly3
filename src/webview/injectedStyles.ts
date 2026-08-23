@@ -977,6 +977,85 @@ body.zigly-listing .quick-add__submit {
    ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------
+   From Our Instagram (see instagramSection.ts).
+
+   The only section on the dashboard the app draws itself, so unlike every
+   other block here these rules style our own markup rather than correcting
+   Zigly's. It sits in the slot the "Happy Moments" photo grid used to hold,
+   directly above the brand-claims strip that ends the page.
+
+   Deliberately the same rail as Hot Picks and Explore: 12px gutters, a 12px
+   gap, 46% cards so the next one peeks, no visible scrollbar. A section that
+   scrolled differently from the two above it would read as a widget bolted on
+   rather than part of the dashboard.
+   ------------------------------------------------------------------ */
+.zigly-ig {
+  padding: 8px 12px 24px;
+}
+/* The heading matches "Hot Picks Of The Week" exactly. [id^="zigly-x-"] h2
+   already sets the size, weight and colour for anything in a transplanted
+   slot, and this section lives in one -- only the margins are its own. */
+.zigly-ig__title {
+  text-align: left;
+  margin: 22px 0 14px;
+}
+.zigly-ig__rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 6px;
+}
+.zigly-ig__rail::-webkit-scrollbar {
+  display: none;
+}
+/* Square, via padding rather than aspect-ratio: the covers are Instagram's
+   own 640px square crops, so the card is showing them at their natural shape
+   and nothing is cropped twice. */
+.zigly-ig__card {
+  position: relative;
+  display: block;
+  flex: 0 0 46%;
+  max-width: 46%;
+  height: 0;
+  padding-bottom: 46%;
+  scroll-snap-align: start;
+  border-radius: 14px;
+  overflow: hidden;
+  /* Holds the card's shape while the cover decodes, so the rail does not
+     assemble itself in front of the customer. */
+  background: #EFEFEF;
+  text-decoration: none;
+}
+.zigly-ig__img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 14px;
+}
+/* The reel marker. Only video posts carry one, so it tells the customer which
+   cards are reels rather than decorating all of them alike. */
+.zigly-ig__badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------
    Two banners that lead nowhere, made untappable.
 
    Both close the dashboard, and both answer a tap with a navigation the

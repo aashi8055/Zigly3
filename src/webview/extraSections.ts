@@ -78,21 +78,26 @@ const SECTIONS = [
   /**
    * The photo grid that closes the dashboard.
    *
-   * The reference app heads this "From Our Instagram". No section on zigly.com
-   * is called that, and none pulls an Instagram feed -- the site's only
-   * Instagram presence is the footer's social links. What it does have, on
-   * /pages/store-home-page-section, is `gallery`: a six-photo grid of Zigly's
-   * own pet and store photography, which is the same thing in the same place.
+   * The reference app heads this "From Our Instagram", and until now that could
+   * not be built: no section on zigly.com is called that and none pulls a feed,
+   * so the theme's own six-photo grid -- `gallery` on
+   * /pages/store-home-page-section, headed "Happy Moments" -- stood in for it.
+   * That was the honest choice while the only alternative was retitling Zigly's
+   * store photography as a feed the customer could go and follow.
    *
-   * So the real section is used and Zigly's own heading, "Happy Moments", is
-   * kept. Retitling it "From Our Instagram" would tell the customer these
-   * photos came from a feed they can go and follow, and that is not where they
-   * came from.
+   * It is now the real thing. instagramSection.ts draws Zigly's actual recent
+   * posts, read live from their own account, so the heading says what the cards
+   * are and the stand-in is no longer needed. The grid is dropped rather than
+   * kept above it: two photo grids back to back is what the reference does not
+   * show, and this is the slot the reference puts Instagram in.
+   *
+   * Slot only, like Everything For: the position is fixed here and the filling
+   * happens in instagramSection.ts, which carries the posts itself. An unfilled
+   * slot has no height, so if that section ever declines to draw -- every cover
+   * failing to load is the way it can -- the dashboard simply ends one block
+   * earlier and the icons strip below does not move.
    */
-  // Marked "moments", not "gallery": `check` is a substring test over element
-  // ids, and a mark containing its own check fragment is a section that
-  // disables itself the second time the injection runs.
-  {key: 'gallery', path: '/pages/store-home-page-section', check: 'gallery', mark: 'zigly-x-moments', eager: false},
+  {slot: 'zigly-x-instagram'},
   // The brand-claims strip (1680X324_BrandClaims) -- the logos. Last, so it
   // sits directly above the footer as the reference shows.
   {key: 'custom_single_banner#3', check: '', mark: 'zigly-x-logos', eager: false},
@@ -205,9 +210,10 @@ export const EXTRA_SECTIONS_SCRIPT = `
       if (spec.key !== 'coupon_slider') { tail = slot; }
 
       function load() {
-        // Almost everything resolves from '/', so unrelated sections share one
-        // batched request. \`path\` names the exception -- see the gallery entry
-        // in pageCache.ts for why one section has to ask its own page.
+        // Every section resolves from '/', so they all share one batched
+        // request. \`path\` is kept for the section that does not: the photo
+        // gallery had to ask its own page, and dropping the mechanism along
+        // with that entry would mean rebuilding it for the next such section.
         window.__ziglyFetchSection(spec.path || '/', spec.key)
           .then(function (sec) {
             if (!sec) { warn('unavailable: ' + spec.key); return; }

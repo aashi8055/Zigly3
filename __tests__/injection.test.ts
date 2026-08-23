@@ -914,18 +914,41 @@ describe('getInjectionForUrl', () => {
     expect(logos).toBeGreaterThan(communities);
   });
 
-  it('closes the dashboard with a real Zigly photo section', () => {
-    // The reference heads this "From Our Instagram". No section on zigly.com is
-    // called that and none pulls a feed; the site's own photo grid is `gallery`
-    // on /pages/store-home-page-section, so that is what is used, under its own
-    // heading. The mark deliberately does not contain "gallery" -- `check` is a
-    // substring test over ids, and a mark holding its own check fragment is a
-    // section that disables itself on the second injection.
+  it('closes the dashboard with real posts from the Zigly account', () => {
+    // The reference heads this "From Our Instagram" and for a long time it
+    // could not be built: no section on zigly.com is called that and none
+    // pulls a feed, so the theme's photo grid (`gallery`, "Happy Moments")
+    // stood in for it. The posts are now read live from Zigly's own account,
+    // so the heading is accurate and the stand-in is gone.
     const script = getInjectionForUrl('https://zigly.com/') as string;
-    expect(script).toContain('"key":"gallery"');
-    expect(script).toContain('"path":"/pages/store-home-page-section"');
-    expect(script).toContain('"mark":"zigly-x-moments"');
-    expect(script).not.toContain('From Our Instagram');
+    expect(script).toContain('From Our Instagram');
+    expect(script).toContain('"slot":"zigly-x-instagram"');
+    // The stand-in and its page are no longer fetched at all.
+    expect(script).not.toContain('"key":"gallery"');
+    expect(script).not.toContain('/pages/store-home-page-section');
+    expect(script).not.toContain('zigly-x-moments');
+  });
+
+  it('reserves the Instagram slot last but one, above the icons strip', () => {
+    // The user asked for it directly above the brand-claims strip that ends
+    // the page, which is where the reference puts it.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    const communities = script.indexOf('"move":"about_our_communities"');
+    const instagram = script.indexOf('"slot":"zigly-x-instagram"');
+    const logos = script.indexOf('"mark":"zigly-x-logos"');
+    expect(communities).toBeGreaterThan(-1);
+    expect(instagram).toBeGreaterThan(communities);
+    expect(logos).toBeGreaterThan(instagram);
+  });
+
+  it('carries the posts in the payload, with no call out to Instagram', () => {
+    // The posts are hardcoded, so the section draws on the first injection
+    // with no network of its own. Only the covers are remote, and they are
+    // <img> loads the customer pays for only if they scroll that far.
+    const script = getInjectionForUrl('https://zigly.com/') as string;
+    expect(script).toContain('/media/?size=m');
+    expect(script).not.toContain('web_profile_info');
+    expect(script).not.toContain('X-IG-App-ID');
   });
 
   describe('add to cart feedback', () => {
@@ -1056,7 +1079,13 @@ describe('getInjectionForUrl', () => {
     // The rule, not the word: the block that used to hold these rules still
     // names the wave, in the comment recording why they went.
     expect(script).not.toContain('footer .wave-image-wrapper {');
-    expect(script).not.toContain('object-fit: cover');
+    expect(script).not.toContain('.wave-image-wrapper {');
+    // Scoped to a footer rule, not banned outright. This was a bare
+    // `not.toContain('object-fit: cover')` over the whole payload, which read
+    // as "the wave rules are gone" but actually asserted that no rule anywhere
+    // in the stylesheet crops an image -- so the Instagram covers, which are
+    // nothing to do with the footer, failed it.
+    expect(script).not.toMatch(/footer[^{}]*\{[^{}]*object-fit/);
     // Because the footer itself never renders, on any page. The fragment
     // rather than the whole selector: the CSS is embedded with JSON.stringify,
     // so its double quotes are escaped by the time they reach the payload.

@@ -20,6 +20,7 @@ import {DRAWER_EXTRAS_SCRIPT} from './drawerExtras';
 import {BREED_PAGE_SCRIPT} from './breedPage';
 import {EXTRA_SECTIONS_SCRIPT} from './extraSections';
 import {EVERYTHING_SCRIPT} from './everythingSection';
+import {INSTAGRAM_SECTION_SCRIPT} from './instagramSection';
 import {CART_TOAST_SCRIPT} from './cartToast';
 import {READY_SIGNAL_SCRIPT} from './readySignal';
 import {SEARCH_DIAGNOSTIC} from './diagnostics';
@@ -71,6 +72,7 @@ ${HOT_PICKS_SCRIPT}
 ${EXPLORE_SCRIPT}
 ${EXTRA_SECTIONS_SCRIPT}
 ${EVERYTHING_SCRIPT}
+${INSTAGRAM_SECTION_SCRIPT}
 ${CART_TOAST_SCRIPT}
 ${READY_SIGNAL_SCRIPT}
 ${SORT_FILTER_SCRIPT}

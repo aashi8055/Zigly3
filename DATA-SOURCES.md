@@ -303,6 +303,7 @@ two and routes deletion to Zigly's contact page rather than pretending.
 | Address + form | `/account/addresses`, `/services/countries.js` | writes are Shopify's own form post |
 | Prescription upload | `860wd50e1i…` prescription endpoints | needs a file chooser |
 | Blog / static pages | `/blogs/all`, `/pages/*`, `/policies/*` | |
+| "From Our Instagram" (dashboard tail) | **Not zigly.com.** instagram.com/p/`<shortcode>`/media/ | the one section not sourced from the site — see §9 |
 
 ## 7. Keeping the data consistent
 
@@ -321,6 +322,47 @@ two and routes deletion to Zigly's contact page rather than pretending.
 5. **`?sections=` over hand-built layouts** wherever a screen mirrors a site
    section. Anything you re-draw by hand is something that can disagree with the
    website the next time merchandising changes.
+
+## 9. The one source that is not zigly.com
+
+Everything above is read from the site. `"From Our Instagram"`, the rail that
+closes the dashboard, is the single exception, and it is worth stating plainly
+rather than leaving to be discovered.
+
+**Why there is an exception.** zigly.com has no Instagram section and nothing on
+it pulls a feed; the site's only Instagram presence is the footer's social
+links. There is therefore nothing on the site to read, and the section the
+reference app closes on cannot be built from it. The theme's own photo grid
+(`gallery` on `/pages/store-home-page-section`, "Happy Moments") stood in for it
+until now, under its own heading.
+
+**What it reads.** Zigly's own public account, @ziglypetcare — their posts,
+their captions, their ordering. Nothing is invented. Three routes were probed on
+2026-08-23:
+
+| Route | Result |
+| --- | --- |
+| `instagram.com/ziglypetcare` (scrape) | login-walled shell, no post data |
+| `instagram.com/reel/<code>/embed/` | 200, but hydrates client-side — no cover in the response, and it carries Instagram's own chrome |
+| `i.instagram.com/api/v1/users/web_profile_info` + public web app id | works unauthenticated; returns the 12 most recent posts with cover, permalink, `is_video` and caption |
+
+**What ships.** The third route was used **once, at authoring time**, to read the
+list — the app does not call it at runtime. `src/webview/instagramSection.ts`
+carries eight frozen shortcodes; the link and the cover are both derived from
+each shortcode, so refreshing the rail means replacing shortcodes and nothing
+else.
+
+**Why the covers still work.** `instagram.com/p/<shortcode>/media/` is a
+permanent, unsigned URL that redirects to a freshly signed CDN image on every
+request. The signed `*.fbcdn.net` URLs the API returns expire within hours, so
+writing one of those down would guarantee broken images; this one needs no code
+and ships no image bytes in the APK. A cover that will not load takes its own
+card down, and if all of them go so does the heading.
+
+**The cost, stated.** The rail ages. These are posts from August 2026 and the
+heading implies recency the list cannot keep on its own. That is the trade taken
+in exchange for a section that cannot be slow, cannot fail halfway, and does not
+depend on an undocumented endpoint at runtime.
 
 ## 8. Scope note
 
