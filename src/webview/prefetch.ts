@@ -131,3 +131,93 @@ export const PREFETCH_SCRIPT = `
 })();
 true;
 `;
+
+/**
+ * Warm what the customer is most likely to open *from the page they are on*.
+ *
+ * The script above runs on the dashboard and warms the tabs and the category
+ * circles. This one runs on an inner page and warms the destinations on it: the
+ * products in a collection grid, the products in a search result, the
+ * collections on a breed page.
+ *
+ * Only the images, and that is the whole design. Zigly's pages carry no
+ * cache-control and Cloudflare reports them DYNAMIC, so prefetching the HTML of
+ * a product page buys nothing -- the tap refetches it regardless. What caches is
+ * cdn.shopify.com, and a product page opens on a full-width gallery image: pull
+ * that one file and the tap paints from cache instead of the network, which is
+ * most of what "the page took a moment" actually is.
+ *
+ * The first image of each destination is already in the grid the customer is
+ * looking at, at grid size. A product page asks for the same file at a larger
+ * width, which is a different URL and a different cache entry -- so the warm is
+ * the wider size, not the one already loaded.
+ *
+ * Bounded hard, one request at a time, and only ever run on an unmetered
+ * connection (the caller decides; see ZiglyWebViewScreen). Runs after the page
+ * has reported itself ready, so it cannot compete with the load the customer is
+ * waiting on.
+ */
+/** How many destinations on this page are worth warming. */
+const PAGE_TARGETS = 6;
+/** The width a product page asks its gallery for on a phone. */
+const GALLERY_WIDTH = 720;
+
+export const PAGE_PREFETCH_SCRIPT = `
+(function () {
+  if (window.__ziglyPageWarmed) { return; }
+  window.__ziglyPageWarmed = true;
+
+  var MAX = ${PAGE_TARGETS};
+  var WIDTH = ${GALLERY_WIDTH};
+
+  /**
+   * The first few product images on this page, at gallery width.
+   *
+   * Read off the cards themselves rather than from a list of handles: the
+   * shape of a Zigly grid is Zigly's, and an <img> inside a link to /products/
+   * is true of the theme's grid, of SearchTap's grid and of the rails this app
+   * transplants -- all three, with no per-template knowledge.
+   */
+  function targets() {
+    var out = [];
+    var links;
+    try {
+      links = document.querySelectorAll('a[href*="/products/"]');
+    } catch (e) {
+      return out;
+    }
+    for (var i = 0; i < links.length && out.length < MAX; i++) {
+      var img = links[i].querySelector ? links[i].querySelector('img') : null;
+      if (!img) { continue; }
+      var src = img.getAttribute('src') || '';
+      if (!src) { continue; }
+      if (src.indexOf('/cdn/shop/') === -1 && src.indexOf('cdn.shopify.com') === -1) {
+        continue;
+      }
+      if (src.indexOf('//') === 0) { src = 'https:' + src; }
+      // Shopify sizes an image with a width parameter; asking for the gallery
+      // width is asking for the file the product page will ask for.
+      var at = src.indexOf('width=');
+      var url = at === -1
+        ? src + (src.indexOf('?') === -1 ? '?' : '&') + 'width=' + WIDTH
+        : src.slice(0, at) + 'width=' + WIDTH;
+      if (out.indexOf(url) === -1) { out.push(url); }
+    }
+    return out;
+  }
+
+  /** One at a time, fire and forget: a failure here is never the user's. */
+  function next(i, urls) {
+    if (i >= urls.length) { return; }
+    fetch(urls[i], {credentials: 'same-origin'})
+      .catch(function () {})
+      .then(function () { next(i + 1, urls); });
+  }
+
+  // A breath after the page settles: it is still decoding its own imagery.
+  setTimeout(function () {
+    try { next(0, targets()); } catch (e) {}
+  }, 1200);
+})();
+true;
+`;

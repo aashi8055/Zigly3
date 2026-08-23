@@ -93,7 +93,7 @@ const LOGIN_CSS = `
    ground -- see injectedStyles.ts. */
 html,
 html body {
-  background-color: #FFFAF1 !important;
+  background-color: #FFFFFF !important;
 }
 
 /* Nothing below applies until the widget has actually been found: the class is
@@ -120,7 +120,7 @@ html.zigly-otp .sotp-popup-wrapper {
   display: block !important;
   opacity: 1 !important;
   visibility: visible !important;
-  background: #FFFAF1 !important;
+  background: #FFFFFF !important;
   backdrop-filter: none !important;
   inset: auto !important;
   padding: 0 !important;
@@ -137,7 +137,7 @@ html.zigly-otp .sotp-form {
   border: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;
-  background: #FFFAF1 !important;
+  background: #FFFFFF !important;
   max-height: none !important;
   overflow: visible !important;
 }

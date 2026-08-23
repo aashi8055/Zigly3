@@ -268,8 +268,8 @@ const NativeHeader = ({
          * which is around eleven layout passes -- eleven resizes of an Android
          * WebView, mid-scroll. Its renderer cannot keep up with that, so the
          * 64px it had just been given stayed un-composited and painted as the
-         * container's own ground colour: a blank cream strip above the bottom
-         * bar, the same height as the band, for as long as the animation ran.
+         * container's own ground colour: a blank strip above the bottom bar,
+         * the same height as the band, for as long as the animation ran.
          *
          * One step means one resize and at most one frame of it. The collapse
          * is a scroll-driven change of state rather than a gesture the eye is

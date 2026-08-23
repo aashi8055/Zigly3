@@ -246,8 +246,15 @@ const CartScreen = ({
   );
 };
 
-/** The app ground, so the white line cards read as cards against it. */
-const GROUND = COLORS.ground;
+/**
+ * The ground the white line cards sit on.
+ *
+ * `surface`, not `ground`: the app's ground is white now, and full-bleed white
+ * cards separated by nothing but the gap between them would have no edge at
+ * all -- the list would read as one sheet. This is the same job the old warm
+ * ground did here, in a neutral grey.
+ */
+const GROUND = COLORS.surface;
 const HAIRLINE = '#ECEEF2';
 
 const styles = StyleSheet.create({

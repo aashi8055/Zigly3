@@ -132,15 +132,29 @@ export const COLORS = {
   inkMuted: '#767676',
   hairline: '#DDE3EC',
   /**
-   * The app's page ground: a warm off-white.
+   * The app's page ground: white, and the same white the store paints.
    *
-   * Distinct from `white`, which stays pure -- it is also the foreground colour
-   * of text and icons on the navy and red fills, so tinting it would tint them.
-   * Anything that is a *surface the page sits on* uses this; anything that is a
-   * card lifted off that surface stays `white`, which is what gives the card
-   * its edge without a border.
+   * It was a warm off-white (#FFFAF1) until 2026-08-23. The tint read badly
+   * for a reason that is not taste: the store paints its own sections, cards
+   * and rails pure white, so every one of them met the ground on a visible
+   * seam, and the seam moved while a page assembled -- a cream field, then
+   * white blocks landing on it one at a time. That is read as flicker, which
+   * is exactly what this app exists not to do. Agreeing with the site removes
+   * the boundary altogether: there is nothing left to repaint.
+   *
+   * Kept as its own token rather than folded into `white` because the two mean
+   * different things -- `white` is also the foreground colour of text on the
+   * navy and red fills -- and because the places that need a ground a card can
+   * sit *on* now say so, with `surface`.
    */
-  ground: '#FFFAF1',
+  ground: '#FFFFFF',
+  /**
+   * A neutral ground for the native list screens -- cart, orders, wishlist,
+   * addresses -- where white cards sit on it and would otherwise vanish into
+   * it. Grey, never cream: it is the same job the old warm ground did on those
+   * screens, done in a colour that does not fight the store's white.
+   */
+  surface: '#F4F6F9',
 };
 
 /** Minimum time the splash stays up, so it never flashes. */

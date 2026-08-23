@@ -73,7 +73,7 @@ import {
   showsSortFilterBar,
 } from '../utils/urlUtils';
 import {getInjectionForUrl} from '../webview/injectedScripts';
-import {PREFETCH_SCRIPT} from '../webview/prefetch';
+import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../webview/prefetch';
 import {log, warn} from '../utils/logger';
 import LoadingBar from '../components/LoadingBar';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
@@ -135,6 +135,21 @@ import {
 } from '../navigation/pageStack';
 import type {PageStack} from '../navigation/pageStack';
 import BottomNav from '../components/BottomNav';
+import SortFilterBar from '../components/SortFilterBar';
+import SortSheet from '../components/SortSheet';
+import FilterSheet from '../components/FilterSheet';
+import {
+  applySortScript,
+  READ_FACETS_SCRIPT,
+  toggleFacetScript,
+} from '../webview/facetBridge';
+import {
+  EMPTY_FACETS,
+  parseFacets,
+  selectSort,
+  toggleOption,
+} from '../listing/facets';
+import type {Facets} from '../listing/facets';
 import AccountScreen from '../components/AccountScreen';
 import EditProfileScreen from '../components/EditProfileScreen';
 import OrdersScreen from '../components/OrdersScreen';
@@ -337,6 +352,31 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * signing out has already replaced that screen with the login one.
    */
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  /**
+   * Sort and filter, per page layer.
+   *
+   * Per layer and not one shared value, for the same reason the layers exist at
+   * all: a collection is kept alive behind the product opened from it, and
+   * coming back must find the filters that were applied, not the ones from
+   * whatever listing was visited last. The state itself is the *page's* --
+   * SearchTap holds it, this only mirrors what the page reports (see
+   * ../webview/facetBridge).
+   */
+  const [facetsByKey, setFacetsByKey] = useState<Record<number, Facets>>({});
+  /** Which of the two sheets is up, if either. */
+  const [listingSheet, setListingSheet] = useState<'sort' | 'filter' | null>(
+    null,
+  );
+  /**
+   * A chip or a sort has been tapped and the site has not answered yet.
+   *
+   * Shown in the filter sheet's own header rather than as a blocking spinner:
+   * the chip has already been filled in optimistically, so the screen is
+   * usable, and this only says that the counts on the other chips are about to
+   * move. Cleared by the next report from the page, whatever it says.
+   */
+  const [facetBusy, setFacetBusy] = useState(false);
+  const listingSheetRef = useRef<'sort' | 'filter' | null>(null);
   /** True once scrolled away from the top; collapses the search band. */
   const [searchCollapsed, setSearchCollapsed] = useState(false);
   /** Shown when the page reports an add; the site still owns the cart. */
@@ -601,6 +641,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       // Same array when nothing was dropped, or this would loop forever.
       return next.length === prev.length ? prev : next;
     });
+    // And the sort/filter mirror, for the same reason: one entry per page
+    // opened in a session, each holding every facet value that page offered.
+    setFacetsByKey(prev => {
+      const keys = Object.keys(prev);
+      const stale = keys.filter(key => !live.has(Number(key)));
+      if (stale.length === 0) {
+        return prev;
+      }
+      const next = {...prev};
+      stale.forEach(key => delete next[Number(key)]);
+      return next;
+    });
   }, [stack.layers]);
 
   useEffect(() => {
@@ -702,6 +754,95 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     },
     [injectInto],
   );
+
+  // ------------------------------------------------------- sort and filter
+  /**
+   * The visible listing's sort and filter state.
+   *
+   * EMPTY_FACETS until the page reports, which is what puts the filter sheet on
+   * a spinner rather than on an empty screen: on a collection page SearchTap
+   * fetches no facets until something asks for them, and the bridge's warm-up
+   * asks while the app's cover is still over the page.
+   */
+  const facets: Facets =
+    (showing !== null ? facetsByKey[showing.key] : undefined) ?? EMPTY_FACETS;
+
+  const closeListingSheet = useCallback(() => setListingSheet(null), []);
+
+  const openSortSheet = useCallback(() => {
+    setListingSheet('sort');
+    // Ask for a fresh read as the sheet opens: cheap, and it means a sheet
+    // opened after a filter changed the applied sort shows the sort that is
+    // actually applied.
+    if (showing !== null) {
+      injectInto(showing.key, READ_FACETS_SCRIPT);
+    }
+  }, [injectInto, showing]);
+
+  const openFilterSheet = useCallback(() => {
+    setListingSheet('filter');
+    if (showing !== null) {
+      injectInto(showing.key, READ_FACETS_SCRIPT);
+    }
+  }, [injectInto, showing]);
+
+  /**
+   * Apply a sort, and show it applied now rather than when the site answers.
+   *
+   * The optimistic update is not decoration: the click below is a click on
+   * SearchTap's own button, which makes a request, and a tick that waits for
+   * that reads as a tap that missed. The next report from the page replaces the
+   * whole value, so a sort the site did not take corrects itself.
+   */
+  const chooseSort = useCallback(
+    (label: string) => {
+      if (showing === null) {
+        return;
+      }
+      const key = showing.key;
+      setFacetsByKey(prev => ({
+        ...prev,
+        [key]: selectSort(prev[key] ?? EMPTY_FACETS, label),
+      }));
+      setFacetBusy(true);
+      injectInto(key, applySortScript(label));
+    },
+    [injectInto, showing],
+  );
+
+  /** The same, for one filter value. */
+  const toggleFacet = useCallback(
+    (groupIndex: number, groupTitle: string, label: string) => {
+      if (showing === null) {
+        return;
+      }
+      const key = showing.key;
+      setFacetsByKey(prev => ({
+        ...prev,
+        [key]: toggleOption(prev[key] ?? EMPTY_FACETS, groupIndex, label),
+      }));
+      setFacetBusy(true);
+      injectInto(key, toggleFacetScript(groupIndex, groupTitle, label));
+    },
+    [injectInto, showing],
+  );
+
+  /** Kept for the back button, which reads it inside a native callback. */
+  useEffect(() => {
+    listingSheetRef.current = listingSheet;
+  }, [listingSheet]);
+
+  /**
+   * A sheet belongs to the page it was opened over.
+   *
+   * Without this, opening a product from a filtered collection and coming back
+   * could find the filter screen still up -- or, worse, up over a page whose
+   * facets it is not describing.
+   */
+  useEffect(() => {
+    setListingSheet(null);
+    setFacetBusy(false);
+  }, [showing?.key]);
 
   // -------------------------------------------------------------- page stack
   /**
@@ -1327,8 +1468,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   // ------------------------------------------------------------ back button
   useEffect(() => {
     const onBack = (): boolean => {
-      // The drawer is over everything, so it answers first: out of a category,
-      // then out of the drawer.
+      /*
+       * The sort and filter sheets are Modals, so Android normally hands Back
+       * straight to them and this never sees it. Answered here as well because
+       * "normally" is not a guarantee across versions, and the cost of being
+       * wrong is Back leaving a page while a sheet is still over it.
+       */
+      if (listingSheetRef.current !== null) {
+        setListingSheet(null);
+        return true;
+      }
+      // The drawer is over everything else, so it answers next: out of a
+      // category, then out of the drawer.
       if (menuOpenRef.current) {
         if (!menuRef.current?.stepBack()) {
           closeMenu();
@@ -1802,15 +1953,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     return null;
   })();
 
+  /** The visible page is a collection or a search result. */
+  const onListing = headerUrl !== null && showsSortFilterBar(headerUrl);
+
   /**
    * When the bar stands down.
    *
    * Search, because it is keyboard-first and the bar would sit on the keyboard.
    * Checkout, because that page is Shopify's and not somewhere to offer five
-   * ways out. Listing pages, because the injected Sort / Filter bar already
-   * pins itself there and the reference app shows that bar *instead of* the
-   * tabs. And the login screen, which is a single-purpose screen in the
-   * reference app too.
+   * ways out. Listing pages, because the Sort / Filter bar takes this slot
+   * there and the reference app shows that bar *instead of* the tabs. And the
+   * login screen, which is a single-purpose screen in the reference app too.
    */
   const showNav =
     !searchOpen &&
@@ -1819,7 +1972,27 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !menuOpen &&
     !inCheckout &&
     !(onAccountScreen && accountTop === 'login') &&
-    !(headerUrl !== null && showsSortFilterBar(headerUrl));
+    !onListing;
+
+  /**
+   * When the Sort / Filter bar shows: on a listing, and only when the listing
+   * is what the customer is actually looking at.
+   *
+   * The first three exclusions are the tab bar's, for its reasons. The rest are
+   * this bar's own: the cart, the wishlist and the account section are drawn
+   * over the page, and a control for a listing behind them would be a control
+   * for a screen nobody is on. The offline screen is excluded for the same
+   * reason -- there is no grid to sort.
+   */
+  const showSortFilter =
+    onListing &&
+    !searchOpen &&
+    !menuOpen &&
+    !inCheckout &&
+    !showCart &&
+    !wishlistOpen &&
+    !onAccountScreen &&
+    !showError;
 
   return (
     <View style={styles.root}>
@@ -2319,6 +2492,31 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       // is the page rather than the website, so it can be
                       // shown. See ../webview/readySignal.
                       markPainted(layer.key);
+                      /*
+                       * And now that the customer is not waiting on anything,
+                       * warm what they are most likely to open from here: the
+                       * gallery image of the first few products on the page. On
+                       * an unmetered connection only -- the same trade, and the
+                       * same refusal to make it silently on mobile data, as the
+                       * dashboard's own prefetch.
+                       */
+                      if (unmeteredRef.current) {
+                        injectInto(layer.key, PAGE_PREFETCH_SCRIPT);
+                      }
+                    } else if (data && data.tag === 'facets') {
+                      /*
+                       * The page's own sort and filter state, as SearchTap has
+                       * rendered it. Stored against this layer and drawn by the
+                       * native bar and its two sheets; nothing here decides what
+                       * a filter means. See ../listing/facets.
+                       */
+                      const read = parseFacets(data);
+                      if (read !== null) {
+                        setFacetsByKey(prev => ({...prev, [layer.key]: read}));
+                        // Whatever a tap was waiting for has arrived, whether or
+                        // not the site did what was asked.
+                        setFacetBusy(false);
+                      }
                     }
                   } catch {
                     // Page scripts may postMessage for their own reasons.
@@ -2497,6 +2695,41 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         page, so every native screen hid it.
       */}
       {showNav ? <BottomNav active={activeTab} onSelect={selectTab} /> : null}
+
+      {/*
+        Sort and Filter, in the tab bar's own slot -- the two are never on
+        screen together, which is the arrangement the reference app has on a
+        listing screen. Outside `body` for the same reason the tab bar is: it
+        takes its own space rather than floating over the page, so nothing in
+        the page has to be padded out from under it and no overlay inside the
+        page can cover it.
+
+        The panels it opens are below, and they are Modals: while one is up it
+        is the screen, over the header and the offer strip as well, which is
+        what the reference shows.
+      */}
+      {showSortFilter ? (
+        <SortFilterBar
+          onSortPress={openSortSheet}
+          onFilterPress={openFilterSheet}
+        />
+      ) : null}
+
+      <SortSheet
+        visible={showSortFilter && listingSheet === 'sort'}
+        options={facets.sortOptions}
+        selected={facets.sortLabel}
+        onSelect={chooseSort}
+        onClose={closeListingSheet}
+      />
+
+      <FilterSheet
+        visible={showSortFilter && listingSheet === 'filter'}
+        facets={facets}
+        busy={facetBusy}
+        onToggle={toggleFacet}
+        onClose={closeListingSheet}
+      />
 
       {/* Outside `body`: a toast is the one thing allowed over everything. */}
       <MessageToast

@@ -5,6 +5,7 @@
  * or payment page. A stray rule there could hide a payment control.
  */
 import {getInjectionForUrl} from '../src/webview/injectedScripts';
+import {FACET_BRIDGE_SCRIPT} from '../src/webview/facetBridge';
 import {EARLY_HEADER_CSS} from '../src/webview/headerBridge';
 import {HOT_PICKS_SCRIPT} from '../src/webview/hotPicks';
 
@@ -550,59 +551,111 @@ describe('getInjectionForUrl', () => {
     expect(script).not.toContain('/collections/rope-toys');
   });
 
-  describe('sort and filter bar', () => {
-    it("pins the site's own controls rather than rebuilding them", () => {
-      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(script).toContain('initial-search-sort');
-      expect(script).toContain('initial-search-filters');
-      // No hand-rolled sort options or filter UI.
+  describe('sort and filter', () => {
+    /*
+     * WHAT THESE TESTS USED TO SAY. Until 2026-08-23 the app moved SearchTap's
+     * own Sort and Filter controls into a bar it pinned inside the page, and
+     * this block tested the moving: that the nodes were relocated rather than
+     * cloned, that every one of them was collected, that a re-render was
+     * chased. All of that is gone with the bar. The controls are native now
+     * (../src/components/SortFilterBar and its two sheets) and the injection's
+     * job is the other half: hide the site's own chrome, and expose its engine.
+     */
+    const listing = () =>
+      getInjectionForUrl('https://zigly.com/collections/x') as string;
+
+    it('builds no bar inside the page any more', () => {
+      // The native bar takes the tab bar's own slot, so there is nothing to pin
+      // and nothing to pad the page out from under.
+      const script = listing();
+      expect(script).not.toContain('zigly-sortfilter-bar');
+      expect(script).not.toContain('zigly-has-sortfilter');
+      expect(script).not.toContain('padding-bottom: 96px');
+    });
+
+    it("hides the site's own sort and filter chrome", () => {
+      // Two of everything exists on a listing page from here on -- the site's
+      // controls and the app's -- and only one of them may be seen.
+      const script = listing();
+      for (const selector of [
+        'body.zigly-listing initial-search-sort',
+        'body.zigly-listing initial-search-filters',
+        'body.zigly-listing .st-filter-count-sort-wrap',
+        'body.zigly-listing initial-toolbox-bar',
+        'body.zigly-listing .sort_h',
+        'body.zigly-listing .filter_h',
+        'body.zigly-listing .mobilesearch',
+        'body.zigly-listing .st-sorting-wrapper',
+      ]) {
+        expect(script).toContain(selector);
+      }
+    });
+
+    it('hides them rather than removing them, because it drives them', () => {
+      // Every one of those elements is still working: the checkboxes are what a
+      // chip tap clicks and the buttons are what a sort tap clicks. Removing
+      // them would break the app's own controls and start SearchTap throwing.
+      // Asserted against the bridge alone -- the payload as a whole is entitled
+      // to remove nodes it owns, and several modules do.
+      expect(listing()).toContain('display: none !important');
+      expect(FACET_BRIDGE_SCRIPT).not.toContain('.remove()');
+      expect(FACET_BRIDGE_SCRIPT).not.toContain('removeChild');
+    });
+
+    it('reads the facets the site rendered, and never invents any', () => {
+      const script = listing();
+      // SearchTap's own markup, read on 2026-08-23.
+      expect(script).toContain(".querySelectorAll('.st-widget')");
+      expect(script).toContain(".querySelector('.st-widget-title')");
+      expect(script).toContain('.st-product-number');
+      // No facet name, no facet value and no sort label is authored here.
       expect(script).not.toContain('Price: Low to High');
+      expect(script).not.toContain('meta_pet_type');
+      expect(script).not.toContain('Royal Canin');
     });
 
-    it('relocates the real controls rather than cloning them', () => {
-      // Moving preserves their listeners, so they stay SearchTap's controls.
-      // Cloning would produce buttons that look right and do nothing.
-      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(script).toContain('bar.appendChild(toMove[m])');
-      expect(script).toContain('initial-search-sort');
-      expect(script).not.toContain('cloneNode');
+    it('applies a filter by clicking the site’s own checkbox', () => {
+      // Not by writing to SearchTap's store and not by rebuilding its query:
+      // a click is the path a tap on the website takes, so it gets the same
+      // state update, the same request and the same analytics event.
+      const script = listing();
+      expect(script).toContain("input[type=\"checkbox\"]");
+      expect(script).toContain('box.click()');
     });
 
-    it('collects every control, not just the first of each', () => {
-      // One of three reasons Sort and Filter showed up twice: querySelector
-      // moved the first of each and left any others where they were.
-      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(script).toContain("querySelectorAll('initial-search-filters')");
-      expect(script).toContain("querySelectorAll('initial-search-sort')");
-      expect(script).toContain("querySelectorAll('.st-filter-count-sort-wrap')");
+    it('applies a sort by clicking the site’s own button', () => {
+      const script = listing();
+      expect(script).toContain(".st-sorting-wrapper button[value]");
+      expect(script).toContain('buttons[i].click()');
     });
 
-    it('leaves a control that is already in the bar alone', () => {
-      // Re-appending is a detach and re-attach: it loses focus and can
-      // interrupt SearchTap's own transition.
-      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(script).toContain('found[i].parentNode !== bar');
+    it('leaves a value with no count out, which is what drops the slider', () => {
+      // SearchTap's price slider and its lone "Include Out Of Stock" toggle are
+      // not chips, and the sheet the app draws is chips. Neither carries a
+      // count, so neither survives the read -- no list of exclusions to keep.
+      const script = listing();
+      expect(script).toContain('if (count === null) { continue; }');
     });
 
-    it('re-pins on a re-render instead of polling for one', () => {
-      // The poll ran every 500ms and gave up after forty tries, so a filter
-      // change after the first twenty seconds left the duplicates up for the
-      // rest of the page's life. An observer fires in the same task as the
-      // render and does not expire.
-      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
+    it('asks the site for its facets rather than waiting to be given them', () => {
+      // A collection page fetches no facets until something opens Filter, so a
+      // sheet opened before that would have nothing in it. The site's own pill
+      // is clicked once, out of sight, while the app's cover is still up.
+      const script = listing();
+      expect(script).toContain(".querySelector('.filter_h')");
+      expect(script).toContain('pill.click()');
+      // And the drawer that opens is put back down through its own Apply.
+      expect(script).toContain(".querySelector('.mobilesearch .apply-btn')");
+    });
+
+    it('keeps up with a re-render instead of polling for one', () => {
+      // SearchTap replaces these components outright on every filter change,
+      // so the counts move under the sheet that is open over them.
+      const script = listing();
       expect(script).toContain('new MutationObserver');
       expect(script).toContain('childList: true, subtree: true');
-      // Coalesced: SearchTap replacing a toolbar is many records, and each one
-      // would otherwise cost a full sweep.
+      // Coalesced: one re-render is many records and each would cost a sweep.
       expect(script).toContain('if (pending) { return; }');
-    });
-
-    it('hides any control that is not in the bar, whatever the timing', () => {
-      // There is always a frame between SearchTap's render and our move, so
-      // the CSS closes the race rather than relying on the JavaScript winning.
-      const script = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(script).toContain('body.zigly-listing initial-search-sort');
-      expect(script).toContain('#zigly-sortfilter-bar initial-search-sort');
     });
 
     it('is not injected into checkout', () => {
@@ -610,58 +663,21 @@ describe('getInjectionForUrl', () => {
     });
 
     it('covers search results, not just collections', () => {
-      // SearchTap draws that grid too, and the reference app pins the same bar
-      // there. Bare /collections is excluded on purpose -- it is the card
-      // list, which has no products to sort.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
+      // SearchTap draws that grid too, and the app shows the same bar there.
+      // Bare /collections is excluded on purpose -- it is the card list, which
+      // has no products to sort.
+      const script = listing();
       expect(script).toContain("path.indexOf('/collections/') === 0");
       expect(script).toContain("path.indexOf('/search') === 0");
     });
 
-    it('refills a bar that SearchTap has emptied', () => {
-      // SearchTap re-renders its controls on a filter change, and the bar is
-      // then holding the stale nodes it moved earlier while the fresh ones sit
-      // at the top of the grid. The old early-out tested the bar for content,
-      // which is exactly the state that leaves -- so it stopped collecting and
-      // the page showed two of each. There is no early-out on content now.
+    it('does nothing at all off a listing page', () => {
+      // The bridge tests the path itself, so a product page carries it inert
+      // rather than carrying a different payload.
       const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
+        'https://zigly.com/products/x',
       ) as string;
-      expect(script).not.toContain('existing.children.length > 0');
-      // It early-outs only when there is genuinely nothing left to move.
-      expect(script).toContain('if (!toMove.length) { return; }');
-    });
-
-    it("clears SearchTap's paginating loader above the bar", () => {
-      // The loader draws at the foot of the grid, which is exactly where the
-      // pinned bar covers it -- the page then looks stuck rather than loading.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
-      expect(script).toContain('padding-bottom: 96px');
-      // The CSS reaches the page through JSON.stringify, so its double quotes
-      // arrive escaped -- match the fragment, not the quoted selector.
-      expect(script).toContain('st-load');
-      // Margin only: a class-fragment match on third-party markup must not be
-      // able to break the grid if it hits something unintended.
-      const rule = script.slice(
-        script.indexOf('st-load'),
-        script.indexOf('st-load') + 200,
-      );
-      expect(rule).toContain('margin-bottom');
-      expect(rule).not.toContain('display: none');
-      expect(rule).not.toContain('position: fixed');
-    });
-
-    it('flattens the pills into the bar without rebuilding them', () => {
-      // Presentation only: still SearchTap's elements and listeners.
-      const script = getInjectionForUrl(
-        'https://zigly.com/collections/x',
-      ) as string;
-      expect(script).toContain('#zigly-sortfilter-bar button');
-      expect(script).not.toContain('cloneNode');
+      expect(script).toContain('if (!isListing()) { return; }');
     });
   });
 
@@ -996,7 +1012,18 @@ describe('getInjectionForUrl', () => {
     it('waits for a listing grid, which SearchTap renders after first paint', () => {
       // A collection that has loaded is usually still an empty column.
       const s = getInjectionForUrl('https://zigly.com/collections/x') as string;
-      expect(s).toContain('#zigly-sortfilter-bar, initial-search-sort');
+      expect(s).toContain(
+        "'initial-search-sort, initial-search-filters, .card-wrapper'",
+      );
+    });
+
+    it('never reports an inner page ready while it is still unstyled', () => {
+      // The deadline is a promise that nobody waits for ever, not permission to
+      // show the mobile website: an unstyled page IS the mobile website. That
+      // case is left to the app's own cap instead.
+      const s = getInjectionForUrl('https://zigly.com/collections/x') as string;
+      expect(s).toContain('function styled()');
+      expect(s).toContain('(tries > cap && styled())');
     });
 
     it('reports even if a section never arrives', () => {

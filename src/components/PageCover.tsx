@@ -54,19 +54,23 @@ import {COLORS} from '../constants/appConstants';
 /**
  * How long the cover may stay up.
  *
- * Long enough to swallow a warmed page's load outright -- the prefetch has
- * already pulled the images for the category destinations -- and short enough
- * that a genuinely slow page is shown half-drawn, with the header's back arrow
- * right there, rather than hidden behind a spinner.
+ * This is a FAILSAFE and nothing else: it is what uncovers a page whose script
+ * never ran at all. It must therefore stay clear of the deadline the page
+ * itself answers on -- 2.4s, INNER_TRIES in ../webview/readySignal -- and that
+ * ordering is the fix for the complaint this number caused.
  *
- * It used to be 2200ms, when the cover came off on the page's load event and
- * this was only the fallback for a load that never finished. It is now the
- * fallback for a page that never reports itself *ready* -- styled, laid out,
- * top imagery decoded (see ../webview/readySignal) -- which is a later moment,
- * so the cap has to be a little later too or the thing it was raised to hide
- * shows through at the end of it anyway.
+ * It was 3000ms against a page deadline of 3600ms, which is the wrong way
+ * round. The cap fired first, so on any page that took more than three seconds
+ * to settle the cover came off before anything had said the page was ready:
+ * the customer got the half-built mobile website, which is precisely what the
+ * cover exists to hide. Every page now answers for itself and this only ever
+ * fires when nothing answers.
+ *
+ * Not longer than this, though. A page that is genuinely slow is better shown
+ * half-drawn, with the header's back arrow right there, than hidden behind a
+ * spinner -- and the loading bar above the page is running the whole time.
  */
-export const PAGE_COVER_CAP_MS = 3000;
+export const PAGE_COVER_CAP_MS = 4200;
 
 /**
  * The spinner waits before appearing.
@@ -106,7 +110,7 @@ const PULSE_MS = 850;
  * Which shape the placeholder takes.
  *
  *   grid    a listing -- collections and search, where the theme draws a card
- *           grid and this app pins its own Sort / Filter row above it
+ *           grid below the app's own Sort / Filter bar
  *   detail  a product -- one large gallery image, a title block, a buy control
  *   plain   everything else: a breed page, a content page, checkout. The old
  *           bare ground, because these have no shape worth claiming.
@@ -329,8 +333,14 @@ const PageCover = ({
         <Animated.View style={[styles.sheet, {opacity: skeleton}]}>
           {variant === 'grid' ? (
             <>
-              {/* The pinned Sort / Filter row this app builds on listings. */}
-              <Block pulse={pulse} style={styles.bar} />
+              {/*
+                Cards only. There used to be a bar block above them, standing in
+                for the Sort / Filter row this app drew inside the page. That row
+                is native now and outside the cover, so it is already on screen,
+                in place, while this is up -- a grey rectangle standing in for
+                something the customer can see would be the one shape in here
+                guaranteed not to line up.
+              */}
               <View style={styles.grid}>
                 <CardSkeleton pulse={pulse} />
                 <CardSkeleton pulse={pulse} />
@@ -378,7 +388,6 @@ const styles = StyleSheet.create({
   /** The placeholder sheet starts at the top, where the real page does. */
   sheet: {flex: 1, paddingHorizontal: 12, paddingTop: 12},
   block: {backgroundColor: FILL, borderRadius: 8},
-  bar: {height: 40, borderRadius: 10, marginBottom: 14},
   grid: {flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -5},
   card: {width: '50%', paddingHorizontal: 5, marginBottom: 18},
   /**

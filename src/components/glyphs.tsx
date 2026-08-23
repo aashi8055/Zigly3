@@ -394,6 +394,85 @@ export const ChevronDown = ({ size = 14, color = '#1B1B1B' }: Glyph) => (
   </View>
 );
 
+/* -------------------------------------------------------------------------- *
+ * The listing bar, its two sheets, and the two marks they need
+ *
+ * Geometry again, except the funnel: three bars of falling width read as "sort"
+ * at any size and cost nothing, but a funnel drawn out of stacked Views is the
+ * same seam problem as the heart -- so that one is a path.
+ * -------------------------------------------------------------------------- */
+
+/** Sort: three bars, longest first. */
+export const SortIcon = ({ size = 18, color = '#1B1B1B' }: Glyph) => (
+  <View style={{ width: size, gap: size * 0.2 }}>
+    {[1, 0.7, 0.42].map(fraction => (
+      <View
+        key={fraction}
+        style={{
+          width: size * fraction,
+          height: 1.7,
+          borderRadius: 1,
+          backgroundColor: color,
+        }}
+      />
+    ))}
+  </View>
+);
+
+/** Filter: a funnel, stroked rather than filled, as the reference draws it. */
+export const FilterIcon = ({ size = 18, color = '#1B1B1B' }: Glyph) => (
+  <Svg width={size} height={size} viewBox="0 0 20 20">
+    <Path
+      d="M2.5 3.5h15l-5.75 6.9v5.35l-3.5 1.75v-7.1z"
+      fill="none"
+      stroke={color}
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+/** The tick beside the sort that is applied. */
+export const CheckIcon = ({ size = 18, color = '#1B1B1B' }: Glyph) => (
+  <Svg width={size} height={size} viewBox="0 0 20 20">
+    <Path
+      d="M3.5 10.6 7.6 15 16.5 5"
+      fill="none"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+/** The close on a sheet. Two bars, so it stays sharp at any size. */
+export const CloseIcon = ({ size = 18, color = '#1B1B1B' }: Glyph) => (
+  <View
+    style={{
+      width: size,
+      height: size,
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}
+  >
+    {['45deg', '-45deg'].map(rotate => (
+      <View
+        key={rotate}
+        style={{
+          position: 'absolute',
+          width: size,
+          height: 1.8,
+          borderRadius: 1,
+          backgroundColor: color,
+          transform: [{ rotate }],
+        }}
+      />
+    ))}
+  </View>
+);
+
 const styles = StyleSheet.create({
   chevronDownBox: { alignItems: 'center', justifyContent: 'center' },
 });

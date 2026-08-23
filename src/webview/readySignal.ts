@@ -23,11 +23,29 @@ const TICK_MS = 150;
 /** ~10s for the dashboard, which has sections to assemble. */
 const HOME_TRIES = 66;
 /**
- * ~3.6s for an inner page. Past the app's own cover cap, so the app has already
- * revealed the page by the time this gives up -- this is only about not
- * polling a page nobody is waiting on any more.
+ * ~2.4s for an inner page, and it must stay BELOW the app's own cover cap.
+ *
+ * This was 24 (~3.6s), which was longer than PAGE_COVER_CAP_MS -- and that one
+ * ordering was the whole of the "it shows the website for a moment" bug. The
+ * app's cap fired first, so on every page that was not ready inside three
+ * seconds the cover came off while this watcher was still counting: the reveal
+ * happened at the one moment nobody had said the page was ready.
+ *
+ * Now the page always answers first and the cap is what it is meant to be -- a
+ * failsafe for a page whose script never ran at all.
+ *
+ * Answering is not the same as giving up: reaching this deadline unstyled does
+ * NOT report ready (see innerReady). Revealing an unstyled page is the thing
+ * the cover exists to prevent, so that case waits for the app's cap instead.
  */
-const INNER_TRIES = 24;
+const INNER_TRIES = 16;
+/**
+ * The hard stop on polling, unstyled or not. ~9s.
+ *
+ * Only about not leaving an interval running on a page nobody is waiting for:
+ * the app revealed this page at its cap seconds ago.
+ */
+const INNER_MAX_TRIES = 60;
 /** How many images are checked for "the top of the page has arrived". */
 const IMAGE_SAMPLE = 30;
 
@@ -116,12 +134,12 @@ export const READY_SIGNAL_SCRIPT = `
     if (isListing()) {
       /*
        * A listing page that has loaded is usually still an empty column:
-       * SearchTap renders the grid and its Sort / Filter controls itself. Any
-       * one of these means the grid has arrived -- the pinned bar this app
-       * builds, SearchTap's own controls, or a product card.
+       * SearchTap renders its own controls after first paint. Any one of these
+       * means the grid has arrived -- SearchTap's controls, or a product card
+       * from the theme's own server-rendered grid.
        */
       var grid = document.querySelector(
-        '#zigly-sortfilter-bar, initial-search-sort, initial-search-filters, .card-wrapper'
+        'initial-search-sort, initial-search-filters, .card-wrapper'
       );
       if (!grid) { return false; }
     }
@@ -129,19 +147,33 @@ export const READY_SIGNAL_SCRIPT = `
     return topImagesIn();
   }
 
+  /**
+   * The app's stylesheet is installed. Nothing is worth revealing before it:
+   * the whole difference between this app and the mobile website is in it.
+   */
+  function styled() {
+    return !!document.getElementById('zigly-app-styles');
+  }
+
   var home = isHome();
   var ready = home ? homeReady : innerReady;
   var tag = home ? 'dashboard-ready' : 'page-ready';
   var cap = home ? ${HOME_TRIES} : ${INNER_TRIES};
+  var stop = home ? ${HOME_TRIES} : ${INNER_MAX_TRIES};
 
   var tries = 0;
   var timer = setInterval(function () {
     tries++;
     var done = false;
     try { done = ready(); } catch (e) { done = true; }
-    if (done || tries > cap) {
-      // Reported either way: the app's own cap will already have fired on a
-      // page this slow, and a second reveal is a no-op.
+    /*
+     * Past the deadline, report anyway -- a missing section must delay the
+     * reveal, never trap the user -- but never while the page is still
+     * unstyled. An unstyled page IS the mobile website, and handing the app
+     * permission to show it is the one thing this signal must not do; the app's
+     * own cap covers that case instead, so nobody waits for ever either way.
+     */
+    if (done || (tries > cap && styled()) || tries > stop) {
       clearInterval(timer);
       send(tag);
     }

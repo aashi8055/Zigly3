@@ -90,16 +90,19 @@ export const isCheckoutUrl = (raw: string): boolean => {
 };
 
 /**
- * True on the pages the injected Sort / Filter bar pins itself to.
+ * True on the pages that get the app's Sort / Filter bar.
  *
  * The native bottom navigation stands down on exactly these, because the
  * reference app shows that bar *instead of* the tab bar on listing screens and
- * because two pinned bars would take a third of a phone screen between them.
+ * because two bars would take a third of a phone screen between them. The bar
+ * is native now (see ../components/SortFilterBar) and takes the tab bar's own
+ * slot, so this one answer decides both.
  *
- * The test deliberately mirrors `../webview/sortFilterBar.ts` line for line --
- * `/collections/` with the trailing slash, so the bare collection *list* is not
- * included, and `/search` because SearchTap draws that grid too. If one moves,
- * the other has to, or the bar and the gap for it stop agreeing.
+ * The test deliberately mirrors `../webview/listingPage.ts` and the same test
+ * inside `../webview/facetBridge.ts`, line for line -- `/collections/` with the
+ * trailing slash, so the bare collection *list* is not included, and `/search`
+ * because SearchTap draws that grid too. If one moves, the others have to, or
+ * the app shows a bar for a page that has nothing to drive it.
  */
 export const showsSortFilterBar = (raw: string): boolean => {
   const parsed = parseUrl(raw);

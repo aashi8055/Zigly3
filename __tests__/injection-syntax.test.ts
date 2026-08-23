@@ -35,7 +35,13 @@ import {
   LOGOUT_SCRIPT,
 } from '../src/webview/accountBridge';
 import {LOGIN_RESTYLE} from '../src/webview/loginRestyle';
-import {PREFETCH_SCRIPT} from '../src/webview/prefetch';
+import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../src/webview/prefetch';
+import {
+  applySortScript,
+  FACET_BRIDGE_SCRIPT,
+  READ_FACETS_SCRIPT,
+  toggleFacetScript,
+} from '../src/webview/facetBridge';
 
 const parses = (src: string): boolean => {
   try {
@@ -107,6 +113,9 @@ describe('every separately injected payload is valid too', () => {
     ['LOGOUT_SCRIPT', LOGOUT_SCRIPT],
     ['LOGIN_RESTYLE', LOGIN_RESTYLE],
     ['PREFETCH_SCRIPT', PREFETCH_SCRIPT],
+    ['PAGE_PREFETCH_SCRIPT', PAGE_PREFETCH_SCRIPT],
+    ['FACET_BRIDGE_SCRIPT', FACET_BRIDGE_SCRIPT],
+    ['READ_FACETS_SCRIPT', READ_FACETS_SCRIPT],
     // The parameterised ones, with a value that exercises the quoting: an
     // apostrophe and a backslash are what would break a hand-built string.
     ['suggestScript', suggestScript("dog's \\ bed", 1)],
@@ -114,6 +123,10 @@ describe('every separately injected payload is valid too', () => {
     ['changeQtyScript', changeQtyScript("line's\\key", 0)],
     ['addToCartScript', addToCartScript(123, 1)],
     ['removeFromWishlistScript', removeFromWishlistScript("a'b\\c")],
+    // Facet labels are Zigly's own strings, and a facet value with an
+    // apostrophe in it is one product away.
+    ['toggleFacetScript', toggleFacetScript(3, "Cat's", "rice 'n' oats \\ x")],
+    ['applySortScript', applySortScript("Price: 'low' \\ high")],
   ])('%s parses cleanly', (_name, script) => {
     expect(typeof script).toBe('string');
     expect(parses(script as string)).toBe(true);

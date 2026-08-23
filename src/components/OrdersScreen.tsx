@@ -101,12 +101,17 @@ const OrdersScreen = ({ orders, onOpenOrder }: Props) => {
 };
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.ground },
+  /**
+   * `surface`, not `ground`: the order rows are white cards with a gap between
+   * them and no border, so they need a ground to be lifted off. The app's own
+   * ground is white now, which would flatten the list into one sheet.
+   */
+  root: { flex: 1, backgroundColor: COLORS.surface },
   centre: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.ground,
+    backgroundColor: COLORS.surface,
   },
   list: { paddingVertical: 10, gap: 10 },
 

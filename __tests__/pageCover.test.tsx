@@ -30,6 +30,7 @@ import {ActivityIndicator} from 'react-native';
 import PageCover, {PAGE_COVER_CAP_MS} from '../src/components/PageCover';
 import type {CoverVariant} from '../src/components/PageCover';
 import {coverVariantFor} from '../src/screens/ZiglyWebViewScreen';
+import {READY_SIGNAL_SCRIPT} from '../src/webview/readySignal';
 
 /**
  * Every tree rendered here, so each test can be torn down.
@@ -245,10 +246,31 @@ describe('the page cover', () => {
   });
 
   it('publishes a cap that is short enough to escape and long enough to help', () => {
-    // Long enough to swallow a warmed page outright, short enough that a slow
-    // one is shown half-drawn with the back arrow rather than hidden.
+    // Short enough that a genuinely slow page is shown half-drawn with the back
+    // arrow rather than hidden behind a spinner.
     expect(PAGE_COVER_CAP_MS).toBeGreaterThanOrEqual(1000);
-    expect(PAGE_COVER_CAP_MS).toBeLessThanOrEqual(4000);
+    expect(PAGE_COVER_CAP_MS).toBeLessThanOrEqual(5000);
+  });
+
+  it('leaves the page room to answer for itself before the cap fires', () => {
+    /*
+     * The ordering that caused the bug this cap was blamed for. The page
+     * reports itself ready on its own deadline (INNER_TRIES x TICK_MS in
+     * ../src/webview/readySignal, ~2.4s); the cap is only for a page whose
+     * script never ran. With the cap the shorter of the two -- it was 3000ms
+     * against a page deadline of 3600ms -- the cover came off first on every
+     * page that took a moment to settle, which is exactly the half-built
+     * website the cover exists to hide.
+     *
+     * Read out of the script rather than restated here, so the two numbers
+     * cannot drift apart silently.
+     */
+    const script = READY_SIGNAL_SCRIPT;
+    const tick = Number(/\}, (\d+)\);/.exec(script)?.[1]);
+    const cap = Number(/var cap = home \? \d+ : (\d+);/.exec(script)?.[1]);
+    expect(tick).toBeGreaterThan(0);
+    expect(cap).toBeGreaterThan(0);
+    expect(tick * cap).toBeLessThan(PAGE_COVER_CAP_MS);
   });
 });
 

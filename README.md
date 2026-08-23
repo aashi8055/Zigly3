@@ -42,7 +42,7 @@ website:
 | App UI element | Actually rendered by |
 | --- | --- |
 | PDP *Add to Bag / Buy Now* bar | the site's `.mobile-atc-main` |
-| Listing *Sort / Filter* bar | SearchTap's `initial-search-sort` / `-filters` |
+| Listing *sort and filter* | SearchTap — the engine, not the UI; see below |
 | Category circles, coupons, breed rail | real Shopify sections |
 | Bottom navigation | the site's own `.fixed-icons` — but see below |
 
@@ -141,6 +141,7 @@ src/
 │   └── accountStack.ts         the account section's screens — see below
 ├── search/suggestions.ts       parsing the suggest payload — see below
 ├── search/placeholders.ts      the typewriter's cycle, as data — see below
+├── listing/facets.ts           sort and filter, as the app sees them — see below
 ├── wishlist/wishlistItems.ts   parsing the wishlist payload — see below
 ├── account/accountData.ts      parsing the account payloads — see below
 ├── utils/money.ts              one formatter, one unit (integer paise)
@@ -149,10 +150,13 @@ src/
 ├── webview/loginRestyle.ts     presenting the site's OTP widget as a screen
 ├── webview/bannerCarousel.ts   keeping the site's banner Swiper unstuck
 ├── webview/couponStrip.ts      the copy button, and stopping the marquee
+├── webview/facetBridge.ts      reading and driving SearchTap — see below
+├── webview/listingPage.ts      flagging a listing page for the listing CSS
 ├── components/                 NativeHeader, BottomNav, AnnouncementBar,
 │                               CartScreen, CartToast, SearchScreen,
 │                               WishlistScreen, AccountScreen, OrdersScreen,
 │                               AddressScreen, AddressFormScreen, SelectSheet,
+│                               SortFilterBar, SortSheet, FilterSheet,
 │                               EmptyState, LoadingBar, NetworkErrorScreen,
 │                               glyphs
 └── screens/                    SplashScreen, ZiglyWebViewScreen
@@ -372,9 +376,58 @@ native screen closes and the page stack is dismissed.
 
 The bar stands down in four places — the search screen (keyboard-first), Shopify
 checkout (not this app's screen, and not somewhere to offer five ways out),
-listing pages (the injected Sort / Filter bar already pins itself there, and the
-reference app shows that bar *instead of* the tabs — `showsSortFilterBar` in
-`urlUtils.ts` mirrors that script's own path test), and the login screen.
+listing pages (the Sort / Filter bar takes this slot there, and the reference app
+shows that bar *instead of* the tabs — `showsSortFilterBar` in `urlUtils.ts`
+mirrors the same path test the injected scripts make), and the login screen.
+
+## Sort and filter
+
+Native, and driven by the site. Three pieces:
+
+| Piece | What it is |
+| --- | --- |
+| `components/SortFilterBar` | the two halves at the foot of a listing, in the tab bar's own slot |
+| `components/SortSheet` | the five sorts, as a sheet over a dimmed screen |
+| `components/FilterSheet` | every facet as chips, full screen, over one *Apply* |
+| `webview/facetBridge` | reads SearchTap's state out of the page and clicks its controls |
+| `listing/facets` | the shape they exchange, and the optimistic updates |
+
+**The engine is never reimplemented.** zigly.com runs SearchTap (a Vue 3 app with
+a Pinia store, mounted over the theme's collection and search templates), and
+every heading, value, count and result on this screen is SearchTap's answer. The
+bridge reads them out of the rendered DOM — `.st-widget` for a facet,
+`.st-widget-title` for its heading, the hidden `input[type=checkbox]` for a
+value, `.st-product-number` for its count, `.st-sorting-wrapper button[value]`
+for a sort — and applies a change by **clicking** the same control a tap on the
+website clicks. Not by writing to their store: a click is their own code path,
+so it gets their state update, their request and their analytics event, and it
+survives them rebuilding the components.
+
+**The site's own chrome is hidden, never removed** (`injectedStyles.ts`). Its
+pills, its left-sliding drawer and its sort panel are all `display: none` on a
+listing page — while staying in the document, because they are what the app
+clicks. Removing them would break the app's own controls and start SearchTap
+throwing on every change.
+
+**Facets are asked for before the sheet opens.** A collection page ships the
+theme's server-rendered grid and SearchTap fetches no facets until something
+opens Filter — so the bridge clicks the site's own (hidden) Filter pill once per
+page, while the app's cover is still up, and closes the drawer that opens through
+its own *Apply*. By the time the customer taps Filter the chips are already
+there.
+
+**A chip applies on the tap**, exactly as the site's own filter does, so *Apply*
+only closes the screen. There is no *Clear All*: a chip that is on turns off when
+it is tapped again. Facets with no counted values — SearchTap's price slider, its
+lone out-of-stock toggle — never reach the sheet, by what they are rather than by
+a list of names.
+
+Two facets on this store are both called **Flavor** (`meta_flavour` and
+`st_meta_flavor`) and both offer *chicken*. A chip is therefore addressed by its
+facet's **position**, guarded by the heading; position alone would be fragile,
+since SearchTap re-renders these on every change, and the heading alone is
+ambiguous. `__tests__/facetBridge.test.ts` runs the real script against a
+stand-in for that markup rather than only reading it.
 
 ## The account section
 
@@ -701,7 +754,10 @@ there -- so device testing is the only trustworthy signal.
 | Every inner page reloaded on Back and on re-entry | Fixed by the keep-alive page stack |
 | Search did nothing until enter, and the pre-typing screen was blank | Fixed by the native search screen |
 | A backslash inside a template literal is eaten before the page sees it — `/\/products\//` shipped as `//products//` | Watch for it: the removal bridge splits strings instead, and `__tests__/injection-syntax.test.ts` parses every payload |
-| Sort/Filter bar emptied itself after a filter change, and never appeared on `/search` | Fixed in sortFilterBar.ts |
+| Sort/Filter bar emptied itself after a filter change, and never appeared on `/search` | Superseded: the bar and both panels are native now, and the site's controls are hidden rather than moved. See *Sort and filter* |
+| Sort and Filter opened SearchTap's own panels — a sheet of the site's design, and a drawer that slid in from the left | Fixed: both are the app's own, over the header as the reference shows. The engine is still SearchTap's, through `facetBridge` |
+| The page cover came off *before* the page reported itself ready — `PAGE_COVER_CAP_MS` was 3000ms against a page deadline of ~3600ms — so any page that took a moment to settle was revealed half-built | Fixed by making the page's deadline the shorter of the two (2.4s) and the cap a genuine failsafe (4.2s). The page will not report ready while it is still unstyled at all |
+| The app sat on a warm off-white while every section the store paints is pure white, so the seam between them moved as a page assembled and read as flicker | Fixed: the ground is white. The native list screens that need a card separator use `COLORS.surface` |
 | Listing cards showed the compact variant picker, not the reference's full-width Add to Bag | Fixed via `body.zigly-listing` — but see the row below; the first attempt did nothing |
 | Cards had *no* add control at all on a phone: the variant picker hidden by us, Add to Bag hidden by the theme | Fixed. Two mobile rules hid its container — `base.css`'s `.small-hide` and `product-card.css`'s `.product-card-wrapper .quick-add`. `display:block` on the button could never bring back a parent that is `display:none`, so the earlier fix was a no-op. The container is un-hidden and the floating "+ Add" chip hidden in its place |
 | The banner could not be swiped past its last slide | Fixed — see *Carousels*. The theme nests `loop` inside `autoplay`, where Swiper ignores it |

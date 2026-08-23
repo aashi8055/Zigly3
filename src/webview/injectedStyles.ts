@@ -36,9 +36,16 @@ html, body {
 /* ------------------------------------------------------------------
    Page ground.
 
-   The app's ground is a warm off-white, and the WebView is the largest
-   surface in it -- left on the theme's white the page would read as a white
-   sheet laid on a cream app.
+   White, and the same white the store paints. This carried a warm off-white
+   (#FFFAF1) until 2026-08-23, and the tint was removed for a reason that is
+   not taste: the theme's own sections, cards and rails are pure white, so
+   every one of them met the cream ground on a seam that moved while the page
+   assembled. Agreeing with the store leaves nothing to repaint.
+
+   The rule stays, rather than being deleted now that it states the colour the
+   store already asks for. It is the app's statement of its own ground -- the
+   native surfaces above and below the WebView carry the same token -- and it
+   is what the paint gate uncovers onto.
 
    Two elements in the selector, not one, and the reason is not style. The
    store ships this as the last thing inside its <body>, on every page type --
@@ -64,7 +71,7 @@ html, body {
    ------------------------------------------------------------------ */
 html,
 html body {
-  background-color: #FFFAF1 !important;
+  background-color: #FFFFFF !important;
 }
 
 /* ------------------------------------------------------------------
@@ -285,115 +292,56 @@ html body {
 }
 
 /* ------------------------------------------------------------------
-   Sort / Filter bar on collection pages (see sortFilterBar.ts).
-   The controls inside are SearchTap's own; this only places them.
+   The site's own sort and filter chrome: hidden.
 
-   The reference app shows this bar in place of the tab bar on collection
-   screens. The site's own nav is hidden everywhere now, and the *native* bar
-   stands down on these pages for the same reason -- see showsSortFilterBar in
-   ../utils/urlUtils.ts, which mirrors the path test this script uses.
-   ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------
-   One Sort and one Filter, never two.
+   The app draws both natively now -- ../components/SortFilterBar, SortSheet and
+   FilterSheet -- and drives the site's engine through ./facetBridge. So there
+   are two of everything on a listing page, and exactly one of them may be seen.
 
-   SearchTap re-renders its controls on every filter change and every page of
-   results, and it recreates them where they started -- at the top of the grid.
-   sortFilterBar.ts moves them into the pinned bar, and now re-pins from a
-   MutationObserver rather than a poll, but no amount of JavaScript makes that
-   race impossible: there is always a frame between their render and our move.
+   HIDDEN, NEVER REMOVED, and that is the whole design of this block rather than
+   an aside. Every one of these elements is still working: the checkboxes inside
+   .st-sidebar are what a chip tap clicks, the buttons inside
+   .st-sorting-wrapper are what a sort tap clicks, and .filter_h is clicked once
+   per page to make SearchTap fetch its facets at all. display:none hides an
+   element from the customer while leaving it in the document, clickable and
+   re-renderable; removing it would break the app's own controls and start
+   SearchTap throwing on every change.
 
-   This closes it. A control anywhere on a listing page is hidden; the same
-   control inside our bar is shown, and wins because an id beats a class. So the
-   duplicate at the top of the grid is never visible, whatever the timing --
-   and if the move fails outright, the bar is empty rather than doubled.
+   .st-sidebar is not listed: the theme already hides its wrapper below 767px
+   (searchtap-collection-template.css), which is exactly why the checkboxes in
+   it can be read and clicked without being seen.
 
-   Hidden, never removed: these are SearchTap's own custom elements, and their
-   scripts re-render into them. An element they cannot find is how a script
-   starts throwing on every filter change.
+   The mobile drawer and the sort panel are hidden unconditionally rather than
+   only while they are open: the app never wants either, and the facet warm-up
+   in ./facetBridge opens the drawer for a moment on purpose.
    ------------------------------------------------------------------ */
 body.zigly-listing .st-filter-count-sort-wrap,
 body.zigly-listing initial-search-filters,
-body.zigly-listing initial-search-sort {
+body.zigly-listing initial-search-sort,
+body.zigly-listing initial-toolbox-bar,
+body.zigly-listing .initialCollectionToolbar,
+body.zigly-listing .st-filter-bar,
+/* The two pills themselves, wherever they are drawn. A collection page and a
+   search page build their toolbars in different components but both use these
+   two class names, and after a filter is applied SearchTap replaces the grid
+   with its own -- which brings a third copy of them. Hiding the pill rather
+   than its container covers all three. */
+body.zigly-listing .sort_h,
+body.zigly-listing .filter_h,
+body.zigly-listing .mobilesearch,
+body.zigly-listing .mobilesearch-overlay,
+body.zigly-listing .st-sorting-wrapper,
+body.zigly-listing .st-overlay-active {
   display: none !important;
 }
-#zigly-sortfilter-bar .st-filter-count-sort-wrap,
-#zigly-sortfilter-bar initial-search-filters,
-#zigly-sortfilter-bar initial-search-sort {
-  display: flex !important;
-}
-
-#zigly-sortfilter-bar {
-  position: fixed !important;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 40;
-  display: flex;
-  align-items: stretch;
-  background: #FFFFFF;
-  border-top: 1px solid #E3E9F3;
-  box-shadow: 0 -4px 16px rgba(24, 55, 97, 0.10);
-  min-height: 56px;
-}
-#zigly-sortfilter-bar > * {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-/* Divider between the two controls. */
-#zigly-sortfilter-bar > *:first-child {
-  border-right: 1px solid #E3E9F3;
-}
-/* Clearance for the pinned bar. 56px of bar plus room to breathe: at 70px the
-   foot of the document sat almost against the strip, which is where SearchTap
-   draws its paginating loader -- so the page looked stuck rather than loading.
-   scroll-padding too, so an anchored jump cannot land behind the bar either. */
-body.zigly-has-sortfilter {
-  padding-bottom: 96px !important;
-  scroll-padding-bottom: 96px;
-}
-/* And lift the loader itself clear, for the case where it is not the last
-   thing in the document. Matched by class fragment because it is SearchTap's
-   markup, not the theme's -- the same approach used for the Gorgias launcher,
-   and the reason this sets nothing but a margin: a false positive costs a gap,
-   never a broken grid. */
-body.zigly-has-sortfilter [class*="st-load"],
-body.zigly-has-sortfilter [class*="st-spinner"],
-body.zigly-has-sortfilter [class*="st-infinite"] {
-  margin-bottom: 72px !important;
-}
-/* The controls arrive as SearchTap's own pills -- rounded, bordered, inset.
-   Inside a full-width bar they read as two buttons floating in a strip rather
-   than as the strip itself, so their chrome is flattened and they are stretched
-   to fill their half. Only presentation: these are still SearchTap's elements,
-   with SearchTap's listeners, opening Zigly's real panels. */
-#zigly-sortfilter-bar button,
-#zigly-sortfilter-bar [role="button"] {
-  width: 100% !important;
-  min-height: 56px !important;
-  margin: 0 !important;
-  padding: 0 12px !important;
-  background: transparent !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 8px !important;
-  font-size: 16px !important;
-  font-weight: 600 !important;
-  color: #1B1B1B !important;
-}
-/* A count badge SearchTap renders on the filter control must not be stretched
-   along with the button it sits in. */
-#zigly-sortfilter-bar button > svg,
-#zigly-sortfilter-bar button > img {
-  width: auto !important;
-  min-height: 0 !important;
-  flex: 0 0 auto !important;
+/* The drawer sets this on <body> while it is open. It does not open any more,
+   and the facet warm-up puts it back down through the site's own Apply -- but
+   if either ever failed, a page that cannot be scrolled is the worst outcome
+   available, so the scroll is asserted rather than trusted. Only the scroll:
+   the site's own rule for this class disables one animation, which is theirs to
+   decide. */
+body.zigly-listing.st-open-filter-section {
+  overflow: auto !important;
 }
 
 /* ------------------------------------------------------------------
@@ -409,7 +357,7 @@ body.zigly-has-sortfilter [class*="st-infinite"] {
    carry (see Hot Picks above), against the same verified theme markup, applied
    where the site draws the grid itself.
 
-   Scoped to body.zigly-listing, which sortFilterBar.ts sets on collection and
+   Scoped to body.zigly-listing, which listingPage.ts sets on collection and
    search pages only. It must never reach a product page: there,
    .mobile-atc-main IS the site's sticky Add to Bag bar and is meant to float.
    ------------------------------------------------------------------ */
