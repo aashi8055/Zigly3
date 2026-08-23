@@ -18,10 +18,8 @@
  * the exceptions -- both are real paths, because neither shape can be built
  * honestly out of stacked Views; see ./glyphs.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Animated,
-  Easing,
   Pressable,
   StyleSheet,
   Text,
@@ -195,34 +193,6 @@ const NativeHeader = ({
   searchPlaceholders,
   searchTypeMs = TYPE_MS,
 }: Props) => {
-  /**
-   * Height rather than translate: the band must give its space back so the page
-   * moves up behind it, not merely slide out of sight leaving a gap. Height is
-   * not a native-driver property, but this is one small view animating only on
-   * a scroll-direction change, not per frame.
-   */
-  const bandHeight = useRef(new Animated.Value(SEARCH_BAND_H)).current;
-  const bandOpacity = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(bandHeight, {
-        toValue: searchCollapsed ? 0 : SEARCH_BAND_H,
-        duration: 180,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: false,
-      }),
-      // Fades slightly ahead of the height so the field's border cannot show
-      // as a sliver while the last few pixels close.
-      Animated.timing(bandOpacity, {
-        toValue: searchCollapsed ? 0 : 1,
-        duration: searchCollapsed ? 120 : 180,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: false,
-      }),
-    ]).start();
-  }, [searchCollapsed, bandHeight, bandOpacity]);
-
   return (
     <View style={styles.root}>
       <View style={styles.bar}>
@@ -286,10 +256,30 @@ const NativeHeader = ({
       </View>
 
       {showSearch ? (
-        <Animated.View
+        /*
+         * Height, and set in ONE step -- not animated.
+         *
+         * The band has to give its space back rather than slide out of sight,
+         * or the page would not move up behind it. That means collapsing it is
+         * a layout change, and everything below the header is the WebView: the
+         * page view grows by exactly this band's height, at the bottom.
+         *
+         * It used to animate that height over 180ms with useNativeDriver:false,
+         * which is around eleven layout passes -- eleven resizes of an Android
+         * WebView, mid-scroll. Its renderer cannot keep up with that, so the
+         * 64px it had just been given stayed un-composited and painted as the
+         * container's own ground colour: a blank cream strip above the bottom
+         * bar, the same height as the band, for as long as the animation ran.
+         *
+         * One step means one resize and at most one frame of it. The collapse
+         * is a scroll-driven change of state rather than a gesture the eye is
+         * following, so it does not read as abrupt -- and 64px of blank above
+         * the navigation certainly did.
+         */
+        <View
           style={[
             styles.searchBand,
-            { height: bandHeight, opacity: bandOpacity },
+            { height: searchCollapsed ? 0 : SEARCH_BAND_H },
           ]}
           pointerEvents={searchCollapsed ? 'none' : 'auto'}
         >
@@ -314,7 +304,7 @@ const NativeHeader = ({
               />
             </Pressable>
           </View>
-        </Animated.View>
+        </View>
       ) : null}
     </View>
   );

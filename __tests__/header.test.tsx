@@ -232,6 +232,44 @@ describe('the typewriter costs nothing when it cannot be seen', () => {
   });
 });
 
+describe('collapsing the search band', () => {
+  const src = () =>
+    require('fs').readFileSync('src/components/NativeHeader.tsx', 'utf8');
+
+  it('gives its height back in one step, never animated', () => {
+    /*
+     * This one has a visible failure mode, so it is pinned.
+     *
+     * Everything below the header is the WebView, so collapsing the band grows
+     * the page view by exactly the band's height, at the bottom. Animating that
+     * height over 180ms with useNativeDriver:false is around eleven layout
+     * passes -- eleven resizes of an Android WebView, mid-scroll -- and its
+     * renderer cannot keep up: the 64px it has just been given stays
+     * un-composited and paints as the app's ground, a blank cream strip above
+     * the bottom bar for as long as the animation runs.
+     */
+    const s = src();
+    expect(s).toContain('{ height: searchCollapsed ? 0 : SEARCH_BAND_H }');
+    expect(s).not.toContain('Animated.timing');
+    expect(s).not.toContain('bandHeight');
+  });
+
+  it('still takes its space back, rather than sliding out of sight', () => {
+    // A translate would leave the page where it was, with a gap where the band
+    // had been -- which is the thing the height was chosen for originally.
+    const s = src();
+    expect(s).not.toContain('translateY');
+    expect(s).toContain("pointerEvents={searchCollapsed ? 'none' : 'auto'}");
+  });
+
+  it('keeps the band mounted at zero height', () => {
+    // Unmounting it would take the typewriter's state with it, and the prompt
+    // would start again from the first letter every time the page scrolled.
+    const tree = render({searchCollapsed: true});
+    expect(barLabel(tree.root)).not.toBeNull();
+  });
+});
+
 describe('the prompt is not announced letter by letter', () => {
   it('hides the animating label from assistive tech', () => {
     // The button carries its own label; a screen reader reading a half-typed
