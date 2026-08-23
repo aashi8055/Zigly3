@@ -272,13 +272,16 @@ html body {
 #zigly-hot-picks .atc-wrapper,
 #zigly-hot-picks .quick-add,
 #zigly-hot-picks .st-collection-atc {
-  position: static !important;
+  position: relative !important;
   inset: auto !important;
   width: 100% !important;
   max-width: 100% !important;
   margin: 0 !important;
-  z-index: auto !important;
   transform: none !important;
+}
+
+#zigly-hot-picks .quick-add {
+  z-index: 20 !important;
 }
 /*
    relative, never static: the theme's button carries ::before and ::after,
@@ -375,13 +378,16 @@ body.zigly-listing .mobile-atc-main,
 body.zigly-listing .atc-wrapper,
 body.zigly-listing .quick-add,
 body.zigly-listing .st-collection-atc {
-  position: static !important;
+  position: relative !important;
   inset: auto !important;
   width: 100% !important;
   max-width: 100% !important;
   margin: 0 !important;
-  z-index: auto !important;
   transform: none !important;
+}
+
+body.zigly-listing .quick-add {
+  z-index: 20 !important;
 }
 body.zigly-listing .card--variant--main-wrapper,
 body.zigly-listing .mobile-compact-variant-display,
@@ -436,7 +442,20 @@ body.zigly-listing .card-wrapper .product--below-content .card__heading a::after
   right: 0;
   bottom: 0;
   left: 0;
-  z-index: 0;
+  z-index: 1;
+}
+  body.zigly-listing .card-wrapper .quick-add,
+#zigly-hot-picks .card-wrapper .quick-add,
+[id^="zigly-x-"] .card-wrapper .quick-add {
+  position: relative !important;
+  z-index: 20 !important;
+}
+
+body.zigly-listing .card-wrapper .quick-add__submit,
+#zigly-hot-picks .card-wrapper .quick-add__submit,
+[id^="zigly-x-"] .card-wrapper .quick-add__submit {
+  position: relative !important;
+  z-index: 21 !important;
 }
 /* The badge strip across the top of the card is a container, not a control:
    only the heart inside it takes taps, so the rest of that band reaches the
@@ -445,11 +464,15 @@ body.zigly-listing .card-wrapper .tag-wrapper,
 #zigly-hot-picks .card-wrapper .tag-wrapper,
 [id^="zigly-x-"] .card-wrapper .tag-wrapper {
   pointer-events: none;
+   position: relative !important;
+  z-index: 30 !important;
 }
 body.zigly-listing .card-wrapper .swym-add-to-wishlist,
 #zigly-hot-picks .card-wrapper .swym-add-to-wishlist,
 [id^="zigly-x-"] .card-wrapper .swym-add-to-wishlist {
   pointer-events: auto;
+   position: relative !important;
+  z-index: 30 !important;
 }
 
 /* ------------------------------------------------------------------
