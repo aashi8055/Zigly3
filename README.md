@@ -149,6 +149,8 @@ src/
 ├── webview/accountBridge.ts    reading and writing the account in the page
 ├── webview/loginRestyle.ts     presenting the site's OTP widget as a screen
 ├── webview/bannerCarousel.ts   keeping the site's banner Swiper unstuck
+├── webview/brandRail.ts        standing the brand Swiper down, so the
+│                               rail scrolls by thumb — see below
 ├── webview/couponStrip.ts      the copy button, and stopping the marquee
 ├── webview/facetBridge.ts      reading and driving SearchTap — see below
 ├── webview/listingPage.ts      flagging a listing page for the listing CSS
@@ -723,6 +725,75 @@ One thing that looks like a defect and is not, recorded so it does not get
 handles it — `uniqueNavElements` defaults to true and narrows a multi-match
 string selector to nodes inside the instance's own element.
 
+## The brand rail
+
+Top Pet Brands is the one rail on the dashboard whose Swiper is **alive**, and
+that is the whole story of why it would not scroll.
+
+Every other rail here is transplanted — `extraSections.ts` fetches the section's
+markup and strips its `<script>` tags, so `el.swiper` is undefined and the
+injected CSS is free to lay the track out as a native horizontal scroller. The
+brand section is different: it is already on the homepage, so it is **moved**
+into the reference order rather than copied, and moving a node does not touch
+the Swiper instance attached to it.
+
+Read off the live section on 2026-08-23 (Swiper 11.2.4), the mobile breakpoint
+runs `slidesPerView: 'auto'`, `grid: { rows: 2, fill: 'row' }`, `speed: 1000`
+and `autoplay: { delay: 2500, disableOnInteraction: false }`. Two consequences,
+and both are felt as *the brands don't scroll properly*:
+
+- **Swiper owned the gesture.** It binds its own touch handlers on the
+  container, sets `touch-action: pan-y` there via its `swiper-horizontal` class
+  — which tells the browser to ignore horizontal pans outright — and answers a
+  drag by writing a `transform` on the wrapper. The stylesheet pins that
+  wrapper to `transform: none !important`, so Swiper computed a translate on
+  every frame of the drag and **none of it ever landed**. The finger moved and
+  the rail did not follow; the little movement there was came from whatever part
+  of the gesture leaked past Swiper's handler into the real scroller.
+- **Autoplay never stopped.** `disableOnInteraction: false` means touching the
+  rail does not even pause it, so a timer called `slideNext()` every 2.5s for as
+  long as the dashboard was open, tugging at a rail the customer was reading.
+
+`src/webview/brandRail.ts` destroys the instance rather than reconfiguring it.
+Reconfiguring would put Swiper's drag physics on the one rail whose every
+neighbour on the dashboard uses the platform's, so the gesture would still be
+the odd one out. Destroyed, the scroller the CSS already describes is simply
+left to work, with the browser's own momentum and rubber-band.
+
+Three details that are load-bearing:
+
+- `destroy(true, true)` — the second argument. Swiper's grid module positions
+  the second row with an inline `margin-top` on those slides, and its drag
+  writes an inline `transform` on the wrapper. Cleaning styles removes both at
+  the source instead of leaving the stylesheet to out-`!important` them. The
+  overrides stay anyway, because they also cover the window between first paint
+  and this running.
+- **It cannot be a one-shot.** The section's own tab handler runs
+  `currentSwiper.destroy(true, true)` and then initialises a *fresh* Swiper on
+  the newly active tab, on every Popular / Emerging click. Destroying once at
+  load would last exactly until the first tab tap. So the sweep runs again after
+  a click inside the section — the listener is on `document`, which in the
+  bubble phase is reached after the theme's own listener on the `<li>` has
+  already made the replacement.
+- **The dots are hidden only on a section actually released.** They are
+  Swiper's control and dead once it is gone, so `data-zigly-brand-native` is
+  written by the script and read by the CSS. If a release ever fails they stay
+  visible, because then they are the only way to move the rail.
+
+Nothing here touches a card, an image, a link, or the order of the brands. The
+tabs keep working: that handler toggles a class, and the class is what the
+stylesheet reads.
+
+### One trap this cost a build on
+
+`MOBILE_CSS` is a single template literal, so **a backtick anywhere in it ends
+the string**. Two comments written with backticks around identifier names turned
+the whole stylesheet into a parse error — and a stylesheet that does not parse
+is a page that looks completely untouched, with nothing in the log. The file's
+comments use plain prose for that reason, and `__tests__/brandRail.test.ts`
+asserts `MOBILE_CSS` contains no backtick at all. This is the same class of
+failure as the eaten-backslash one above, from the same cause.
+
 ## The coupon strip
 
 Two defects, one cause. The strip is transplanted, so its script is dropped —
@@ -812,6 +883,7 @@ there -- so device testing is the only trustworthy signal.
 | "Everything For" never appeared | Fixed. It checked `[id*="everything"]` to see whether the site already rendered the section, and matched our own reserved slot `zigly-x-everything`, so it disabled itself every time. The check now ignores `zigly-` ids |
 | Explore tiles opened empty listings | Fixed. Merged tiles had their link rewritten to a collection handle guessed from the label, guarded by a HEAD request — which passes for a published-but-empty collection. Five of sixteen tiles led to zero products. Tiles now keep the link Zigly gave them |
 | Brand cards showed two brands stacked per column | Fixed. The section's Swiper is initialised with `grid: { rows: 2 }`; the rail is laid out as a single-row native scroller instead |
+| The brand rail would not scroll smoothly by thumb | Fixed — see *The brand rail*. The CSS described a native scroller but the section's Swiper was still **alive**, holding the gesture and answering a drag with a transform that CSS pinned to `none`. `src/webview/brandRail.ts` stands the instance down |
 | Bestsellers was the homepage's "Trending Products" | Fixed — the rail in that slot is the pet page's `collection_product_section`, transplanted like every other section, under Zigly's own heading |
 | Logging in left the app: the Account tab, and every `/account` link, opened Shopify's own account page | Fixed — native account section, and account urls are taken over before they navigate |
 | No Account item in the bottom navigation | Fixed — the site's bar has none to restyle, so the bar is native and carries five tabs |

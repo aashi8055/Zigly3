@@ -918,7 +918,21 @@ body.zigly-listing .quick-add__submit {
    images, their links and their order stay the section's own; the Popular /
    Emerging tabs keep working, because that handler is the site's and it only
    toggles a class.
+
+   These rules describe the scroller. They cannot, on their own, make it scroll:
+   this is the one rail on the dashboard whose Swiper is still ALIVE -- the
+   section is moved into place, not transplanted -- and a live Swiper holds the
+   touch gesture, so the finger moved and the rail did not follow. That is what
+   brandRail.ts stands the instance down for. Read that file before changing
+   anything here; the two halves only work together.
    ------------------------------------------------------------------ */
+.home-brand-section-wrapper .home-shop-brand-swiper-wrapper {
+  /* Swiper's own swiper-horizontal sets touch-action: pan-y here, which tells
+     the browser to ignore horizontal pans outright. brandRail.ts removes that
+     class along with the instance, but the rail must not depend on the release
+     having gone through to accept a sideways thumb. */
+  touch-action: auto;
+}
 .home-brand-section-wrapper .home-shop-brand-swiper-wrapper .swiper-wrapper {
   display: flex !important;
   flex-wrap: nowrap !important;
@@ -929,6 +943,10 @@ body.zigly-listing .quick-add__submit {
   transform: none !important;
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x proximity;
+  touch-action: auto;
+  /* A flick that runs off the end stops there, instead of chaining into the
+     page's own scroll or into Android's edge-swipe back gesture. */
+  overscroll-behavior-x: contain;
   padding-bottom: 4px;
 }
 .home-brand-section-wrapper .home-shop-brand-swiper-wrapper .swiper-wrapper::-webkit-scrollbar {
@@ -946,6 +964,12 @@ body.zigly-listing .quick-add__submit {
    phone, where the rail is scrolled by thumb. */
 .home-brand-section-wrapper .swiper-button-next,
 .home-brand-section-wrapper .swiper-button-prev {
+  display: none !important;
+}
+/* The dots are Swiper's control and do nothing once its instance is gone -- so
+   they are hidden only on a section brandRail.ts has actually released. If a
+   release ever fails, they stay: they are then the only way to move the rail. */
+[data-zigly-brand-native='true'] .swiper-pagination {
   display: none !important;
 }
 

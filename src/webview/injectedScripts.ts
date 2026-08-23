@@ -11,6 +11,7 @@ import {MOBILE_CSS, buildStyleInjection} from './injectedStyles';
 import {HOME_LAYOUT_SCRIPT} from './homeLayout';
 import {PAGE_CACHE_SCRIPT} from './pageCache';
 import {BANNER_CAROUSEL_SCRIPT} from './bannerCarousel';
+import {BRAND_RAIL_SCRIPT} from './brandRail';
 import {COUPON_STRIP_SCRIPT} from './couponStrip';
 import {BREED_SECTION_SCRIPT} from './breedSection';
 import {HOT_PICKS_SCRIPT} from './hotPicks';
@@ -72,6 +73,7 @@ ${BREED_SECTION_SCRIPT}
 ${HOT_PICKS_SCRIPT}
 ${EXPLORE_SCRIPT}
 ${EXTRA_SECTIONS_SCRIPT}
+${BRAND_RAIL_SCRIPT}
 ${EVERYTHING_SCRIPT}
 ${INSTAGRAM_SECTION_SCRIPT}
 ${CART_TOAST_SCRIPT}
