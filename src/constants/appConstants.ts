@@ -157,6 +157,36 @@ export const COLORS = {
   surface: '#F4F6F9',
 };
 
+/**
+ * The paths the site puts a sortable product grid behind.
+ *
+ * This is the one place the answer is written down, and both the app and the
+ * page read it: `showsSortFilterBar` in ../utils/urlUtils decides whether to
+ * draw the Sort / Filter bar, and the same list is compiled into the injected
+ * scripts (see ../webview/listingPage.ts). They used to carry a copy each, with
+ * a comment asking whoever changed one to change the other.
+ *
+ * WHY THESE TWO AND NOTHING ELSE. The sort and filter engine on this store is
+ * SearchTap, and it is enabled on exactly two templates. Verified against the
+ * live site on 2026-08-23 by fetching each surface the app can reach and
+ * looking for the engine's own markup:
+ *
+ *   /collections/{handle}   the collection template. Carries
+ *                           #collectionmodalcontainer, initial-search-filters
+ *                           and initial-toolbox-bar. Tag, vendor and /all
+ *                           listings are the same template, and the trailing
+ *                           slash is what keeps the bare collection *list* out
+ *                           -- that page has no products on it to sort.
+ *   /search                 SearchTap renders the whole grid, so the served
+ *                           HTML shows nothing; the engine appears at runtime.
+ *
+ * And what was checked and does NOT have it: /collections (a list of collection
+ * cards), /pages/pet-breeds, and the breed landing pages such as /pages/dog --
+ * which carry 200-odd product cards but all of them inside carousels and themed
+ * rails, with no grid and no engine. A bar there would have nothing to drive.
+ */
+export const LISTING_PATHS = ['/collections/', '/search'];
+
 /** Minimum time the splash stays up, so it never flashes. */
 export const SPLASH_MIN_MS = 900;
 

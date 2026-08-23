@@ -314,6 +314,38 @@ describe('url policy', () => {
     expect(showsSortFilterBar(ORIGIN + '/collections')).toBe(false);
     expect(showsSortFilterBar(ORIGIN + '/')).toBe(false);
   });
+
+  it('covers every shape of collection listing the site can serve', () => {
+    // All of these are the same collection template, so all of them have the
+    // engine: a tag listing, the everything collection, and a vendor listing.
+    expect(showsSortFilterBar(ORIGIN + '/collections/all')).toBe(true);
+    expect(showsSortFilterBar(ORIGIN + '/collections/dog-food/grain-free')).toBe(
+      true,
+    );
+    expect(showsSortFilterBar(ORIGIN + '/collections/vendors?q=Sheba')).toBe(
+      true,
+    );
+    // And the pages that carry product cards but no engine: a breed landing
+    // page is carousels and themed rails, with nothing to sort.
+    expect(showsSortFilterBar(ORIGIN + '/pages/dog')).toBe(false);
+    expect(showsSortFilterBar(ORIGIN + '/pages/pet-breeds')).toBe(false);
+    expect(showsSortFilterBar(ORIGIN + '/products/a-dog-bed')).toBe(false);
+  });
+
+  it('survives a Shopify market prefix on the path', () => {
+    /*
+     * zigly.com publishes no market today. One added in the admin would prefix
+     * every url in the app at once -- and the failure would be silent: the bar
+     * would simply never appear again, on any listing, with nothing to say why.
+     */
+    expect(showsSortFilterBar(ORIGIN + '/en-in/collections/dog-food')).toBe(
+      true,
+    );
+    expect(showsSortFilterBar(ORIGIN + '/hi/search?q=dog')).toBe(true);
+    // And a first segment that is merely short is not mistaken for one.
+    expect(showsSortFilterBar(ORIGIN + '/en-in/pages/dog')).toBe(false);
+    expect(showsSortFilterBar(ORIGIN + '/collections')).toBe(false);
+  });
 });
 
 // ----------------------------------------------------------------- the stack

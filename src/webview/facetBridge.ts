@@ -43,6 +43,8 @@
  * the whole thing never runs outside a listing page.
  */
 
+import {LISTING_TEST_JS} from './listingPage';
+
 /** How long between polls while waiting for SearchTap's first render. */
 const TICK_MS = 400;
 /**
@@ -58,11 +60,8 @@ export const FACET_BRIDGE_SCRIPT = `
 (function () {
   if (window.__ziglyFacets) { return; }
 
-  function isListing() {
-    var path = window.location.pathname;
-    return path.indexOf('/collections/') === 0 || path.indexOf('/search') === 0;
-  }
-  if (!isListing()) { return; }
+${LISTING_TEST_JS}
+  if (!ziglyIsListing()) { return; }
 
   function send(payload) {
     try {

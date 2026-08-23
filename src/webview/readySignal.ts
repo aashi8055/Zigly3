@@ -18,6 +18,8 @@
  * `dashboard-ready` retires the splash, `page-ready` uncovers a page layer.
  */
 
+import {LISTING_TEST_JS} from './listingPage';
+
 /** Poll interval. Fine-grained: this decides how long a ready page waits. */
 const TICK_MS = 150;
 /** ~10s for the dashboard, which has sections to assemble. */
@@ -53,6 +55,7 @@ export const READY_SIGNAL_SCRIPT = `
 (function () {
   if (window.__ziglyReadyWatch) { return; }
   window.__ziglyReadyWatch = true;
+${LISTING_TEST_JS}
 
   function path() {
     var p = window.location.pathname;
@@ -65,10 +68,14 @@ export const READY_SIGNAL_SCRIPT = `
     return p === '' || p === '/' || p === '/index';
   }
 
-  /** A SearchTap grid: rendered after first paint, so worth waiting for. */
+  /**
+   * A SearchTap grid: rendered after first paint, so worth waiting for.
+   *
+   * The same test the rest of the app makes, compiled from the same list -- see
+   * LISTING_PATHS in ../constants/appConstants.
+   */
   function isListing() {
-    var p = path();
-    return p.indexOf('/collections/') === 0 || p.indexOf('/search') === 0;
+    return ziglyIsListing();
   }
 
   function send(tag) {

@@ -391,6 +391,99 @@ body.zigly-listing .card-wrapper {
 }
 
 /* ------------------------------------------------------------------
+   SearchTap's OWN grid, which is what a filtered listing shows.
+
+   The moment a filter or a sort is applied, SearchTap empties .searchtap-temp
+   and renders the results itself -- so the customer is looking at a different
+   card component from the one they were looking at a second earlier. Same
+   products, same prices, different card. That is the join this block closes:
+   the filtered grid is made to read as the grid it replaced.
+
+   It is not a rebuild, and it is mostly not even new rules. SearchTap's card
+   carries the theme's own class names on the parts that matter --
+   product-card-wrapper, card-wrapper, quick-add__submit, button--secondary,
+   atc-wrapper, mobile-compact-variant-display -- so the listing-card block
+   above already reaches it: the compact chip is hidden, the floating Add to Bag is
+   unpinned and stretched, the card clips its own contents. What is left is the
+   handful of things SearchTap draws that the theme does not, read out of its
+   ProductCard render on 2026-08-23:
+
+     .st-product          a bordered, rounded, padded white card. The theme's
+                          sits on the page with no edge of its own.
+     .st-review           the rating, absolutely positioned as a white chip
+                          over the foot of the image. The theme puts it in the
+                          flow, under the image, which is where the reference
+                          app has it.
+     .st-swatches         a row of size chips. The theme's equivalent is the
+                          variant picker, which the block above hides for the
+                          same reason: the reference app shows a plain
+                          full-width Add to Bag.
+     .st-product-price    price and Add to Bag side by side in one row. The
+                          theme stacks them, price then button.
+
+   Presentation only, as everywhere else here. Every control keeps its
+   listeners: the Add to Bag is still SearchTap's button adding through the
+   site's own cart, and the swatches are hidden rather than removed so its own
+   scripts still find them.
+   ------------------------------------------------------------------ */
+body.zigly-listing .st-product {
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+/*
+   The size chips, for the reason the theme's variant picker is hidden above:
+   the reference app shows a plain full-width Add to Bag and no picker.
+
+   NOT the brand line, and not the title's weight. Both were on the list until
+   the theme's own card was read back: it renders product--brand--wrapper with
+   the same brand and the same veg/non-veg mark, and its title is fw-700. They
+   are already the same on both cards, and "matching" them would have been this
+   block introducing the difference it exists to remove.
+ */
+body.zigly-listing .st-swatches {
+  display: none !important;
+}
+/* The rating, back into the flow under the image and out of its chip. */
+body.zigly-listing .st-review {
+  position: static !important;
+  inset: auto !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 8px 0 0 !important;
+  letter-spacing: normal !important;
+}
+/*
+   Price above, Add to Bag below and full width.
+
+   column-reverse rather than a reorder, because SearchTap puts the button
+   first in the DOM and the price second -- reversing the visual order of the
+   two is the whole change, and it needs no knowledge of how many children
+   there are.
+ */
+body.zigly-listing .st-product-price {
+  flex-direction: column-reverse !important;
+  flex-wrap: nowrap !important;
+  align-items: stretch !important;
+  gap: 10px !important;
+}
+/* The wrapper the button sits in is a red pill floating at the corner of the
+   card. Unpinned by the block above; its own fill and radius come off here, so
+   what shows is the theme's button underneath. */
+body.zigly-listing .atc-wrapper.st-atc {
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+/* SearchTap's results row is inset by a negative margin meant for a page with
+   wider gutters than this one. At -15px a side it hangs off a phone screen. */
+body.zigly-listing .st-main-content-wrap {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+
+/* ------------------------------------------------------------------
    The site's bottom navigation: hidden, because the app now draws its own.
 
    This app used to show the site's bar and restyle it, on the reasoning that a

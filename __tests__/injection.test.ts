@@ -6,6 +6,7 @@
  */
 import {getInjectionForUrl} from '../src/webview/injectedScripts';
 import {FACET_BRIDGE_SCRIPT} from '../src/webview/facetBridge';
+import {LISTING_PATHS} from '../src/constants/appConstants';
 import {EARLY_HEADER_CSS} from '../src/webview/headerBridge';
 import {HOT_PICKS_SCRIPT} from '../src/webview/hotPicks';
 
@@ -667,8 +668,26 @@ describe('getInjectionForUrl', () => {
       // Bare /collections is excluded on purpose -- it is the card list, which
       // has no products to sort.
       const script = listing();
-      expect(script).toContain("path.indexOf('/collections/') === 0");
-      expect(script).toContain("path.indexOf('/search') === 0");
+      LISTING_PATHS.forEach(path => expect(script).toContain(path));
+      expect(LISTING_PATHS).toContain('/collections/');
+      expect(LISTING_PATHS).toContain('/search');
+    });
+
+    it('asks the same question the app asks, from the same list', () => {
+      /*
+       * The app decides whether to draw the bar (showsSortFilterBar) and the
+       * page decides whether to drive the engine, and a disagreement is either
+       * a bar with nothing behind it or an engine nobody can reach. Both are
+       * compiled from LISTING_PATHS now, so this checks the compile happened
+       * rather than checking two hand-written copies still match.
+       */
+      const script = listing();
+      expect(script).toContain('function ziglyIsListing()');
+      expect(script).toContain(JSON.stringify(LISTING_PATHS));
+      // And the market prefix is stripped, as the app strips it: a Shopify
+      // market added in the admin would otherwise silently retire the bar.
+      expect(script).toContain('function ziglyListingPath()');
+      expect(script).toContain("first.charAt(2) === '-'");
     });
 
     it('does nothing at all off a listing page', () => {
@@ -677,7 +696,7 @@ describe('getInjectionForUrl', () => {
       const script = getInjectionForUrl(
         'https://zigly.com/products/x',
       ) as string;
-      expect(script).toContain('if (!isListing()) { return; }');
+      expect(script).toContain('if (!ziglyIsListing()) { return; }');
     });
   });
 
@@ -699,10 +718,69 @@ describe('getInjectionForUrl', () => {
       const script = getInjectionForUrl(
         'https://zigly.com/products/x',
       ) as string;
-      expect(script).toContain('function isListing()');
-      expect(script).toContain("path.indexOf('/collections/') === 0");
+      expect(script).toContain('function ziglyIsListing()');
+      expect(script).toContain('if (!ziglyIsListing() || !document.body)');
       // Nothing keys the card rules on a product path.
       expect(script).not.toContain("indexOf('/products/') === 0");
+    });
+
+    it('makes SearchTap’s own grid read as the grid it replaces', () => {
+      /*
+       * A filter or a sort makes SearchTap empty .searchtap-temp and render the
+       * results itself, so the customer gets a different card component for the
+       * same products. These are the parts it draws differently.
+       */
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      // A bordered, rounded, padded white card, against a theme card with no
+      // edge of its own.
+      expect(script).toContain('body.zigly-listing .st-product {');
+      // The rating, out of its floating chip and back under the image.
+      expect(script).toContain('body.zigly-listing .st-review');
+      // Price above a full-width Add to Bag, rather than the two side by side.
+      expect(script).toContain('body.zigly-listing .st-product-price');
+      expect(script).toContain('flex-direction: column-reverse !important');
+      // The red pill the button floats in, unfilled so the theme's own button
+      // shows through it.
+      expect(script).toContain('body.zigly-listing .atc-wrapper.st-atc');
+    });
+
+    it('leaves alone what the two cards already share', () => {
+      /*
+       * The theme's card renders product--brand--wrapper -- the same brand and
+       * the same veg/non-veg mark SearchTap's does -- and its title is fw-700,
+       * as SearchTap's is. Restyling either would be this block introducing the
+       * difference it exists to remove, which is what the first draft did.
+       */
+      const script = getInjectionForUrl(
+        'https://zigly.com/collections/x',
+      ) as string;
+      expect(script).not.toContain('.st-brand-wrapper');
+      expect(script).not.toContain('.st-product-name');
+    });
+
+    it('does not reach a product page, where the same card also appears', () => {
+      /*
+       * SearchTap's autocomplete draws this card on every page, so an unscoped
+       * rule would restyle a search suggestion on a product page. Every one of
+       * them is behind the listing flag, which listingPage.ts sets on listing
+       * paths only.
+       */
+      const script = getInjectionForUrl(
+        'https://zigly.com/products/x',
+      ) as string;
+      for (const selector of [
+        '.st-product {',
+        '.st-review {',
+        '.st-product-price {',
+        '.st-swatches {',
+      ]) {
+        expect(script).toContain(`body.zigly-listing ${selector}`);
+        // The same selector starting a line of its own would be unscoped. A
+        // newline in front is what proves it is not.
+        expect(script).not.toContain(`\n${selector}`);
+      }
     });
 
     it('flags the page whether or not the bar ever appears', () => {

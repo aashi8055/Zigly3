@@ -16,29 +16,48 @@
  * site's own sticky Add to Bag bar and is supposed to float. A class on <body>
  * is how a stylesheet written in advance can tell the difference.
  */
+import {LISTING_PATHS} from '../constants/appConstants';
 
 /** The class the listing rules in ./injectedStyles are scoped to. */
 export const LISTING_FLAG = 'zigly-listing';
 
+/**
+ * The listing test, as JavaScript for the page.
+ *
+ * Shared, and compiled from LISTING_PATHS rather than written out again: this
+ * file, ./facetBridge and `showsSortFilterBar` in ../utils/urlUtils all have to
+ * give the same answer, and they used to hold three hand-copied versions of it
+ * kept in step by a comment. The market prefix is stripped for the reason the
+ * app strips it -- see `withoutMarket` there.
+ *
+ * Defines `ziglyIsListing()` in whatever scope it is dropped into.
+ */
+export const LISTING_TEST_JS = `
+  function ziglyListingPath() {
+    var path = (window.location.pathname || '/').toLowerCase();
+    var first = path.split('/')[1] || '';
+    if (first.length === 2 || (first.length === 5 && first.charAt(2) === '-')) {
+      path = path.slice(first.length + 1) || '/';
+    }
+    return path;
+  }
+
+  function ziglyIsListing() {
+    var path = ziglyListingPath();
+    var prefixes = ${JSON.stringify(LISTING_PATHS)};
+    for (var i = 0; i < prefixes.length; i++) {
+      if (path.indexOf(prefixes[i]) === 0) { return true; }
+    }
+    return false;
+  }
+`;
+
 export const LISTING_PAGE_SCRIPT = `
 (function () {
   var LISTING_FLAG = '${LISTING_FLAG}';
-
-  /**
-   * A listing page: a product grid with sort and filter.
-   *
-   * '/collections/' with the slash on purpose -- bare '/collections' is the
-   * collection *list* (the cards module), which has no products to sort.
-   * '/search' is included because SearchTap powers that grid too, and the app
-   * shows the same bar there.
-   */
-  function isListing() {
-    var path = window.location.pathname;
-    return path.indexOf('/collections/') === 0 || path.indexOf('/search') === 0;
-  }
-
+${LISTING_TEST_JS}
   function flagListing() {
-    if (!isListing() || !document.body) { return; }
+    if (!ziglyIsListing() || !document.body) { return; }
     if (document.body.className.indexOf(LISTING_FLAG) === -1) {
       document.body.className = document.body.className + ' ' + LISTING_FLAG;
     }

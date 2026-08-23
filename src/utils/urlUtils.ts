@@ -23,6 +23,7 @@ import {
   EXTERNAL_HOSTS,
   CHECKOUT_PATH_MARKERS,
   APP_INTENT_SCHEMES,
+  LISTING_PATHS,
 } from '../constants/appConstants';
 import {warn} from './logger';
 
@@ -90,6 +91,25 @@ export const isCheckoutUrl = (raw: string): boolean => {
 };
 
 /**
+ * Drop a Shopify market prefix, if the path carries one.
+ *
+ * Shopify serves a localised storefront as `/{lang}` or `/{lang}-{region}`
+ * ahead of the real path -- `/en-in/collections/wet-food`. zigly.com does not
+ * publish one today, but a market added in the admin would change every URL in
+ * the app at once, and the failure would be silent: the listing test below
+ * would stop matching, the Sort / Filter bar would never appear again, and
+ * nothing would say why. Two characters, or two-dash-two, is the whole of
+ * Shopify's format, and no first path segment this app cares about looks like
+ * that.
+ */
+const withoutMarket = (path: string): string => {
+  const first = path.split('/')[1] ?? '';
+  const localeLike =
+    first.length === 2 || (first.length === 5 && first.charAt(2) === '-');
+  return localeLike ? path.slice(first.length + 1) || '/' : path;
+};
+
+/**
  * True on the pages that get the app's Sort / Filter bar.
  *
  * The native bottom navigation stands down on exactly these, because the
@@ -98,19 +118,19 @@ export const isCheckoutUrl = (raw: string): boolean => {
  * is native now (see ../components/SortFilterBar) and takes the tab bar's own
  * slot, so this one answer decides both.
  *
- * The test deliberately mirrors `../webview/listingPage.ts` and the same test
- * inside `../webview/facetBridge.ts`, line for line -- `/collections/` with the
- * trailing slash, so the bare collection *list* is not included, and `/search`
- * because SearchTap draws that grid too. If one moves, the others have to, or
- * the app shows a bar for a page that has nothing to drive it.
+ * The paths come from LISTING_PATHS, which is also what the injected scripts
+ * are compiled against -- see ../webview/listingPage.ts. They used to hold a
+ * copy each, agreeing only by a comment asking the next person to keep them in
+ * step; a bar drawn for a page with no engine behind it, or an engine left
+ * undriven, is what that disagreement looks like.
  */
 export const showsSortFilterBar = (raw: string): boolean => {
   const parsed = parseUrl(raw);
   if (!parsed || !isInternalHost(parsed.host)) {
     return false;
   }
-  const path = parsed.path.toLowerCase();
-  return path.startsWith('/collections/') || path.startsWith('/search');
+  const path = withoutMarket(parsed.path.toLowerCase());
+  return LISTING_PATHS.some(prefix => path.startsWith(prefix));
 };
 
 /**

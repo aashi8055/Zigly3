@@ -429,6 +429,50 @@ since SearchTap re-renders these on every change, and the heading alone is
 ambiguous. `__tests__/facetBridge.test.ts` runs the real script against a
 stand-in for that markup rather than only reading it.
 
+### Where the bar appears
+
+`LISTING_PATHS` in `appConstants.ts`, and nowhere else. The app reads it through
+`showsSortFilterBar`; the injected scripts are **compiled** against the same
+list (`LISTING_TEST_JS` in `listingPage.ts`), so the page and the app cannot
+disagree — they used to hold three hand-copied path tests kept in step by a
+comment. A market prefix (`/en-in/collections/…`) is stripped on both sides:
+zigly.com publishes no market today, and one added in the admin would otherwise
+retire the bar silently, on every listing at once.
+
+The list is two entries because the engine exists on two templates. Checked
+against the live site on 2026-08-23, by fetching each surface the app can reach
+and looking for SearchTap's own markup:
+
+| Surface | Engine | So |
+| --- | --- | --- |
+| `/collections/{handle}` — including tag, vendor and `/all` listings | yes | bar |
+| `/search` | yes (rendered at runtime) | bar |
+| `/collections` — the list of collection cards | no | no products to sort |
+| `/pages/pet-breeds` | no | — |
+| `/pages/dog` and the other breed landing pages | no | 200-odd product cards, but all inside carousels and themed rails. No grid, and nothing the site can sort |
+
+A bar on a rail-based page would need a *second* engine, filtering client-side
+over whatever happened to be on the page — which is the one thing this design
+refuses to do, because it would drift from the website within a week.
+
+### After a filter: SearchTap's own grid
+
+Applying anything makes SearchTap empty `.searchtap-temp` and render the results
+itself, so the customer gets a different card component for the same products.
+`injectedStyles.ts` closes that join, and it is mostly not new rules — SearchTap's
+card carries the theme's own class names on the parts that matter
+(`product-card-wrapper card-wrapper`, `quick-add__submit button--secondary`,
+`atc-wrapper`, `mobile-compact-variant-display`), so the listing-card block
+already reaches it. What is left is the four things it draws differently: a
+bordered, rounded, padded card; the rating as a floating chip over the image
+rather than in the flow under it; a row of size chips; and price and Add to Bag
+side by side rather than stacked.
+
+Two things were on that list and came off it after the theme's own card was read
+back: the **brand line** (`product--brand--wrapper`, with the same veg/non-veg
+mark) and the **bold title** (`fw-700`) are on both cards already. "Matching"
+them would have been this block introducing the difference it exists to remove.
+
 ## The account section
 
 Native: an account screen, orders, addresses, an address form, and a login
@@ -756,6 +800,8 @@ there -- so device testing is the only trustworthy signal.
 | A backslash inside a template literal is eaten before the page sees it — `/\/products\//` shipped as `//products//` | Watch for it: the removal bridge splits strings instead, and `__tests__/injection-syntax.test.ts` parses every payload |
 | Sort/Filter bar emptied itself after a filter change, and never appeared on `/search` | Superseded: the bar and both panels are native now, and the site's controls are hidden rather than moved. See *Sort and filter* |
 | Sort and Filter opened SearchTap's own panels — a sheet of the site's design, and a drawer that slid in from the left | Fixed: both are the app's own, over the header as the reference shows. The engine is still SearchTap's, through `facetBridge` |
+| A filtered listing showed a different product card from an unfiltered one — SearchTap renders its own grid once anything is applied | Fixed. See *After a filter* |
+| Three hand-copied listing-path tests — the app's, the flag script's and the bridge's — kept in step by a comment asking the next person to | Fixed: one `LISTING_PATHS`, compiled into the scripts |
 | The page cover came off *before* the page reported itself ready — `PAGE_COVER_CAP_MS` was 3000ms against a page deadline of ~3600ms — so any page that took a moment to settle was revealed half-built | Fixed by making the page's deadline the shorter of the two (2.4s) and the cap a genuine failsafe (4.2s). The page will not report ready while it is still unstyled at all |
 | The app sat on a warm off-white while every section the store paints is pure white, so the seam between them moved as a page assembled and read as flicker | Fixed: the ground is white. The native list screens that need a card separator use `COLORS.surface` |
 | Listing cards showed the compact variant picker, not the reference's full-width Add to Bag | Fixed via `body.zigly-listing` — but see the row below; the first attempt did nothing |
