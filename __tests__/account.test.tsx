@@ -332,6 +332,34 @@ describe('url policy', () => {
     expect(showsSortFilterBar(ORIGIN + '/products/a-dog-bed')).toBe(false);
   });
 
+  it('keeps the bar off a product opened from a collection', () => {
+    /*
+     * Every card in a Zigly grid links to
+     * `/collections/{collection}/products/{handle}`, so the ordinary way into a
+     * product page carries '/collections/' in front of it. That answered the
+     * listing test, and the product page drew Sort and Filter along its foot --
+     * two controls for a grid nobody is looking at. The bare `/products/` form
+     * above has always been false; these are the same page.
+     */
+    expect(
+      showsSortFilterBar(ORIGIN + '/collections/dog-toys/products/a-dog-bed'),
+    ).toBe(false);
+    expect(
+      showsSortFilterBar(
+        ORIGIN + '/collections/all/products/squeeezys-latex-monster?variant=42',
+      ),
+    ).toBe(false);
+    // Including behind a market prefix, for the reason the next test gives.
+    expect(
+      showsSortFilterBar(
+        ORIGIN + '/en-in/collections/dog-toys/products/a-dog-bed',
+      ),
+    ).toBe(false);
+    // The collection itself still has its bar -- this removes it from the
+    // product page only.
+    expect(showsSortFilterBar(ORIGIN + '/collections/dog-toys')).toBe(true);
+  });
+
   it('survives a Shopify market prefix on the path', () => {
     /*
      * zigly.com publishes no market today. One added in the admin would prefix

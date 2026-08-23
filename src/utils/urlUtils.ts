@@ -123,6 +123,15 @@ const withoutMarket = (path: string): string => {
  * copy each, agreeing only by a comment asking the next person to keep them in
  * step; a bar drawn for a page with no engine behind it, or an engine left
  * undriven, is what that disagreement looks like.
+ *
+ * A product opened from a collection is the one exception, and it is not a
+ * corner case: every card in a Zigly grid links to
+ * `/collections/{collection}/products/{handle}`, which starts with
+ * '/collections/' and so answered the listing test. The product page then drew
+ * Sort and Filter along its foot -- two controls for a grid that is not on
+ * screen, in the slot the tab bar wants. A plain `/products/{handle}` already
+ * answered false here, so this only makes the collection-scoped form of the
+ * same page behave like the page it is.
  */
 export const showsSortFilterBar = (raw: string): boolean => {
   const parsed = parseUrl(raw);
@@ -130,6 +139,9 @@ export const showsSortFilterBar = (raw: string): boolean => {
     return false;
   }
   const path = withoutMarket(parsed.path.toLowerCase());
+  if (path.indexOf('/products/') !== -1) {
+    return false;
+  }
   return LISTING_PATHS.some(prefix => path.startsWith(prefix));
 };
 
