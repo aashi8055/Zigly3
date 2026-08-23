@@ -6,8 +6,8 @@
  * intentionally no navigator — with one WebView and one splash, a navigation
  * graph would be ceremony.
  */
-import React, {useCallback, useEffect, useState} from 'react';
-import {StatusBar, StyleSheet, View} from 'react-native';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {Animated, Easing, StatusBar, StyleSheet, View} from 'react-native';
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
@@ -15,6 +15,7 @@ import {
 
 import {
   COLORS,
+  SPLASH_FADE_MS,
   SPLASH_MIN_MS,
   SPLASH_MAX_MS,
 } from './src/constants/appConstants';
@@ -55,7 +56,46 @@ const Shell = () => {
 
   const handleFirstLoad = useCallback(() => setWebReady(true), []);
 
-  const splashVisible = !minElapsed || !webReady;
+  /**
+   * The splash's own opacity, and whether it has finished getting out of the
+   * way.
+   *
+   * Two pieces of state rather than one because the splash has to outlive the
+   * decision to retire it: it is still on screen, fading, after the app is
+   * ready. Unmounting on `ready` alone is the cut this replaces.
+   */
+  const splashFade = useRef(new Animated.Value(1)).current;
+  const [splashGone, setSplashGone] = useState(false);
+
+  /**
+   * Ready, and never un-ready.
+   *
+   * Both inputs latch true, so this cannot go back -- which is the property
+   * that rules out the failure the fade is here to avoid: the loader coming off,
+   * the page appearing, and a loader appearing again over it.
+   */
+  const ready = minElapsed && webReady;
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    const fade = Animated.timing(splashFade, {
+      toValue: 0,
+      duration: SPLASH_FADE_MS,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    });
+    // Unmounted only once it is actually invisible. `finished` is false when the
+    // animation was stopped -- on unmount -- and setting state then would be a
+    // write into a dead tree.
+    fade.start(({finished}) => {
+      if (finished) {
+        setSplashGone(true);
+      }
+    });
+    return () => fade.stop();
+  }, [ready, splashFade]);
 
   return (
     <View
@@ -79,11 +119,20 @@ const Shell = () => {
       <ZiglyWebViewScreen onFirstLoad={handleFirstLoad} />
 
       {/* Splash ignores the insets and covers the whole screen. */}
-      {splashVisible ? (
-        <View style={[styles.splashLayer, {top: -insets.top, bottom: -insets.bottom}]}>
+      {splashGone ? null : (
+        <Animated.View
+          style={[
+            styles.splashLayer,
+            {top: -insets.top, bottom: -insets.bottom, opacity: splashFade},
+          ]}
+          // Taps stop being swallowed the moment the page is ready, not when
+          // the fade ends: the page underneath is finished, and a couple of
+          // hundred milliseconds of dead screen after it is visibly there is
+          // the kind of unresponsiveness a fade is supposed to hide, not add.
+          pointerEvents={ready ? 'none' : 'auto'}>
           <SplashScreen />
-        </View>
-      ) : null}
+        </Animated.View>
+      )}
     </View>
   );
 };

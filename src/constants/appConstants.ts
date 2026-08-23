@@ -155,6 +155,35 @@ export const SPLASH_MIN_MS = 900;
  */
 export const SPLASH_MAX_MS = 7000;
 
+/**
+ * How long the splash takes to dissolve once the dashboard is ready.
+ *
+ * It used to be unmounted outright, and a cut is exactly what reads as the
+ * "twitch" this app was accused of: the eye catches the frame boundary between
+ * two white screens and reports it as a glitch, not as progress. A fade over a
+ * few frames is read as one screen becoming another.
+ *
+ * Short on purpose. This time is spent *after* the page is ready, so every
+ * millisecond here is a millisecond the customer waits for nothing.
+ */
+export const SPLASH_FADE_MS = 240;
+
+/**
+ * How long after the document has loaded the splash will still wait for the
+ * dashboard to report itself assembled.
+ *
+ * The splash lifts on `dashboard-ready` (see ../webview/readySignal), not on
+ * the load event -- a load ending is the document arriving, and revealing then
+ * showed the transplanted sections filling in afterwards, in full view. But a
+ * signal that never comes -- an injection that did not run, a page shape the
+ * watcher does not recognise -- must not cost the whole of SPLASH_MAX_MS.
+ *
+ * So this is the middle deadline: measured from load end rather than from
+ * launch, which is what makes it a grace period for assembly rather than a
+ * second guess at how slow the network is.
+ */
+export const SPLASH_READY_GRACE_MS = 2500;
+
 /* ------------------------------------------------------------------
    Account.
 

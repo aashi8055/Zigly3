@@ -79,6 +79,93 @@ describe('the status bar behind it', () => {
   });
 });
 
+describe('when the splash comes down', () => {
+  const shell = () =>
+    require('fs').readFileSync('src/screens/ZiglyWebViewScreen.tsx', 'utf8');
+  const app = () => require('fs').readFileSync('App.tsx', 'utf8');
+
+  it('waits for the dashboard to report itself assembled', () => {
+    /*
+     * The bug this pins. The splash used to lift on the dashboard's own
+     * onLoadEnd, and a load ending is the *document* arriving, not the page:
+     * the sections this app transplants are assembled by scripts that run at
+     * that moment and after it. So the customer was handed a home page still
+     * filling itself in -- the 100-300ms "twitch" the whole splash exists to
+     * prevent. It now waits for `dashboard-ready`; see ../src/webview/
+     * readySignal.
+     */
+    const s = shell();
+    const at = s.indexOf("data.tag === 'dashboard-ready'");
+    expect(at).toBeGreaterThan(-1);
+    expect(s.slice(at, at + 400)).toContain('retireSplash()');
+  });
+
+  it('does not lift on the document load event', () => {
+    // The one place it must not happen. What load end arms is the grace period
+    // below, not the reveal.
+    const s = shell();
+    const at = s.indexOf('const handleLoadEnd = useCallback(');
+    expect(at).toBeGreaterThan(-1);
+    const handler = s.slice(at, s.indexOf('  );', at));
+    expect(handler).not.toContain('onFirstLoad()');
+    expect(handler).toContain('SPLASH_READY_GRACE_MS');
+  });
+
+  it('has a deadline for a ready signal that never comes', () => {
+    // An injection that did not run, or a page shape the watcher does not
+    // recognise, must not cost the whole of SPLASH_MAX_MS.
+    const {
+      SPLASH_MAX_MS,
+      SPLASH_MIN_MS,
+      SPLASH_READY_GRACE_MS,
+    } = require('../src/constants/appConstants');
+    expect(SPLASH_READY_GRACE_MS).toBeGreaterThan(SPLASH_MIN_MS);
+    expect(SPLASH_READY_GRACE_MS).toBeLessThan(SPLASH_MAX_MS);
+  });
+
+  it('lifts for the error screen, which it would otherwise hide', () => {
+    const s = shell();
+    const at = s.indexOf("warn('load error:'");
+    expect(at).toBeGreaterThan(-1);
+    expect(s.slice(at, at + 400)).toContain('retireSplash()');
+  });
+
+  it('lifts once and only once', () => {
+    // Three callers, one of them a timer that may already have been beaten to
+    // it. The guard is what stops the second one re-running App's reveal.
+    const s = shell();
+    const at = s.indexOf('const retireSplash = useCallback(');
+    expect(at).toBeGreaterThan(-1);
+    const body = s.slice(at, at + 600);
+    expect(body).toContain('if (firstLoadDone.current)');
+    expect(body).toContain('clearTimeout(splashGrace.current)');
+  });
+
+  it('fades rather than being cut away, and never comes back', () => {
+    /*
+     * Two failures in one test, because they are the same mistake seen from
+     * either end. A splash unmounted the instant the app is ready changes on a
+     * single frame boundary, which the eye reports as a glitch; and a reveal
+     * driven by a value that can go back down would show the page and then put
+     * a loader over it again. So: an opacity animation with an unmount at the
+     * end of it, latched on inputs that only ever go true.
+     */
+    const s = app();
+    expect(s).toContain('SPLASH_FADE_MS');
+    expect(s).toContain('setSplashGone(true)');
+    expect(s).toContain('const ready = minElapsed && webReady;');
+    // Gone only when the fade finished, never on `ready` alone.
+    expect(s).toContain('{splashGone ? null : (');
+    expect(s).not.toContain('splashVisible');
+  });
+
+  it('stops swallowing taps as soon as the page is ready', () => {
+    // The page underneath is finished; holding taps for the length of the fade
+    // would make it feel dead at the very moment it arrived.
+    expect(app()).toContain("pointerEvents={ready ? 'none' : 'auto'}");
+  });
+});
+
 describe('the launcher icon is the real one', () => {
   const png = (path: string) => require('fs').readFileSync(path);
 

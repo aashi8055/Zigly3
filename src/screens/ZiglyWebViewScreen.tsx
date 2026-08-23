@@ -55,6 +55,7 @@ import NetInfo from '@react-native-community/netinfo';
 import {
   COLORS,
   LOGIN_URL,
+  SPLASH_READY_GRACE_MS,
   START_URL,
   SUPPORT_EMAIL,
   SUPPORT_PAGE_URL,
@@ -76,6 +77,7 @@ import {PREFETCH_SCRIPT} from '../webview/prefetch';
 import {log, warn} from '../utils/logger';
 import LoadingBar from '../components/LoadingBar';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
+import type {CoverVariant} from '../components/PageCover';
 import NativeHeader from '../components/NativeHeader';
 import AnnouncementBar from '../components/AnnouncementBar';
 import CartToast from '../components/CartToast';
@@ -128,6 +130,7 @@ import {
   noteNavigation,
   onDashboard,
   openPage,
+  sameDocument,
   visibleLayer,
 } from '../navigation/pageStack';
 import type {PageStack} from '../navigation/pageStack';
@@ -204,6 +207,40 @@ export const isShopUrl = (url: string): boolean => {
   );
 };
 
+/**
+ * Which placeholder the cover should show for a destination.
+ *
+ * Read off the url the layer is *going to*, not the one it is on: the cover goes
+ * up before the document exists, so there is nothing to measure. Only the two
+ * shapes this app can honestly claim -- a listing's card grid and a product's
+ * gallery -- and 'plain' for everything else, which is the quiet ground the
+ * cover has always been. See ../components/PageCover.
+ *
+ * '/collections' with no handle is the all-collections page, which is a set of
+ * category tiles rather than a product grid: it takes 'plain' rather than being
+ * promised a grid it is not going to draw.
+ */
+export const coverVariantFor = (url: string): CoverVariant => {
+  const path = (url || '').split('?')[0].split('#')[0];
+  if (path.indexOf('/products/') !== -1) {
+    return 'detail';
+  }
+  if (path.indexOf('/collections/') !== -1 || path.indexOf('/search') !== -1) {
+    return 'grid';
+  }
+  return 'plain';
+};
+
+/**
+ * Whether a url is a document this app should treat as a navigation at all.
+ *
+ * `about:blank`, `javascript:` and `data:` urls reach onLoadStart on some paths,
+ * and treating one as a page load would put a progress bar over a page that is
+ * not going anywhere.
+ */
+const isDocumentUrl = (url: string): boolean =>
+  url.indexOf('http://') === 0 || url.indexOf('https://') === 0;
+
 /** True for the dashboard itself, ignoring query and trailing slash. */
 const isHomeUrl = (url: string): boolean => {
   let path = url.split('?')[0].split('#')[0];
@@ -228,11 +265,30 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const webRef = useRef<Web>(null);
   /** One entry per mounted page layer, keyed as pageStack keys them. */
   const layerRefs = useRef<Map<number, Web>>(new Map());
+  /**
+   * The url of the last document each layer actually finished loading.
+   *
+   * This is what tells the three kinds of onLoadStart apart, which is the whole
+   * difficulty: the event fires for a layer's first load, for a real navigation
+   * inside it, and for a same-document jump -- Android's onPageStarted fires on
+   * a fragment change too -- and they must not be treated alike. A layer with no
+   * entry here has never committed a document, so its cover has nothing behind
+   * it and must be opaque at once; an entry that matches the incoming url means
+   * the customer is looking at that page already, so covering it would be the
+   * needless blanking this arrangement exists to avoid.
+   *
+   * Recorded at load *end* rather than from onNavigationStateChange on purpose.
+   * That callback also runs during a load, so comparing against it would be
+   * comparing the incoming url with itself.
+   */
+  const committedUrls = useRef<Map<number, string>>(new Map());
 
   /** Read inside native callbacks, so it must be a ref, not state. */
   const canGoBackRef = useRef(false);
   const inCheckoutRef = useRef(false);
   const firstLoadDone = useRef(false);
+  /** The wait for `dashboard-ready` after the document has finished loading. */
+  const splashGrace = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * Which WebView is mid-navigation, or null. Only the visible one's progress
@@ -440,6 +496,42 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     menuOpenRef.current = menuOpen;
   }, [menuOpen]);
 
+  /**
+   * Lift the splash.
+   *
+   * Idempotent, and the only way the splash comes down from in here: it used to
+   * be lifted from three places, one of which was the dashboard's load event,
+   * and that one was wrong. A load ending is the *document* arriving -- the
+   * transplanted sections are assembled by scripts that run at that moment and
+   * later -- so lifting there put the customer in front of a home page still
+   * filling itself in, which is the flash this whole arrangement is about. The
+   * splash now waits for the page's own `dashboard-ready` (see
+   * ../webview/readySignal), with two deadlines behind it: SPLASH_READY_GRACE_MS
+   * from load end, and App's own SPLASH_MAX_MS from launch.
+   */
+  const retireSplash = useCallback(() => {
+    if (splashGrace.current) {
+      clearTimeout(splashGrace.current);
+      splashGrace.current = null;
+    }
+    if (firstLoadDone.current) {
+      return;
+    }
+    firstLoadDone.current = true;
+    onFirstLoad();
+  }, [onFirstLoad]);
+
+  /** A grace timer must not fire into an unmounted tree. */
+  useEffect(
+    () => () => {
+      if (splashGrace.current) {
+        clearTimeout(splashGrace.current);
+        splashGrace.current = null;
+      }
+    },
+    [],
+  );
+
   /** This layer has something to show; PageCover comes off it. */
   const markPainted = useCallback((key: number) => {
     setPaintedLayers(prev => (prev.includes(key) ? prev : [...prev, key]));
@@ -496,6 +588,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   useEffect(() => {
     const live = new Set(stack.layers.map(layer => layer.key));
+    // The same eviction applies to the committed-url ledger: keys are never
+    // reused, so a stale entry cannot mislead a new layer, but it would grow by
+    // one for every page opened in a session.
+    committedUrls.current.forEach((_url, key) => {
+      if (!live.has(key)) {
+        committedUrls.current.delete(key);
+      }
+    });
     setPaintedLayers(prev => {
       const next = prev.filter(key => live.has(key));
       // Same array when nothing was dropped, or this would loop forever.
@@ -1473,12 +1573,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     (event: {nativeEvent: {url: string}}) => {
       setLoadingTarget(prev => (prev === 'home' ? null : prev));
       applyStyles('home', event.nativeEvent.url);
-      if (!firstLoadDone.current) {
-        firstLoadDone.current = true;
-        onFirstLoad();
+      /*
+       * The splash deliberately does NOT lift here -- see retireSplash. What is
+       * armed instead is the grace period: the dashboard has its document and is
+       * now assembling itself, and if it never says so the splash comes down
+       * anyway rather than waiting out the whole of SPLASH_MAX_MS.
+       */
+      if (!firstLoadDone.current && splashGrace.current === null) {
+        splashGrace.current = setTimeout(retireSplash, SPLASH_READY_GRACE_MS);
       }
     },
-    [applyStyles, onFirstLoad],
+    [applyStyles, retireSplash],
   );
 
   /**
@@ -1850,10 +1955,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             warn('load error:', nativeEvent.description);
             setLoadError(nativeEvent.description ?? 'Load failed');
             // Still release the splash, otherwise it hides the error screen.
-            if (!firstLoadDone.current) {
-              firstLoadDone.current = true;
-              onFirstLoad();
-            }
+            retireSplash();
           }}
           onHttpError={({nativeEvent}) => {
             // Shopify serves a real 404 page; only surface server-side failures.
@@ -1875,7 +1977,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               } else if (data && data.tag === 'menu') {
                 setMenu(parseMenu(data, ZIGLY_ORIGIN));
               } else if (data && data.tag === 'dashboard-ready') {
-                onFirstLoad();
+                // The moment the splash has been waiting for: styled, laid out,
+                // sections transplanted, top imagery decoded.
+                retireSplash();
                 // Read the menu now so the first tap of the hamburger opens on
                 // a filled drawer rather than a spinner.
                 injectInto('home', READ_MENU_SCRIPT);
@@ -2123,12 +2227,38 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
                   handleScroll(e.nativeEvent.contentOffset.y)
                 }
-                onLoadStart={() => {
+                onLoadStart={e => {
+                  const url = e.nativeEvent.url;
+                  // about:blank and javascript: urls are not navigations; a
+                  // progress bar over one is a bar over a page going nowhere.
+                  if (!isDocumentUrl(url)) {
+                    return;
+                  }
                   setLoadingTarget(layer.key);
                   injectInto(layer.key, EARLY_HEADER_CSS);
-                  // A link inside the page navigates this layer in place, so
-                  // the cover has to come back for the page now arriving.
-                  unmarkPainted(layer.key);
+                  /*
+                   * Three kinds of load reach here and only one of them wants a
+                   * cover.
+                   *
+                   *   the layer's first document -- nothing behind it, so it is
+                   *     already uncovered and unmarkPainted is a no-op;
+                   *   a real navigation inside the layer -- a product opened
+                   *     from a collection. That second document arrives every
+                   *     bit as unstyled as the first, so the cover comes back;
+                   *   a same-document load -- a fragment jump, which Android
+                   *     reports through onPageStarted exactly like a navigation,
+                   *     or a reload of the page already on screen. The customer
+                   *     is looking at that page. Blanking it and putting up a
+                   *     spinner would be the app taking something away and
+                   *     giving nothing back; the progress bar above is enough.
+                   *
+                   * The renderer dying is the fourth, and it is handled where it
+                   * happens: there the page really is gone, so it re-covers.
+                   */
+                  const committed = committedUrls.current.get(layer.key);
+                  if (committed === undefined || !sameDocument(committed, url)) {
+                    unmarkPainted(layer.key);
+                  }
                 }}
                 onLoadEnd={e => {
                   setLoadingTarget(prev =>
@@ -2154,6 +2284,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   if (getInjectionForUrl(url) === null) {
                     markPainted(layer.key);
                   }
+                  // What the next onLoadStart is compared against. Set after the
+                  // reveal decision above, never before: it is a record of what
+                  // this layer is now showing.
+                  committedUrls.current.set(layer.key, url);
                   applyStyles(layer.key, url);
                 }}
                 onError={({nativeEvent}) => {
@@ -2192,6 +2326,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 }}
                 onRenderProcessGone={() => {
                   warn('page render process gone — reloading');
+                  /*
+                   * The one reload that must be covered. The reload below goes
+                   * to the url already committed, so onLoadStart will read it as
+                   * a same-document load and leave the page alone -- but there
+                   * is no page left to leave alone: Android has torn the
+                   * renderer down and what is on screen is a blank. Cover it
+                   * here, where that is known.
+                   */
+                  committedUrls.current.delete(layer.key);
+                  unmarkPainted(layer.key);
                   layerRefs.current.get(layer.key)?.reload();
                 }}
               />
@@ -2210,8 +2354,25 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 already invisible, and covering it would keep its key out of the
                 painted list for no reason.
               */}
-              {isVisible && !paintedLayers.includes(layer.key) ? (
-                <PageCover />
+              {isVisible ? (
+                <PageCover
+                  /*
+                   * Kept mounted and handed the page's state rather than being
+                   * unmounted the moment the page is ready. That unmount was the
+                   * cut: the cover vanished between two frames, which the eye
+                   * reports as a flicker rather than as progress. It now fades
+                   * out and removes itself.
+                   */
+                  ready={paintedLayers.includes(layer.key)}
+                  /*
+                   * True only when this layer already has a document on screen,
+                   * which is the case where blanking it would take something
+                   * away from the customer. A layer's first load has nothing
+                   * behind it and must be covered opaquely from frame one.
+                   */
+                  crossfade={committedUrls.current.has(layer.key)}
+                  variant={coverVariantFor(layer.url || layer.source)}
+                />
               ) : null}
             </View>
           );
