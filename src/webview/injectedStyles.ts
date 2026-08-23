@@ -464,15 +464,11 @@ body.zigly-listing .card-wrapper .tag-wrapper,
 #zigly-hot-picks .card-wrapper .tag-wrapper,
 [id^="zigly-x-"] .card-wrapper .tag-wrapper {
   pointer-events: none;
-   position: relative !important;
-  z-index: 30 !important;
 }
 body.zigly-listing .card-wrapper .swym-add-to-wishlist,
 #zigly-hot-picks .card-wrapper .swym-add-to-wishlist,
 [id^="zigly-x-"] .card-wrapper .swym-add-to-wishlist {
   pointer-events: auto;
-   position: relative !important;
-  z-index: 30 !important;
 }
 
 /* ------------------------------------------------------------------
