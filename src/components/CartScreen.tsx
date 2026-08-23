@@ -15,6 +15,18 @@
  * AJAX endpoints below are that one shared cart, keyed by the session cookie
  * both WebViews share.
  *
+ * Nothing on this screen ever shows a figure Shopify has not confirmed, and
+ * that is why a quantity does not move the instant it is tapped. A change is
+ * two round trips - /cart/change.js, then /cart.js - and until the second one
+ * answers, the only quantity this screen knows is the one it is already showing.
+ * So the controls go inert and say so, rather than drawing a number and hoping.
+ *
+ * What that replaced was worse than slow. The controls stayed live, and a second
+ * tap computed its new quantity from the SAME quantity as the first - qty 3,
+ * tap minus twice, and both requests asked Shopify for 2. The second was a
+ * no-op, the number stopped where the first tap left it, and it read as stuck.
+ * Going inert is what makes that impossible rather than unlikely.
+ *
  * Layout is the reference's: one full-bleed white block per line, separated by
  * the grey ground showing through, then the order summary, then two pinned
  * footers — the savings line and the checkout bar. Only the list scrolls, so the
@@ -78,6 +90,42 @@ const CartScreen = ({
   onOpenItem,
   onContinueShopping,
 }: Props) => {
+  /** The line whose change is in flight, or null when nothing is. */
+  const [changing, setChanging] = React.useState<string | null>(null);
+  const busy = changing !== null;
+
+  /*
+   * Any answer at all clears it. `cart` is replaced wholesale on every reply
+   * from /cart.js -- including the re-read changeQtyScript does when the change
+   * itself failed -- so this is one release for both outcomes, and the screen
+   * cannot be waiting for something that has already come back.
+   */
+  React.useEffect(() => {
+    setChanging(null);
+  }, [cart]);
+
+  /*
+   * And released anyway if no answer arrives. The reply is a WebView injection
+   * away, so it can be lost in ways this screen cannot see; inert controls that
+   * never come back would be a worse failure than the one being fixed.
+   */
+  React.useEffect(() => {
+    if (!busy) {
+      return;
+    }
+    const failsafe = setTimeout(() => setChanging(null), 10000);
+    return () => clearTimeout(failsafe);
+  }, [busy]);
+
+  /** One change at a time, and each one computed from a confirmed quantity. */
+  const change = (key: string, quantity: number) => {
+    if (busy) {
+      return;
+    }
+    setChanging(key);
+    onChangeQty(key, quantity);
+  };
+
   if (!cart) {
     return (
       <View style={styles.centre}>
@@ -147,34 +195,53 @@ const CartScreen = ({
                     <Text style={styles.saved}>You saved {money(saved)}</Text>
                   ) : null}
 
-                  <View style={styles.stepper}>
-                    <Pressable
-                      onPress={() => onChangeQty(line.key, line.quantity - 1)}
-                      accessibilityRole="button"
-                      accessibilityLabel="Decrease quantity"
-                      hitSlop={8}
-                      style={styles.stepBtn}>
-                      <Text style={styles.stepGlyph}>{'−'}</Text>
-                    </Pressable>
-                    <Text style={styles.qty}>{line.quantity}</Text>
-                    <Pressable
-                      onPress={() => onChangeQty(line.key, line.quantity + 1)}
-                      accessibilityRole="button"
-                      accessibilityLabel="Increase quantity"
-                      hitSlop={8}
-                      style={styles.stepBtn}>
-                      <Text style={styles.stepGlyph}>+</Text>
-                    </Pressable>
+                  <View style={styles.stepperRow}>
+                    <View style={[styles.stepper, busy && styles.inert]}>
+                      <Pressable
+                        onPress={() => change(line.key, line.quantity - 1)}
+                        disabled={busy}
+                        accessibilityRole="button"
+                        accessibilityLabel="Decrease quantity"
+                        accessibilityState={{disabled: busy}}
+                        hitSlop={8}
+                        style={styles.stepBtn}>
+                        <Text style={styles.stepGlyph}>{'−'}</Text>
+                      </Pressable>
+                      <Text style={styles.qty}>{line.quantity}</Text>
+                      <Pressable
+                        onPress={() => change(line.key, line.quantity + 1)}
+                        disabled={busy}
+                        accessibilityRole="button"
+                        accessibilityLabel="Increase quantity"
+                        accessibilityState={{disabled: busy}}
+                        hitSlop={8}
+                        style={styles.stepBtn}>
+                        <Text style={styles.stepGlyph}>+</Text>
+                      </Pressable>
+                    </View>
+                    {/*
+                      On the line being changed only, so it says which quantity
+                      Shopify is working on rather than that the screen is busy.
+                    */}
+                    {changing === line.key ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={COLORS.navy}
+                        style={styles.working}
+                      />
+                    ) : null}
                   </View>
                 </View>
               </View>
 
               <Pressable
-                onPress={() => onChangeQty(line.key, 0)}
+                onPress={() => change(line.key, 0)}
+                disabled={busy}
                 accessibilityRole="button"
                 accessibilityLabel={'Remove ' + line.title}
+                accessibilityState={{disabled: busy}}
                 hitSlop={10}
-                style={styles.remove}>
+                style={[styles.remove, busy && styles.inert]}>
                 <Text style={styles.removeGlyph}>{'×'}</Text>
               </Pressable>
             </View>
@@ -334,15 +401,22 @@ const styles = StyleSheet.create({
     color: '#1B9C5D',
   },
 
-  stepper: {
+  stepperRow: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
     marginTop: 12,
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#DADADA',
     borderRadius: 6,
   },
+  /** Waiting on Shopify: visibly not a control right now. */
+  inert: {opacity: 0.4},
+  working: {marginLeft: 10},
   stepBtn: {paddingHorizontal: 14, paddingVertical: 6},
   stepGlyph: {fontFamily: FONT_FAMILY, fontSize: 17, color: '#1B1B1B'},
   qty: {

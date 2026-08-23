@@ -508,13 +508,18 @@ body.zigly-listing .card-wrapper {
    one of them per card and it is the card's own product link.
 
    The stacking is the whole point of the scoping, and it is verified rather than
-   assumed (Chrome, 390px viewport, real collection page):
+   assumed (live markup and live theme CSS, read 2026-08-24, 390px viewport):
 
-     - the heart wins, because .tag-wrapper is z-index:1 and this is z-index:0.
-       The strip it sits in is made transparent to taps so the rest of the top
-       edge still reaches the overlay -- the heart itself takes them back.
+     - the heart wins, because the badge strip it sits in is lifted to z-index:2
+       by the block below. It used to win by this overlay being z-index:0
+       against the theme's own z-index:1 on .tag-wrapper -- and when this was
+       raised to 1 the two TIED, which in one stacking context is settled by
+       tree order, and .tag-wrapper is the card's FIRST child. So the overlay
+       painted over the heart and every tap on it opened the product. That is
+       why the strip now carries a z-index of its own instead of relying on the
+       theme's: a tie is not a stacking rule.
      - Add to Bag wins, because .quick-add comes after the title in the DOM and
-       both are at stacking level 0.
+       is lifted to z-index:20 below.
 
    Result: heart -> wishlist, Add to Bag -> cart, anywhere else -> the product.
    ------------------------------------------------------------------ */
@@ -544,25 +549,113 @@ body.zigly-listing .card-wrapper .quick-add__submit,
 }
 /* The badge strip across the top of the card is a container, not a control:
    only the heart inside it takes taps, so the rest of that band reaches the
-   product link underneath instead of being dead. */
+   product link underneath instead of being dead.
+
+   z-index:2 is the fix for the heart being untappable -- see the note above. It
+   clears the product-link overlay (1) and stays under the theme's own
+   .atc-wrapper (3) and the Add to Bag (20), neither of which it overlaps, so
+   the only relationship this changes is the one that was broken. */
 body.zigly-listing .card-wrapper .tag-wrapper,
 #zigly-hot-picks .card-wrapper .tag-wrapper,
 [id^="zigly-x-"] .card-wrapper .tag-wrapper {
   pointer-events: none;
-}
-body.zigly-listing .card-wrapper .swym-add-to-wishlist,
-#zigly-hot-picks .card-wrapper .swym-add-to-wishlist,
-[id^="zigly-x-"] .card-wrapper .swym-add-to-wishlist {
-  position: relative;
-  pointer-events: auto;
-   z-index: 30 !important;
+  z-index: 2;
 }
 
-/* Heart icon on product detail pages (inner pages). */
-body.zigly-inner-page .product-form .swym-add-to-wishlist {
-  position: relative;
+/* ------------------------------------------------------------------
+   The card's heart: the site's own glyph, on a target a thumb can hit.
+
+   Scoped to the card component rather than to a page, because this is one
+   component and the heart is the same control wherever it is drawn -- the grid,
+   the transplanted rails, a product page's recommendations. Every figure below
+   is the theme's, read off product-card.aio.min.css on 2026-08-24 at phone
+   width (its max-width:750px block, the only width this app renders at):
+
+     .tag-wrapper            position:absolute; top:0; left:0; width:100%
+     .wishlist-icon-wrapper  width:20px; margin-right:14px; margin-left:auto
+     ...icon-wrapper svg     width:100%; height:auto
+
+   So the site draws a 20px-wide heart whose right edge is 14px in from the
+   card's own edge. What the app drew instead was a 34px one flush against the
+   card's border -- and it was the app that did it: the generic
+   .swym-add-to-wishlist rule further down gives the control min-width:34px for
+   the sake of the tap target, the theme's svg is width:100% OF THAT, and the
+   extra 14px grew rightwards out of the 20px wrapper and into its margin. A
+   stretched glyph sitting on the rounded corner.
+
+   Both are fixed by separating the target from the glyph, which cannot be done
+   inside that flex row -- so the control comes out of the row and is placed
+   against .tag-wrapper, the positioned ancestor the theme already gives it. The
+   row is then left holding an empty 20px box, and nothing measures it: the
+   strip is absolutely positioned, decorative and pointer-events:none, and the
+   badge pill inside it is absolutely positioned against .tag-wrapper too rather
+   than laid out by the row.
+
+   40x40 at right:4px puts the glyph's centre 24px in from the card's edge --
+   exactly where the theme's own 20px-at-14px puts it -- and its top edge 11px
+   down, 3px inside the photo instead of flush with it. Nothing moves that the
+   customer can see; what changes is that the thing under their thumb is 40px
+   across instead of 20.
+   ------------------------------------------------------------------ */
+.card-wrapper .tag-wrapper .swym-add-to-wishlist {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  /* The strip is transparent to taps; the heart takes its own back. */
   pointer-events: auto;
-  z-index: 30 !important;
+  /* Above the badge pill, within the strip's own stacking context. */
+  z-index: 1;
+}
+/*
+   !important on the glyph, and only on the glyph: the theme's rule for it is
+   .product-card-wrapper .wishlist-tag__wrapper .wishlist-icon-wrapper svg, and
+   a transplanted section carries its own copy of that stylesheet along with the
+   markup (extraSections.ts strips <script> and nothing else), so that copy can
+   land after this file. Higher specificity alone would win on the site's own
+   pages and lose on a transplanted rail; this closes that difference.
+ */
+.card-wrapper .tag-wrapper .swym-add-to-wishlist svg {
+  width: 20px !important;
+  height: auto !important;
+}
+
+/* ------------------------------------------------------------------
+   The product page's heart: the same target, in the theme's own place.
+
+   This rule used to read body.zigly-inner-page .product-form
+   .swym-add-to-wishlist -- and it matched NOTHING. The served PDP was read on
+   2026-08-24: the heart is a direct child of #main-slider, beside the zoom
+   button, while .product-form is the buy-buttons element much further down the
+   page. It was never inside it.
+
+   Where the theme actually puts it (main-product.aio.min.css, same read):
+
+     .pdp-container .swym-button.swym-add-to-wishlist {
+       position: absolute; top: 2rem; right: 2rem;
+       width: 34px; height: 30px; z-index: 1;
+     }
+
+   -- so unlike the card, the PDP heart is already positioned, already above the
+   gallery and already tappable. Only its target is short: 34x30, which the
+   generic rule's min-height rounds up to 34x34.
+
+   40x40 centred on the same glyph is 3px wider each side and 5px taller each
+   side, so the heart does not move by a pixel. calc against the theme's own
+   2rem rather than a px figure of our own, so it holds at whatever the root
+   font size resolves to.
+
+   body.zigly-product, not zigly-inner-page: the flag the rest of the
+   product-page rules already use, and it does not reach the other inner pages.
+   ------------------------------------------------------------------ */
+body.zigly-product .pdp-container .swym-button.swym-add-to-wishlist {
+  width: 40px;
+  height: 40px;
+  top: calc(2rem - 5px);
+  right: calc(2rem - 3px);
 }
 
 /* ------------------------------------------------------------------
@@ -1010,10 +1103,18 @@ body.zigly-listing .quick-add__submit {
   stroke: #ED2427 !important;
 }
 /* The tap itself. The control is a bare div around a 36x32 glyph, and on a card
-   it is the smallest thing on screen competing with the product link
-   underneath it -- so it gets a real target and stops the tap becoming a
-   scroll. Nothing about which element handles the tap changes: the listener is
-   the site's own, delegated from document. */
+   it is the smallest thing on screen competing with the product link underneath
+   it -- so it gets a real target and stops the tap becoming a scroll. Nothing
+   about which element handles the tap changes: the listener is the site's own,
+   delegated from document.
+
+   min-width / min-height and nothing else, deliberately. A width here is what
+   stretched the card's glyph: the theme sizes the svg as width:100% OF THIS
+   BOX, so a box grown for a thumb grew the drawing with it. The two places the
+   heart is actually drawn -- the card and the product page -- now state their
+   own width and height, above, and each states the glyph's size separately. The
+   floor stays for any third place the heart turns up that this file has not
+   read; a floor cannot stretch anything the width does not already exceed. */
 .swym-button.swym-add-to-wishlist {
   cursor: pointer;
   touch-action: manipulation;

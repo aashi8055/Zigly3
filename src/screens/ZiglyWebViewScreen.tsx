@@ -2178,6 +2178,22 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                         items: Array.isArray(data.items) ? data.items : [],
                       },
                 );
+                /*
+                 * The badge, from the same read. This reply is /cart.js, so its
+                 * itemCount IS the number the badge is for -- and until this
+                 * line existed, removing a line in the cart screen left the
+                 * badge on the count it had before, because nothing else told
+                 * it. `cart-count` covered the add (addToCartScript reports it)
+                 * and nothing covered the remove.
+                 *
+                 * An errored read is left alone rather than zeroed: a cart that
+                 * could not be read is not an empty cart.
+                 */
+                if (!data.error) {
+                  setCartCount(
+                    typeof data.itemCount === 'number' ? data.itemCount : 0,
+                  );
+                }
               } else if (data && data.tag === 'cart-added') {
                 setCartToast(true);
               } else if (data && data.tag === 'wishlist') {

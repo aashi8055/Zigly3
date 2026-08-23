@@ -270,32 +270,84 @@ true;
 export const OPEN_CART = `window.location.href = '/cart'; true;`;
 
 /**
- * Report the cart item count from the site's own bubble, so the native badge
- * shows real data rather than a separately tracked number.
+ * Report the cart item count, so the native badge shows the real cart.
+ *
+ * THIS USED TO READ THE HEADER BUBBLE, AND THE HEADER HAS NO BUBBLE. It looked
+ * for `.cart-count-bubble` in three shapes and, finding none, posted 0 -- so
+ * every one of the things that runs it (each completed navigation, its own
+ * +1.5s and +4s retries, every mutation of the cart drawer) wiped a correct
+ * badge back to nothing. Add to Bag looked fine only because
+ * `addToCartScript` reports the count itself, from /cart.js, and the wipe
+ * arrived later.
+ *
+ * That the element is absent is not a guess. The served home page, a collection
+ * page and a product page were read on 2026-08-24: `#cart-icon-bubble` is on all
+ * three and it holds a bag glyph and the word "Bag", with no counter of any
+ * kind. This theme simply does not show a cart count, which is also why the app
+ * draws its own badge.
+ *
+ * So the count comes from /cart.js -- `item_count`, the same field
+ * `addToCartScript` already reports and the same figure the native cart screen
+ * shows. One source, and it is Shopify's.
+ *
+ * Three things keep it current without polling:
+ *
+ *   - `cart:updated` / `cart:refresh`, which the theme's own add-to-bag
+ *     dispatches on `document` (read in the page's inline script, same date).
+ *   - a MutationObserver on `cart-drawer`, for the drawer's own quantity
+ *     controls, which re-render it without dispatching either event. This was
+ *     already here; what is new is that it no longer falls back to observing
+ *     the whole of `document.body`, where the dashboard's own section
+ *     transplants would have fired it continuously.
+ *   - re-injection. The script is injected again on every completed navigation,
+ *     and rather than installing a second copy of all of the above it finds the
+ *     first one and just asks it to re-read.
+ *
+ * Debounced, because a drawer re-render is a burst of mutations and each of
+ * these now costs a request rather than a DOM read.
  */
 export const REPORT_CART_COUNT = `
 (function () {
-  function count() {
-    try {
-      var el = document.querySelector('.cart-count-bubble span[aria-hidden="true"]')
-            || document.querySelector('.cart-count-bubble span')
-            || document.querySelector('#cart-icon-bubble .cart-count-bubble');
-      var n = el ? parseInt((el.textContent || '').replace(/[^0-9]/g, ''), 10) : 0;
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(
-          JSON.stringify({tag: 'cart-count', n: isNaN(n) ? 0 : n})
-        );
-      }
-    } catch (e) {}
+  // Already installed by an earlier injection: re-read, do not install again.
+  if (window.__ziglyReadCartCount) { window.__ziglyReadCartCount(); return; }
+
+  function read() {
+    fetch('/cart.js', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (cart) {
+        // A failed read is not an empty cart, and 0 is what the old version
+        // said on every failure. Say nothing instead and leave the badge as it
+        // is until the next signal.
+        if (!cart) { return; }
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify({tag: 'cart-count', n: cart.item_count || 0})
+          );
+        }
+      })
+      .catch(function () {});
   }
-  count();
-  setTimeout(count, 1500);
-  setTimeout(count, 4000);
-  // The cart drawer replaces its own markup on every update; re-read then.
+
+  var timer = null;
+  function schedule() {
+    if (timer) { clearTimeout(timer); }
+    timer = setTimeout(function () { timer = null; read(); }, 250);
+  }
+
+  window.__ziglyReadCartCount = schedule;
+
+  read();
+
   try {
-    var target = document.querySelector('cart-drawer') || document.body;
-    var mo = new MutationObserver(function () { count(); });
-    mo.observe(target, {childList: true, subtree: true});
+    document.addEventListener('cart:updated', schedule);
+    document.addEventListener('cart:refresh', schedule);
+  } catch (e) {}
+
+  try {
+    var drawer = document.querySelector('cart-drawer');
+    if (drawer) {
+      new MutationObserver(schedule).observe(drawer, {childList: true, subtree: true});
+    }
   } catch (e) {}
 })();
 true;

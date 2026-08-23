@@ -14,6 +14,7 @@ import {
 } from '../src/webview/listingPage';
 import {EARLY_HEADER_CSS} from '../src/webview/headerBridge';
 import {HOT_PICKS_SCRIPT} from '../src/webview/hotPicks';
+import {MOBILE_CSS} from '../src/webview/injectedStyles';
 
 describe('getInjectionForUrl', () => {
   it.each([
@@ -453,8 +454,89 @@ describe('getInjectionForUrl', () => {
     const script = getInjectionForUrl('https://zigly.com/') as string;
     expect(script).toContain('#zigly-hot-picks .mobile-atc-main');
     expect(script).toContain('isolation: isolate');
-    // The wishlist heart must stay absolutely positioned over the image.
-    expect(script).not.toContain('.wishlist-icon-wrapper');
+    /*
+     * The wishlist heart must stay absolutely positioned over the image, so
+     * nothing here may write a RULE for the wrapper it arrives in: forcing that
+     * wrapper back into the flow, the way the add-to-cart containers above are
+     * forced, is what drops the heart into the middle of the card.
+     *
+     * A rule, not a mention. This used to be a bare `not.toContain`, and it
+     * failed the moment the heart's own block quoted the theme's selector in a
+     * comment -- so the brace is what makes it a test of the stylesheet rather
+     * than of the prose around it.
+     */
+    expect(script).not.toMatch(/\.wishlist-icon-wrapper[^{;]*\{/);
+  });
+
+  /*
+   * The heart, read off MOBILE_CSS rather than off the payload: the payload
+   * JSON-encodes the stylesheet, so a selector carrying a double quote (every
+   * [id^="zigly-x-"] scope here) does not survive a substring match against it.
+   */
+  describe('the card heart', () => {
+    /** The declarations of the one rule whose selector list ends with `sel`. */
+    const declarationsFor = (sel: string): string => {
+      const at = MOBILE_CSS.indexOf(sel + ' {');
+      expect(at).toBeGreaterThan(-1);
+      const open = MOBILE_CSS.indexOf('{', at);
+      return MOBILE_CSS.slice(open, MOBILE_CSS.indexOf('}', open));
+    };
+
+    it('is lifted clear of the full-card product link', () => {
+      /*
+       * .tag-wrapper is the theme's own z-index:1 and the product-link overlay
+       * is this file's own z-index:1, both in one stacking context -- and the
+       * overlay is later in tree order, so it painted over the heart and took
+       * every tap on it to the product page. A tie is not a stacking rule; the
+       * strip needs a z-index that beats the overlay's.
+       */
+      const strip = declarationsFor(
+        '[id^="zigly-x-"] .card-wrapper .tag-wrapper',
+      );
+      expect(strip).toContain('z-index: 2');
+      const overlay = declarationsFor(
+        '[id^="zigly-x-"] .card-wrapper .product--below-content .card__heading a::after',
+      );
+      expect(overlay).toContain('z-index: 1');
+    });
+
+    it('states its target and its glyph separately', () => {
+      /*
+       * The theme sizes the svg at width:100% OF THE CONTROL, so the min-width
+       * that made the control thumb-sized stretched the drawing with it -- a
+       * 34px glyph flush against the card's border where the site draws a 20px
+       * one 14px in. The size of the target and the size of the heart are two
+       * decisions and are written as two.
+       */
+      const target = declarationsFor(
+        '.card-wrapper .tag-wrapper .swym-add-to-wishlist',
+      );
+      expect(target).toContain('width: 40px');
+      expect(target).toContain('height: 40px');
+      // Out of the theme's flex row, against the strip it is positioned in.
+      expect(target).toContain('position: absolute');
+      // The strip is transparent to taps; the heart has to take its own back.
+      expect(target).toContain('pointer-events: auto');
+
+      const glyph = declarationsFor(
+        '.card-wrapper .tag-wrapper .swym-add-to-wishlist svg',
+      );
+      expect(glyph).toContain('width: 20px');
+    });
+
+    it('reaches the product page heart where the heart actually is', () => {
+      // It is a child of #main-slider, styled by the theme through
+      // .pdp-container. The old rule looked inside .product-form, which the
+      // served PDP does not put it in, so it matched nothing at all.
+      expect(MOBILE_CSS).not.toContain('.product-form .swym-add-to-wishlist');
+      expect(MOBILE_CSS).toContain(
+        'body.zigly-product .pdp-container .swym-button.swym-add-to-wishlist',
+      );
+    });
+
+    it('carries no backtick, which would end the template literal', () => {
+      expect(MOBILE_CSS).not.toContain('`');
+    });
   });
 
   it('shows both pets in the explore categories', () => {
