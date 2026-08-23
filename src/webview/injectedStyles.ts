@@ -38,12 +38,33 @@ html, body {
 
    The app's ground is a warm off-white, and the WebView is the largest
    surface in it -- left on the theme's white the page would read as a white
-   sheet laid on a cream app. Set on html and body only: the theme's cards,
-   rails and bars paint their own backgrounds over this, so they keep their
-   edge.
+   sheet laid on a cream app.
+
+   Two elements in the selector, not one, and the reason is not style. The
+   store ships this as the last thing inside its <body>, on every page type --
+   home, collection, cart, search, account and the content pages:
+
+       <style> body {background-color: #ffffff !important;} </style>
+
+   This stylesheet is installed in <head>. Against a bare "body" selector the
+   two declarations tie on importance and on specificity (0,0,1), the cascade
+   falls through to source order, and theirs wins by sitting further down the
+   document -- which is how this shipped white the first time. "html body" is
+   (0,0,2), and specificity is settled before source order is ever consulted,
+   so it holds wherever in the document their tag lands.
+
+   background-color rather than the background shorthand: the theme's own
+   .gradient rule paints body from --gradient-background, which on this store
+   is a flat colour in all ten of its schemes. Overriding just the colour
+   leaves the shorthand's other parts alone rather than asserting values we
+   have no reason to hold.
+
+   Only the ground. The theme's cards, rails, bars and section fills paint
+   their own backgrounds over this and keep their edge against it.
    ------------------------------------------------------------------ */
-html, body {
-  background: #FFFAF1 !important;
+html,
+html body {
+  background-color: #FFFAF1 !important;
 }
 
 /* ------------------------------------------------------------------
