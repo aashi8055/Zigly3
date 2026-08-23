@@ -214,7 +214,7 @@ const NativeHeader = ({
           style={styles.logoWrap}
         >
           <Image
-            source={require('../assets/zigly-logo.png')}
+            source={require('../assets/logo.png')}
             style={styles.logoImage}
             resizeMode="contain"
           />
@@ -315,6 +315,22 @@ const NativeHeader = ({
 const BAR_H = 52;
 /** Search band height: field plus its padding. */
 const SEARCH_BAND_H = 64;
+/**
+ * The wordmark, at the size the bar can actually hold.
+ *
+ * ../assets/logo.png is the tight lock-up -- 493x124, so 3.976:1 -- and it is
+ * deliberately the file with no @2x/@3x siblings. The header used to require
+ * zigly-logo.png, which does have them, and every one of those is the square
+ * 216/324/432px launcher icon: React Native resolves an asset by density, so on
+ * a real phone the header was drawing the padded square, not the wordmark. That
+ * padding is why the logo read small inside its 90x70 box no matter what the
+ * box was set to.
+ *
+ * 40dp tall keeps 6dp of air top and bottom inside the 52dp bar, and 159dp is
+ * the width the ratio gives at that height.
+ */
+const LOGO_H = 40;
+const LOGO_W = Math.round(LOGO_H * (493 / 124));
 
 const styles = StyleSheet.create({
   root: { backgroundColor: COLORS.ground },
@@ -367,8 +383,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logoImage: {
-    width: 90,
-    height: 70,
+    /*
+     * Width is a ceiling, not a size.
+     *
+     * logoWrap takes the slack between the icons, so '100%' is exactly the
+     * room the wordmark has -- which on a 320dp phone showing hamburger,
+     * wishlist and cart is under LOGO_W. Capping rather than fixing the width
+     * lets it give way there instead of pushing the cart off the bar, and
+     * resizeMode="contain" keeps the 493:124 ratio either way.
+     */
+    width: '100%',
+    maxWidth: LOGO_W,
+    height: LOGO_H,
   },
 
   badge: {

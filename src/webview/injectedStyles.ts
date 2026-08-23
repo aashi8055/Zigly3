@@ -710,6 +710,50 @@ body.zigly-listing .st-main-content-wrap {
 }
 
 /* ------------------------------------------------------------------
+   Shop by price: a 2x3 grid, not a rail.
+
+   The section holds exactly six tiles -- Under 599 / 999 / 1499 / 2499 / 3499
+   / 5999, read off the live section on 2026-08-24 -- so all six fit in two rows
+   of three with nothing hidden and nothing to scroll. That is the whole reason
+   this one section opts out of the rail treatment above: for a rail to be worth
+   its gesture there has to be something off-screen, and here there is not.
+
+   display:grid on the Swiper wrapper overrides the flex row the generic rule
+   sets, which also takes the horizontal overflow with it -- there is no track
+   left to scroll. The slides then need their widths released: the theme's own
+   stylesheet is transplanted with the markup (only <script> is stripped) and it
+   sizes them at calc(100% / 3 - 54px) on mobile, which inside a grid cell would
+   draw three tiles a third of a column wide. An id beats those two classes on
+   specificity, so width:auto wins without !important; the margin keeps its
+   !important because [id^="zigly-x-"] .swiper-slide and .shop-by-price
+   .swiper-slide tie on specificity, and the section's own inline <style> lands
+   after this file's.
+
+   No backticks anywhere above, and that is not a style choice: this whole
+   stylesheet is one template literal, so a backtick in a comment ends it and
+   the file stops parsing.
+   ------------------------------------------------------------------ */
+#zigly-x-price .swiper-wrapper {
+  display: grid;
+  /* minmax(0,...) rather than a bare 1fr: a bare fr track floors at the item's
+     min-content, so a longer price than the six on the section today -- or a
+     bigger --font-body-scale, which the theme multiplies the root size by --
+     would widen the columns past the row instead of wrapping inside them. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  overflow: visible;
+  scroll-snap-type: none;
+  padding-bottom: 0;
+}
+#zigly-x-price .swiper-slide {
+  flex: none;
+  width: auto;
+  max-width: none;
+  margin: 0 !important;
+  scroll-snap-align: none;
+}
+
+/* ------------------------------------------------------------------
    Matching the reference dashboard.
 
    Side-by-side recordings showed three differences in the transplanted

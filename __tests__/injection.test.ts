@@ -864,6 +864,74 @@ describe('getInjectionForUrl', () => {
   describe('full dashboard match', () => {
     const home = () => getInjectionForUrl('https://zigly.com/') as string;
 
+    /**
+     * The dashboard tail, in the order the customer asked for on 2026-08-24.
+     *
+     * Every needle is the section's DECLARATION in the SECTIONS chain, not its
+     * bare id -- the stylesheet names several of those ids too, earlier in the
+     * payload, so a bare indexOf would measure the CSS instead of the running
+     * order. Declaration order in that chain is the render order: the
+     * placeholders are created synchronously in a single pass before any fetch
+     * resolves, so no section can be shuffled by the network.
+     *
+     * The headings beside each entry were read off the live sections on
+     * 2026-08-24, so this list is checkable against the site rather than being
+     * a restatement of the code it guards.
+     */
+    const TAIL = [
+      ['"mark":"zigly-x-offer1"', 'Applod Food'],
+      ['"mark":"zigly-x-offer2"', 'Applod Treats'],
+      ['"mark":"zigly-x-coins"', 'Zigly Coins + discount cards'],
+      ['"move":"home_shop_by_brand_section"', 'Top Pet Brands, One Spot!'],
+      ['"mark":"zigly-x-price"', 'Find the Best Deals! (2x3 grid)'],
+      ['"mark":"zigly-x-banner2"', 'Advanced Vet Care banner'],
+      ['"mark":"zigly-x-concern"', 'Care by Concern'],
+      ['"mark":"zigly-x-offer3"', 'Zigly Style Steals'],
+      ['"slot":"zigly-x-bestsellers"', 'Bestsellers'],
+      ['"slot":"zigly-x-everything"', 'Everything For Dogs / Cats'],
+      ['"mark":"zigly-x-double"', "Let's Paw-ty! + Too Many Cute Options?"],
+      ['"move":"helpful_tips"', 'Pet Parenting Made Easy'],
+      ['"move":"custom_video_text_banner"', 'the YouTube video'],
+      ['"move":"about_our_communities"', 'Real Pets. Real Stories. Real Community.'],
+      ['"slot":"zigly-x-instagram"', 'From Our Instagram'],
+      ['"mark":"zigly-x-logos"', 'the brand-claims strip'],
+    ] as const;
+
+    it('declares the whole tail in the requested order', () => {
+      const s = home();
+      const at = TAIL.map(([needle, label]) => {
+        const i = s.indexOf(needle);
+        expect(i).toBeGreaterThan(-1);
+        return {i, label};
+      });
+      // Compared as a list of labels rather than pair by pair, so a failure
+      // prints the order that was declared against the order asked for --
+      // an index pair on its own does not say which two sections swapped.
+      const declared = at.slice().sort((a, b) => a.i - b.i).map(e => e.label);
+      expect(declared).toEqual(at.map(e => e.label));
+    });
+
+    it('opens the tail below Explore, with the coupon strip left under the banner', () => {
+      // The coupon strip is the one entry anchored to the banner rather than to
+      // the running tail, so it stays in the head of the dashboard (section f)
+      // even though it is declared first in this chain.
+      const s = home();
+      expect(s).toContain("spec.key === 'coupon_slider' ? banner : tail");
+      // Explore is what the tail hangs off; if that anchor ever goes, every
+      // section below falls back to sitting under the banner.
+      expect(s).toContain("document.getElementById('zigly-explore')");
+    });
+
+    it('lays Shop by price out as a grid rather than a scrolling rail', () => {
+      // Six tiles, so there is nothing off-screen for a rail to reveal.
+      const s = home();
+      expect(s).toContain('#zigly-x-price .swiper-wrapper');
+      expect(s).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
+      // The generic transplant rule turns .swiper-wrapper into a horizontal
+      // scroller; this section has to opt out of it.
+      expect(s).toContain('scroll-snap-type: none');
+    });
+
     it('places every section the reference app shows', () => {
       const s = home();
       for (const mark of [

@@ -27,17 +27,33 @@
 const SECTIONS = [
   {key: 'coupon_slider', check: 'coupon_slider', mark: 'zigly-x-coupon', eager: true},
   // breed rails, hot picks and explore are placed by their own modules here
+  // "Applod Food" -- the fresh-food rail.
   {key: 'offer_section#1', check: '', mark: 'zigly-x-offer1', eager: false},
+  // "Applod Treats" -- biscuits, chews and toys.
   {key: 'offer_section#2', check: '', mark: 'zigly-x-offer2', eager: false},
   // Zigly Coins plus the discount offer cards. Despite the name, best_deals
   // is not a product section -- it holds the coins banner and the category
   // offer tiles, which is exactly this slot in the reference.
   {key: 'best_deals', check: '', mark: 'zigly-x-coins', eager: false},
-  // Top Pets Brands is already on the homepage; move it, do not copy it.
+  // "Top Pet Brands, One Spot!" -- already on the homepage; move it, do not
+  // copy it.
   {move: 'home_shop_by_brand_section'},
+  // "Find the Best Deals!" -- the six price tiles. Laid out as a 2x3 grid
+  // rather than a rail; see the #zigly-x-price rules in ./injectedStyles.
   {key: 'shop_by_price', check: 'shop_by_price', mark: 'zigly-x-price', eager: false},
+  /**
+   * The Vet Care banner ("Advanced Vet Care, Anytime You Need It!").
+   *
+   * Directly under the price tiles, which is where it sits on Zigly's own pet
+   * pages and where it has sat here since it was transplanted. It is the one
+   * block in this chain that is a standing placement rather than a match to a
+   * named section in the dashboard order -- recorded so it does not read as a
+   * stray and get tidied away.
+   */
   {key: 'custom_single_banner#2', check: '', mark: 'zigly-x-banner2', eager: false},
+  // "Care by Concern".
   {key: 'shop_of_concern', check: 'shop_of_concern', mark: 'zigly-x-concern', eager: false},
+  // "Zigly Style Steals".
   {key: 'offer_section#3', check: '', mark: 'zigly-x-offer3', eager: false},
   /**
    * The bestsellers rail.
@@ -74,12 +90,21 @@ const SECTIONS = [
   // Slot only: everythingSection.ts fills this. Reserving it here keeps the
   // order deterministic -- anchoring itself put it above Bestsellers.
   {slot: 'zigly-x-everything'},
+  /**
+   * The double banner: "Let's Paw-ty!" and "Too Many Cute Options?".
+   *
+   * One section, two cards. Its own stylesheet drops both to width:100% below
+   * 749px, so on a phone they stack and read as two blocks in this order --
+   * which is how they appear in the dashboard order, one after the other.
+   */
   {key: 'redesign_custom_double_banner', check: 'redesign_custom_double_banner', mark: 'zigly-x-double', eager: false},
+  // "Pet Parenting Made Easy" -- the article cards.
   {move: 'helpful_tips'},
   // The video. video_swiper renders "Shop from Feed", which the reference does
   // not show; the video section is custom_video_text_banner, already on the
   // homepage, so it is moved rather than transplanted.
   {move: 'custom_video_text_banner'},
+  // "Real Pets. Real Stories. Real Community."
   {move: 'about_our_communities'},
   /**
    * The photo grid that closes the dashboard.
