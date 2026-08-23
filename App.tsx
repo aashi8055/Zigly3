@@ -68,7 +68,11 @@ const Shell = () => {
       ]}>
       {/* RN 0.87 is always edge-to-edge; `translucent` no longer exists. The
           padding above is what keeps content out from under the bars. */}
-      <StatusBar barStyle={splashVisible ? 'light-content' : 'dark-content'} />
+      {/* Dark icons throughout. It used to flip to light-content behind the
+          splash, which was right when the splash was a navy field and is the
+          wrong way round now that it is white -- white icons on white is an
+          empty status bar for as long as the splash is up. */}
+      <StatusBar barStyle="dark-content" />
 
       {/* Mounted immediately and never unmounted: the page loads behind the
           splash, so the first paint is already done when the splash lifts. */}
