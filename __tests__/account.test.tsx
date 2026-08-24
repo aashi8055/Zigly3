@@ -411,6 +411,17 @@ describe('the account stack', () => {
     expect(resolveAuth(EMPTY_ACCOUNT_STACK, 'signedOut')).toEqual([]);
   });
 
+  it('carries the change-password screen like any other', () => {
+    // Nothing about it is special to the stack: it pushes, it pops, and losing
+    // the session collapses it to login along with everything else.
+    const stack = pushScreen(['account'], 'changePassword');
+    expect(topScreen(stack)).toBe('changePassword');
+    expect(popScreen(stack)).toEqual(['account']);
+    expect(resolveAuth(['account', 'changePassword'], 'signedOut')).toEqual([
+      'login',
+    ]);
+  });
+
   it('ignores a repeat push, so a double tap costs one Back', () => {
     const stack = pushScreen(['account'], 'address');
     expect(pushScreen(stack, 'address')).toBe(stack);
@@ -449,17 +460,32 @@ describe('the account screen', () => {
     expect(text).toContain('Manage your orders');
     expect(text).toContain('Address');
     expect(text).toContain('Manage your addresses');
+    expect(text).toContain('Change Password');
+    expect(text).toContain('Change your password');
     expect(text).toContain('Favorites');
     expect(text).toContain('Manage your favorite products');
     expect(text).toContain('Delete Account');
     expect(text).toContain('Log Out');
   });
 
-  it('omits Change Password, which classic Shopify cannot do', () => {
-    // Classic Shopify has no change-password page for a signed-in customer,
-    // only POST /account/recover -- and an OTP-first store's customers mostly
-    // have no password for that link to change.
-    expect(textOf(render(screen()))).not.toContain('Change Password');
+  it('draws Change Password, because the reference app draws it', () => {
+    // This test used to assert the opposite, and the reason it was inverted is
+    // worth keeping next to it: classic Shopify has no change-password page for
+    // a signed-in customer, only POST /account/recover, and an OTP-first
+    // store's customers mostly have no password for that link to change. The
+    // row is drawn anyway, because the reference app draws it -- and what sits
+    // behind it is flagged UNCONFIRMED at CHANGE_PASSWORD_URL rather than
+    // quietly presented as a working change-password screen.
+    const text = textOf(render(screen()));
+    expect(text).toContain('Change Password');
+    expect(text).toContain('Change your password');
+  });
+
+  it('opens the change-password screen when the row is tapped', () => {
+    let opened: string | null = null;
+    const tree = render(screen({onOpenRow: row => (opened = row)}));
+    press(tree, 'Change Password. Change your password');
+    expect(opened).toBe('changePassword');
   });
 
   it('offers Edit Profile, as Zigly’s own app does', () => {

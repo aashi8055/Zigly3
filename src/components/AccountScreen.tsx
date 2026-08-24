@@ -1,16 +1,21 @@
 /**
  * The signed-in account screen.
  *
- * A profile block, three rows, and the two buttons at the foot -- the reference
+ * A profile block, four rows, and the two buttons at the foot -- the reference
  * app's layout, with two departures that are worth stating plainly because both
  * are about not pretending:
  *
- *   **No Change Password row.** zigly.com runs Shopify's classic customer
- *   accounts, and a signed-in customer has no change-password page there: the
- *   only mechanism is `POST /account/recover`, which emails a reset link. Since
- *   the store signs people in by OTP, most customers have never set a password
- *   for that link to change. A row that emailed a reset for a password that does
- *   not exist would be a row that does nothing, so it is not drawn.
+ *   **Change Password opens a password *reset*, and the destination is
+ *   unconfirmed.** The row is drawn because Zigly's own app draws it. What sits
+ *   behind it is the problem: zigly.com runs Shopify's classic customer
+ *   accounts, which have no signed-in change-password page at all. The only
+ *   mechanism the platform has is `POST /account/recover`, which emails a reset
+ *   link, and since the store signs people in by OTP many customers have never
+ *   set a password for that link to change. So the row opens the recover form,
+ *   and that destination is **UNCONFIRMED** -- nobody has checked what the
+ *   reference app actually shows after the tap. See CHANGE_PASSWORD_URL in
+ *   ../constants/appConstants.ts, which carries the same warning, and open
+ *   question 1 on this work.
  *
  *   **Edit Profile does not reach Zigly.** Shopify's storefront can create and
  *   edit *addresses* -- which is why the Address screen is fully working -- but
@@ -38,11 +43,17 @@ import {
   BoxIcon,
   ChevronRight,
   HeartOutline,
+  LockIcon,
   PersonIcon,
   PinIcon,
 } from './glyphs';
 
-export type AccountRow = 'orders' | 'address' | 'favorites';
+export type AccountRow =
+  | 'orders'
+  | 'address'
+  | 'favorites'
+  /** A WebView over the site's own password page. See the note above. */
+  | 'changePassword';
 
 interface Props {
   /** null while the probe is still out. */
@@ -73,6 +84,12 @@ const ROWS: {
     title: 'Address',
     subtitle: 'Manage your addresses',
     icon: <PinIcon size={22} color="#1B1B1B" />,
+  },
+  {
+    key: 'changePassword',
+    title: 'Change Password',
+    subtitle: 'Change your password',
+    icon: <LockIcon size={22} color="#1B1B1B" />,
   },
   {
     key: 'favorites',

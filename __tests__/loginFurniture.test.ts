@@ -9,10 +9,15 @@
  *
  * What these tests really pin is *when* they go. The rest of this stylesheet
  * is gated on the .zigly-otp class, which the script adds only once it has
- * found the OTP popup -- reasonable for rules that style that popup. The
- * furniture is not the popup. It is on screen in the documented fallback where
+ * found the OTP widget -- reasonable for rules that style that widget. The
+ * furniture is not the widget. It is on screen in the documented fallback where
  * the widget never appears, so its rules, and the ground behind them, cannot
  * wait for it.
+ *
+ * That fallback is also what a targeting bug looks like, which is why the gated
+ * half of the sheet has tests of its own now: see loginWidget.test.ts. This file
+ * stays about the three rules that must land either way, plus the one ordering
+ * rule the whole sheet depends on.
  */
 import {LOGIN_RESTYLE} from '../src/webview/loginRestyle';
 import {COLORS} from '../src/constants/appConstants';
@@ -110,6 +115,23 @@ describe('the login screen furniture', () => {
     expect(install).toBeGreaterThan(-1);
     expect(search).toBeGreaterThan(-1);
     expect(install).toBeLessThan(search);
+  });
+
+  it('keeps the hideBox rule last, so no two steps can show at once', () => {
+    // SimplyOTP hides its inactive steps with .hideBox, and this rule is the
+    // only thing holding that against the display:flex rules above it -- they
+    // tie on specificity, so source order decides. Every per-step rule added
+    // for the OTP and signup screens sits above it for that reason, and a rule
+    // appended after it would put two steps on screen at the same time.
+    const parsed = rules(loginCss());
+    const last = parsed[parsed.length - 1];
+    expect(last.selectors).toEqual(['html.zigly-otp .hideBox']);
+    expect(last.body).toContain('display: none !important');
+    // And it is stated once: a second copy earlier in the sheet would read as
+    // the authoritative one while contributing nothing.
+    expect(
+      parsed.filter(r => r.selectors.includes('html.zigly-otp .hideBox')),
+    ).toHaveLength(1);
   });
 
   it('hides furniture only -- never the form the customer came for', () => {

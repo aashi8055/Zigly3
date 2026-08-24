@@ -75,6 +75,23 @@ describe('header state follows which view is showing', () => {
     expect(src).toContain('onShouldStartLoadWithRequest={handleShouldStart}');
   });
 
+  it('gives the change-password layer a handler of its own', () => {
+    // It must not share handleShouldStart. That handler takes over every
+    // account URL by opening the native account section -- and this screen's
+    // own URL is an account URL, so the shared handler would bounce the
+    // customer back to the account screen before the page could render.
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    expect(src).toContain('handlePasswordShouldStart');
+    expect(src).toContain(
+      'onShouldStartLoadWithRequest={handlePasswordShouldStart}',
+    );
+    // Its own restyle too: LOGIN_RESTYLE hides the recover form outright.
+    expect(src).toContain('injectedJavaScript={PASSWORD_RESTYLE}');
+  });
+
   it('shows the back arrow whenever the page view is open', () => {
     const src = require('fs').readFileSync(
       'src/screens/ZiglyWebViewScreen.tsx',

@@ -275,6 +275,30 @@ export const ACCOUNT_LOGOUT_PATH = '/account/logout';
 export const LOGIN_URL = `${ZIGLY_ORIGIN}${ACCOUNT_LOGIN_PATH}?return_url=%2Faccount`;
 
 /**
+ * Where the account screen's Change Password row goes. **UNCONFIRMED.**
+ *
+ * Say the whole of it, because the row is drawn on the strength of a screenshot
+ * and this is the part the screenshot does not settle:
+ *
+ *   - Shopify's classic customer accounts have **no signed-in change-password
+ *     page**. There is no `/account/change-password` and this constant does not
+ *     invent one.
+ *   - The only password mechanism the platform has is `POST /account/recover`,
+ *     which **emails a reset link**. Its form is rendered on the login page
+ *     behind the `#recover` fragment, which is what this URL points at.
+ *   - So the row opens a password *reset*, not a password *change* -- and on an
+ *     OTP-first store many customers have never set a password for that link to
+ *     change in the first place.
+ *
+ * That is open question 1 on this work, and it is unanswered: nobody has
+ * confirmed what Zigly's own app shows after tapping the row. The row and this
+ * destination are here so the screen matches the reference app's layout; the
+ * destination should be confirmed before it reaches customers. See
+ * ../components/AccountScreen.tsx and ../webview/passwordRestyle.ts.
+ */
+export const CHANGE_PASSWORD_URL = `${ZIGLY_ORIGIN}${ACCOUNT_LOGIN_PATH}#recover`;
+
+/**
  * Shopify's country/province dataset for this shop, same origin and no key:
  * `var Countries = {...};`. It is what fills the Country and State pickers on
  * the address form, so those lists are the shop's own rather than a table

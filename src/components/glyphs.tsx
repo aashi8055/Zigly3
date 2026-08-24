@@ -364,6 +364,40 @@ export const PinIcon = ({ size = 22, color = '#1B1B1B' }: Glyph) => {
   );
 };
 
+/**
+ * A padlock: the change-password row.
+ *
+ * Two Views, like the parcel and the pin above it -- a rounded body, and a
+ * shackle drawn as the top half of a border box behind it. The shackle is
+ * narrower than the body and sits above it, which is the whole of what makes a
+ * rectangle read as a lock.
+ */
+export const LockIcon = ({ size = 22, color = '#1B1B1B' }: Glyph) => (
+  <View style={{ width: size, height: size, alignItems: 'center' }}>
+    <View
+      style={{
+        marginTop: size * 0.08,
+        width: size * 0.52,
+        height: size * 0.34,
+        borderWidth: 1.8,
+        borderBottomWidth: 0,
+        borderColor: color,
+        borderTopLeftRadius: size * 0.26,
+        borderTopRightRadius: size * 0.26,
+      }}
+    />
+    <View
+      style={{
+        width: size * 0.86,
+        height: size * 0.54,
+        borderWidth: 1.8,
+        borderColor: color,
+        borderRadius: 3,
+      }}
+    />
+  </View>
+);
+
 /** The disclosure chevron on a settings row. */
 export const ChevronRight = ({ size = 14, color = '#1B1B1B' }: Glyph) => (
   <View

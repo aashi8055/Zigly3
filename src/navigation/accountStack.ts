@@ -23,7 +23,9 @@ export type AccountScreen =
   | 'address'
   | 'addressForm'
   /** The profile form. A device-local overlay; see ../account/accountData. */
-  | 'editProfile';
+  | 'editProfile'
+  /** A WebView over the site's own password page. See ../webview/passwordRestyle.ts. */
+  | 'changePassword';
 
 export type AccountStack = AccountScreen[];
 

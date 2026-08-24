@@ -53,6 +53,7 @@ import type {
 import NetInfo from '@react-native-community/netinfo';
 
 import {
+  CHANGE_PASSWORD_URL,
   COLORS,
   LOGIN_URL,
   SPLASH_READY_GRACE_MS,
@@ -161,6 +162,7 @@ import {
 } from '../listing/facets';
 import type {Facets} from '../listing/facets';
 import AccountScreen from '../components/AccountScreen';
+import type {AccountRow} from '../components/AccountScreen';
 import EditProfileScreen from '../components/EditProfileScreen';
 import OrdersScreen from '../components/OrdersScreen';
 import AddressScreen from '../components/AddressScreen';
@@ -175,6 +177,7 @@ import {
   saveAddressScript,
 } from '../webview/accountBridge';
 import {LOGIN_RESTYLE} from '../webview/loginRestyle';
+import {PASSWORD_RESTYLE} from '../webview/passwordRestyle';
 import {
   EMPTY_ADDRESS_FIELDS,
   NO_PROFILE_EDITS,
@@ -224,7 +227,7 @@ interface Props {
  * a page layer's key. Resolved at the moment of injection, so a delayed pass
  * into a layer that has since been evicted is a no-op rather than a warning.
  */
-type Target = 'home' | 'login' | number;
+type Target = 'home' | 'login' | 'password' | number;
 
 /**
  * What the dashboard's WebView runs before the page's own scripts.
@@ -529,6 +532,12 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   const accountScreensRef = useRef<AccountStack>(EMPTY_ACCOUNT_STACK);
   const loginRef = useRef<Web>(null);
   /**
+   * The Change Password screen's WebView. Its own ref, and its own navigation
+   * handler below, because its URL is itself an account URL -- see
+   * handlePasswordShouldStart.
+   */
+  const passwordRef = useRef<Web>(null);
+  /**
    * Mirrors inCheckoutRef as state: the bottom bar has to come down over
    * Shopify's checkout, and a ref cannot re-render it.
    */
@@ -795,6 +804,8 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
       view = webRef.current;
     } else if (target === 'login') {
       view = loginRef.current;
+    } else if (target === 'password') {
+      view = passwordRef.current;
     } else {
       view = layerRefs.current.get(target);
     }
@@ -1260,11 +1271,17 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   }, []);
 
   const openAccountRow = useCallback(
-    (row: 'orders' | 'address' | 'favorites') => {
+    (row: AccountRow) => {
       if (row === 'favorites') {
         // The same wishlist the bottom navigation opens, and the same state:
         // there is one wishlist screen in this app, reached from two places.
         openWishlist();
+        return;
+      }
+      if (row === 'changePassword') {
+        // No probe: this screen is the site's own page in a WebView, and
+        // nothing native reads anything off it.
+        setAccountScreens(prev => pushScreen(prev, 'changePassword'));
         return;
       }
       if (row === 'orders') {
@@ -1784,6 +1801,53 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   );
 
   /**
+   * The Change Password screen's url policy.
+   *
+   * Modelled on handleLoginShouldStart above rather than on the shared
+   * handleShouldStart, and the reason is specific: the shared handler takes over
+   * every `isAccountUrl` by calling openAccountSection(). This screen's own URL
+   * *is* an account URL -- it is /account/login#recover -- so the shared handler
+   * would bounce the customer straight back to the account screen before the
+   * page had a chance to render.
+   *
+   * Narrow, because this WebView shares the session cookie with every other one:
+   * internal pages render, an app intent leaves the app, and anything the policy
+   * blocks stays blocked. Cleartext is still upgraded and non-web schemes still
+   * go to the OS, exactly as on the login screen.
+   */
+  const handlePasswordShouldStart = useCallback(
+    (request: ShouldStartLoadRequest): boolean => {
+      // Sub-frames -- Shopify's own reCAPTCHA on the recover form -- are not
+      // ours to police.
+      if (request.isTopFrame === false) {
+        return true;
+      }
+      const action = classifyUrl(request.url, true);
+      switch (action.kind) {
+        case 'appIntent':
+          Linking.openURL(action.url).catch(() =>
+            warn('no handler for', action.url),
+          );
+          return false;
+        case 'rewrite':
+          setTimeout(() => {
+            passwordRef.current?.injectJavaScript(
+              `window.location.replace(${JSON.stringify(action.url)}); true;`,
+            );
+          }, 0);
+          return false;
+        case 'block':
+          warn('blocked on the password screen:', action.reason, request.url);
+          return false;
+        default:
+          // Both 'allow' and 'external' render here.
+          return true;
+      }
+    },
+    [],
+  );
+
+  /**
    * Watch the login screen for the moment it succeeds.
    *
    * The signal is Shopify's own: /account redirects to /account/login without a
@@ -2055,8 +2119,9 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
     !showError &&
     loadingTarget !== null &&
     (onAccountScreen
-      ? // The one account screen that loads anything is login.
-        loadingTarget === 'login'
+      ? // The account screens that load anything are the two WebViews in the
+        // section: login, and the site's own password page.
+        loadingTarget === 'login' || loadingTarget === 'password'
       : showing
       ? loadingTarget === showing.key
       : loadingTarget === 'home');
@@ -2534,6 +2599,49 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
               onRenderProcessGone={() => {
                 warn('login render process gone — reloading');
                 loginRef.current?.reload();
+              }}
+            />
+          </View>
+        ) : null}
+
+        {/*
+          Change Password: the site's own password page, restyled.
+
+          A WebView rather than a native form for the same reason login is one --
+          this is the platform's own credential flow and the app does not rebuild
+          it. What it opens is a password *reset*, and the destination is
+          unconfirmed; CHANGE_PASSWORD_URL and AccountScreen's header both say so
+          in full.
+
+          Its own restyle payload, not the login screen's: LOGIN_RESTYLE hides
+          the recover form outright -- see ../webview/passwordRestyle.ts.
+        */}
+        {accountTop === 'changePassword' ? (
+          <View style={styles.pageLayer}>
+            <WebView<object>
+              {...baseWebViewProps}
+              ref={passwordRef}
+              source={{uri: CHANGE_PASSWORD_URL}}
+              style={styles.web}
+              injectedJavaScript={PASSWORD_RESTYLE}
+              // As everywhere else: the site's own header goes as early as
+              // Android allows, so it never flashes above the native one.
+              injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
+              onShouldStartLoadWithRequest={handlePasswordShouldStart}
+              onLoadStart={() => setLoadingTarget('password')}
+              onLoadEnd={() => {
+                setLoadingTarget(prev => (prev === 'password' ? null : prev));
+                // Again after the load: a full page load discards the injected
+                // <style> node, and the payload is idempotent.
+                injectInto('password', PASSWORD_RESTYLE);
+              }}
+              onError={({nativeEvent}) => {
+                warn('password page error:', nativeEvent.description);
+                setLoadingTarget(prev => (prev === 'password' ? null : prev));
+              }}
+              onRenderProcessGone={() => {
+                warn('password render process gone — reloading');
+                passwordRef.current?.reload();
               }}
             />
           </View>
