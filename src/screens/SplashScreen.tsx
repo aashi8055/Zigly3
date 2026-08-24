@@ -17,28 +17,17 @@
  * and so is the app's ground, so lifting the splash is now a fade between two
  * whites instead of a navy sheet snapping away to reveal a bright page.
  *
- * WHY IT NO LONGER STAYS A LOGO. The splash waits for `dashboard-ready`, and the
- * dashboard is now allowed to take its time answering -- that is the point of
- * the change this file is part of, and it is the right trade: a held logo beats a
- * half-built store. But a logo held for five seconds stops reading as loading and
- * starts reading as stuck, because nothing about it changes.
- *
- * So the mark gets its beat and then dissolves into the shape of the dashboard.
- * The customer sees a brand, then sees where the store is going to be, then sees
- * the store. Nothing here shortens the wait; it makes the wait legible.
+ * WHY IT STAYS A LOGO, AND WHY THE LOGO BREATHES. The splash waits for
+ * `dashboard-ready`, and the dashboard is allowed to take its time answering --
+ * a held logo beats a half-built store. A logo held perfectly still for several
+ * seconds stops reading as loading and starts reading as stuck, so instead of
+ * handing off to a separate skeleton/spinner, the mark itself gently pulses in
+ * scale for as long as the splash is up. It is still just the brand -- nothing
+ * that reads as a distinct "loading widget" -- but it is visibly alive.
  */
 import React, {useEffect, useRef} from 'react';
-import {
-  ActivityIndicator,
-  Animated,
-  Easing,
-  Image,
-  StyleSheet,
-  View,
-} from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {COLORS, SPLASH_SKELETON_AFTER_MS} from '../constants/appConstants';
-import {HomeSkeleton, usePulse} from '../components/Skeleton';
+import {Animated, Easing, StyleSheet, View} from 'react-native';
+import {COLORS} from '../constants/appConstants';
 
 /**
  * Zigly's own mark, from the launcher icon set.
@@ -57,111 +46,52 @@ const LOGO = require('../assets/zigly-logo.png');
  */
 const LOGO_SIZE = 240;
 
-/** How long the mark takes to give way to the shape. */
-const HANDOVER_MS = 320;
-
-/**
- * Where the dashboard's content actually starts, below the app's own chrome.
- *
- * This splash covers the whole screen, including the header the rest of the app
- * draws, so it has to leave that room itself or the placeholder circles would sit
- * where the search bar is. The three contributors, and where they live:
- *
- *   38  the announcement bar    ../components/AnnouncementBar
- *   52  the header bar          BAR_H in ../components/NativeHeader
- *   64  the search band         SEARCH_BAND_H in ../components/NativeHeader
- *
- * DELIBERATELY AN APPROXIMATION. The announcement bar only appears once the page
- * has reported something to put in it, so the true offset is not knowable at the
- * moment this is drawn. It does not need to be: the splash dissolves rather than
- * cutting, so a placeholder a few points out of register melts into the real
- * thing instead of jumping. That is the same reasoning ../components/PageCover
- * records for its own shapes.
- */
-const CHROME_H = 38 + 52 + 64;
+/** How far the mark grows at the top of each breath. 1.04 reads as alive, not as motion. */
+const BREATHE_SCALE = 1.04;
+/** One full in-and-out breath. Slow enough to read as idle, not as urgency. */
+const BREATHE_MS = 1400;
 
 const SplashScreen = () => {
-  const insets = useSafeAreaInsets();
-  /** 1 while the mark is the whole screen, 0 once the shape has taken over. */
-  const mark = useRef(new Animated.Value(1)).current;
-  const shape = useRef(new Animated.Value(0)).current;
-  const pulse = usePulse(true);
+  /** 1 at rest, BREATHE_SCALE at the top of each breath. */
+  const breathe = useRef(new Animated.Value(1)).current;
 
-  /*
-   * The wait before the hand-over is `Animated.delay`, not a `setTimeout`.
-   *
-   * It has to be. A bare timer of over a second outlives the tree that armed it
-   * in any environment that tears down without unmounting -- the test renderer
-   * does exactly that -- and it then wakes up and reaches for an `Animated` that
-   * is no longer there. Inside the animation, the delay is something `stop()` can
-   * cancel, and the cleanup below does.
-   */
   useEffect(() => {
-    const handover = Animated.parallel([
+    const loop = Animated.loop(
       Animated.sequence([
-        Animated.delay(SPLASH_SKELETON_AFTER_MS),
-        Animated.timing(mark, {
-          toValue: 0,
-          duration: HANDOVER_MS,
-          easing: Easing.out(Easing.quad),
+        Animated.timing(breathe, {
+          toValue: BREATHE_SCALE,
+          duration: BREATHE_MS,
+          easing: Easing.inOut(Easing.quad),
           useNativeDriver: true,
         }),
-      ]),
-      Animated.sequence([
-        Animated.delay(SPLASH_SKELETON_AFTER_MS),
-        Animated.timing(shape, {
+        Animated.timing(breathe, {
           toValue: 1,
-          duration: HANDOVER_MS,
-          easing: Easing.out(Easing.quad),
+          duration: BREATHE_MS,
+          easing: Easing.inOut(Easing.quad),
           useNativeDriver: true,
         }),
       ]),
-    ]);
-    handover.start();
-    return () => handover.stop();
-  }, [mark, shape]);
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [breathe]);
 
   return (
     <View
       style={styles.root}
       accessibilityRole="progressbar"
       accessibilityLabel="Loading Zigly">
-      {/*
-        The shape is underneath and fades up, so there is never a frame with
-        neither on it -- the two cross, rather than one leaving before the other
-        arrives.
-      */}
-      <Animated.View
-        style={[
-          styles.sheet,
-          {paddingTop: insets.top + CHROME_H, opacity: shape},
-        ]}
-        pointerEvents="none">
-        <HomeSkeleton pulse={pulse} />
-      </Animated.View>
-
-      <Animated.View style={[styles.centre, {opacity: mark}]}>
-        <Image
+      <View style={styles.centre}>
+        <Animated.Image
           source={LOGO}
-          style={styles.logo}
+          style={[styles.logo, {transform: [{scale: breathe}]}]}
           // The mark must never be stretched: it is a wordmark, and a wordmark
           // that is a few percent wide is the kind of wrong that is felt without
           // being noticed.
           resizeMode="contain"
           accessibilityIgnoresInvertColors
         />
-      </Animated.View>
-
-      {/*
-        Outside the cross-fade, and it stays for the whole wait.
-
-        The placeholder's pulse says "there will be something here"; only the
-        spinner says "something is still happening". Losing it at the hand-over
-        would take the one moving thing off the screen at exactly the point the
-        wait starts to feel long. Navy, not white: on this ground a white spinner
-        is an empty space where something is plainly meant to be.
-      */}
-      <ActivityIndicator color={COLORS.navy} style={styles.spinner} />
+      </View>
     </View>
   );
 };
@@ -175,10 +105,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: COLORS.white,
   },
-  /**
-   * The mark stays centred on the whole screen, which is where it has always
-   * been -- the shape arriving underneath must not move it.
-   */
   centre: {
     position: 'absolute',
     top: 0,
@@ -188,17 +114,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  /** Same gutter as the page cover's sheet, so the two agree. */
-  sheet: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 12,
-  },
   logo: {width: LOGO_SIZE, height: LOGO_SIZE},
-  spinner: {position: 'absolute', bottom: 72, left: 0, right: 0},
 });
 
 export default SplashScreen;

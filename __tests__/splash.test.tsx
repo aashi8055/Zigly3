@@ -9,19 +9,18 @@
  */
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {ActivityIndicator, Image, Text} from 'react-native';
+import {Image, Text} from 'react-native';
 import SplashScreen from '../src/screens/SplashScreen';
 import {COLORS} from '../src/constants/appConstants';
 
 /**
  * Every tree rendered here, so it can be taken down again.
  *
- * The splash arms a deferred animation -- the mark dissolving into the
- * dashboard's shape after SPLASH_SKELETON_AFTER_MS -- and its cleanup is what
- * cancels it. A tree that is never unmounted never runs that cleanup, so the
- * animation woke up after Jest had torn the environment down and reached for an
- * `Animated` that was no longer there: a hard crash of the worker, on a suite
- * that otherwise reported itself green.
+ * The splash arms a looping breathe animation on the logo, and its cleanup is
+ * what cancels it. A tree that is never unmounted never runs that cleanup, so
+ * the animation woke up after Jest had torn the environment down and reached
+ * for an `Animated` that was no longer there: a hard crash of the worker, on a
+ * suite that otherwise reported itself green.
  */
 const trees: ReactTestRenderer.ReactTestRenderer[] = [];
 
@@ -78,15 +77,6 @@ describe('the splash', () => {
   it('carries no copy of its own', () => {
     // "Everything your pet needs" was this app's line, not Zigly's.
     expect(render().root.findAllByType(Text)).toHaveLength(0);
-  });
-
-  it('keeps a spinner, in a colour that shows on white', () => {
-    // A white spinner on a white ground is an empty space where something is
-    // plainly meant to be.
-    const [spinner] = render().root.findAllByType(ActivityIndicator);
-    expect(spinner).toBeDefined();
-    expect(spinner.props.color).toBe(COLORS.navy);
-    expect(spinner.props.color).not.toBe(COLORS.white);
   });
 });
 

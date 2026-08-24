@@ -191,20 +191,6 @@ export const LISTING_PATHS = ['/collections/', '/search'];
 export const SPLASH_MIN_MS = 900;
 
 /**
- * When the splash stops being a logo and becomes the shape of the dashboard.
- *
- * A warmed dashboard is often ready inside a second, and a placeholder that
- * appears and vanishes again reads as a stutter -- the same reason the page
- * cover holds its own shapes back behind SKELETON_DELAY_MS. So this sits above
- * SPLASH_MIN_MS: a launch that is already finished shows the mark and nothing
- * else, and only a wait long enough to need explaining gets the explanation.
- *
- * Comfortably below the deadlines that end the wait, so the shape is something
- * the customer actually sees rather than a frame before the reveal.
- */
-export const SPLASH_SKELETON_AFTER_MS = 1300;
-
-/**
  * Hard cap on the splash.
  *
  * It normally lifts when the page reports the dashboard assembled, which is

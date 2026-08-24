@@ -31,7 +31,6 @@ import {
   SPLASH_MAX_MS,
   SPLASH_MIN_MS,
   SPLASH_READY_GRACE_MS,
-  SPLASH_SKELETON_AFTER_MS,
 } from '../src/constants/appConstants';
 import {PAGE_COVER_CAP_MS} from '../src/components/PageCover';
 import {PAINT_GATE_MAX_MS} from '../src/webview/headerBridge';
@@ -98,13 +97,6 @@ describe('the dashboard answers before the splash gives up', () => {
     // is a much worse experience for a signal that was only a little late.
     expect(SPLASH_READY_GRACE_MS).toBeLessThan(SPLASH_MAX_MS);
   });
-
-  it('shows the placeholder only on a wait long enough to need it', () => {
-    // Above the floor, so a launch that is already finished shows the mark and
-    // nothing else; below the deadlines, so when it does appear it is seen.
-    expect(SPLASH_SKELETON_AFTER_MS).toBeGreaterThan(SPLASH_MIN_MS);
-    expect(SPLASH_SKELETON_AFTER_MS).toBeLessThan(SPLASH_READY_GRACE_MS);
-  });
 });
 
 describe('an inner page answers before its cover gives up', () => {
@@ -154,7 +146,6 @@ describe('the whole budget, in order', () => {
      */
     const ladder = [
       ['splash floor', SPLASH_MIN_MS],
-      ['placeholder appears', SPLASH_SKELETON_AFTER_MS],
       ['paint gate self-lift', PAINT_GATE_MAX_MS],
       ['inner page answers', INNER_MS()],
       ['cover cap', PAGE_COVER_CAP_MS],
