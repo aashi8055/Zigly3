@@ -25,9 +25,11 @@ import {
   LOGIN_LABELS,
   LOGIN_POPUP_HOST,
   LOGIN_RESTYLE,
+  HIDDEN_FIELD_CLASS,
   MARKETING_CONSENT,
   OTP_READY_CLASS,
   REQUEST_OTP_LABEL,
+  SIGNUP_EMAIL,
 } from '../src/webview/loginRestyle';
 
 /**
@@ -235,11 +237,48 @@ describe('the three steps do not look alike', () => {
     expect(verify).not.toHaveLength(0);
     const bodies = verify.map(r => r.body).join(' ');
     expect(bodies).toContain('width: auto !important');
-    expect(bodies).toContain('margin: 20px auto 0 !important');
+    expect(bodies).toContain('margin: 16px auto 0 !important');
+    // Mid-grey with white type, which is what the reference app draws. The
+    // pale chip with grey type this used to be was the most visible thing on
+    // the screen that did not match it.
+    expect(bodies).toContain('background: #808080 !important');
+    expect(bodies).toContain('color: #FFFFFF !important');
+    // Smaller than the other two buttons, which is the point of it: the shared
+    // geometry block sets 58px and 18px type, and this comes down from both.
+    expect(bodies).toContain('min-height: 33px !important');
+    expect(bodies).toContain('font-size: 15px !important');
     // Grey by default, the app's filled action colour once ready.
     const ready = rulesFor('html.zigly-otp .verify-btn.' + OTP_READY_CLASS);
     expect(ready).not.toHaveLength(0);
     expect(ready[0].body).toContain('#183761');
+  });
+
+  it('overrides the shared geometry rather than sitting under it', () => {
+    // .verify-btn and .otp-btn are both on this button at equal specificity,
+    // so source order is the whole of what decides. The step-2 rule must stay
+    // after the block that sets 58px, 18px type and an 18px inset.
+    const css = loginCss();
+    const shared = css.indexOf('html.zigly-otp .send-btn,');
+    const step2 = css.indexOf('html.zigly-otp .verify-btn {');
+    expect(shared).toBeGreaterThan(-1);
+    expect(step2).toBeGreaterThan(shared);
+  });
+
+  it('sizes the OTP boxes and their gaps as the reference app does', () => {
+    // Six boxes and five gaps come to 70% of the screen, and each box is
+    // near-square -- not the tall field this drew before.
+    const box = rulesFor('html.zigly-otp .otp-input-box');
+    expect(box).not.toHaveLength(0);
+    expect(box[0].body).toContain('width: 38px !important');
+    expect(box[0].body).toContain('min-height: 40px !important');
+    const row = rulesFor('html.zigly-otp .otp-input-main');
+    expect(row[0].body).toContain('gap: 9px !important');
+    // The step's own top offset, and on the step rather than on .ol: .ol is
+    // every step, and only this one has been measured.
+    const step = rulesFor('html.zigly-otp .verify-box');
+    expect(step).not.toHaveLength(0);
+    expect(step[0].body).toContain('padding-top: 115px !important');
+    expect(rulesFor('html.zigly-otp .ol')[0].body).not.toContain('115px');
   });
 
   it('counts the boxes rather than assuming six, and blocks nothing', () => {
@@ -371,6 +410,57 @@ describe('the marketing checkbox', () => {
     const hide = rulesFor('html.zigly-otp .update-checkbox-wrapper');
     expect(hide).not.toHaveLength(0);
     expect(hide[0].body).toContain('display: none !important');
+  });
+});
+
+describe('the Email field the app does not ask for', () => {
+  it('is one constant, and the field is hidden rather than filled', () => {
+    // The account is created against the phone number the OTP proved. What
+    // this must never do is invent an address to put in a field it hid.
+    expect(SIGNUP_EMAIL.hide).toBe(true);
+    expect(scriptOnly()).not.toContain('.value =');
+    expect(scriptOnly()).not.toContain('@');
+  });
+
+  it('hides the row, its label and its message with one class', () => {
+    expect(LOGIN_RESTYLE).toContain('function hideSignupEmail(');
+    expect(LOGIN_RESTYLE).toContain(
+      "'.input-label.email, .error-email-message'",
+    );
+    const hide = rulesFor('html.zigly-otp .' + HIDDEN_FIELD_CLASS);
+    expect(hide).not.toHaveLength(0);
+    expect(hide[0].body).toContain('display: none !important');
+  });
+
+  it('is re-applied on every pass, because the step is rebuilt', () => {
+    // The signup step arrives long after the poll gives up, and the widget
+    // rebuilds it on its own validation. classList.add is the no-op on repeat.
+    const sync = LOGIN_RESTYLE.slice(LOGIN_RESTYLE.indexOf('function sync()'));
+    expect(sync.slice(0, 200)).toContain('hideSignupEmail();');
+    expect(LOGIN_RESTYLE).toContain('classList.add(HIDDEN)');
+  });
+
+  it('can only reach the signup step, never the phone step', () => {
+    // Step 1 is a phone number and nothing else on this store, and hiding its
+    // one input would be a login screen with no way to log in. The hide is
+    // scoped to .update-user-box and walks up from the input it found there.
+    const fn = LOGIN_RESTYLE.slice(
+      LOGIN_RESTYLE.indexOf('function hideSignupEmail('),
+      LOGIN_RESTYLE.indexOf('/** Everything that has to be re-applied'),
+    );
+    expect(fn).toContain("document.querySelector('.update-user-box')");
+    expect(fn).not.toContain('.login-box');
+    // And it stops climbing before any wrapper that holds another field, so a
+    // template that shares one cannot lose the phone with the email.
+    expect(fn).toContain('!holdsOther(parent, input)');
+  });
+
+  it('keeps the label the flag would need on the way back', () => {
+    // SIGNUP_EMAIL.hide is the only edit that brings the row back, so the
+    // label it comes back with stays in the table.
+    const email = LOGIN_LABELS.find(l => l.selector === '.input-label.email');
+    expect(email).toBeDefined();
+    expect((email as {text: string}).text).toBe('Email Id');
   });
 });
 

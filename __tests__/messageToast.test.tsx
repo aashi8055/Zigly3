@@ -53,18 +53,20 @@ describe('Delete Account', () => {
     require('fs').readFileSync('src/screens/ZiglyWebViewScreen.tsx', 'utf8');
 
   it('signs out and says so through the toast, not the account notice', () => {
-    // logOut clears accountNotice, and the account screen is about to be
-    // replaced by the login screen -- so the notice has to be drawn outside
-    // the section or it is never seen.
+    // signOut clears accountNotice, and the account section is about to close
+    // on the site's reply -- so the notice has to be drawn outside the section
+    // or it is never seen.
     // Anchored on the account handler: there is an address delete in this file
     // too, and it confirms with the same word.
     const s = src();
     const at = s.indexOf('const requestAccountDeletion');
     expect(at).toBeGreaterThan(-1);
     const handler = s.slice(at, at + 1400);
-    expect(handler).toContain('logOut()');
-    expect(handler).toContain("setToastMessage('Deleted user')");
+    expect(handler).toContain("signOut('delete')");
     expect(handler).not.toContain('setAccountNotice');
+    // The words are in one table with both reasons, so the two endings cannot
+    // drift apart: this one is the app saying data is gone that is not.
+    expect(s).toContain("delete: 'Deleted user data'");
   });
 
   it('confirms first, and offers the way to have it really done', () => {

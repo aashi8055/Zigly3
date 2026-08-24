@@ -437,6 +437,84 @@ describe('the account stack', () => {
   });
 });
 
+/**
+ * Where the section leaves the customer, on the three ways out of it.
+ *
+ * Source assertions, because all three are decisions taken inside one screen
+ * component that owns eleven WebViews and cannot be rendered in a test. What
+ * they pin is the rule, and the rule is that a *completed* sign-in and an
+ * *asked-for* sign-out both end on the dashboard, while a session that merely
+ * expired still ends on the login screen -- see signOutReason.
+ */
+describe('where the section leaves you', () => {
+  const src = (): string =>
+    require('fs').readFileSync('src/screens/ZiglyWebViewScreen.tsx', 'utf8');
+
+  /**
+   * The body of one useCallback, from its name to the next declaration at the
+   * component's own indentation -- two spaces, so the `const`s inside the body
+   * do not end the slice early.
+   */
+  const handler = (name: string): string => {
+    const s = src();
+    const at = s.indexOf('const ' + name + ' = useCallback');
+    expect(at).toBeGreaterThan(-1);
+    const next = s.indexOf('\n  const ', at + 20);
+    return s.slice(at, next > at ? next : at + 2000);
+  };
+
+  it('lands a completed login on the dashboard, not on the account screen', () => {
+    // The customer came to the Account tab to sign in; signing in is the end of
+    // that, and the app's home is where the app starts.
+    const nav = handler('handleLoginNav');
+    expect(nav).toContain("applyAuth('signedIn')");
+    expect(nav).toContain('closeAccountSection()');
+  });
+
+  it('still swaps login for the account screen when a probe corrects it', () => {
+    // The other way a signedIn answer arrives: the tab was opened on a stale
+    // signed-out state and the probe put it right. That customer never asked to
+    // log in and must not be thrown out of the section for tapping Account.
+    expect(resolveAuth(['login'], 'signedIn')).toEqual(['account']);
+  });
+
+  it('says what it is doing before the site has answered', () => {
+    // The request is a round trip and the screen does not change until it
+    // comes back, so without this the button does nothing for a second.
+    const out = handler('signOut');
+    expect(out).toContain('setToastMessage(SIGN_OUT_MESSAGE[reason])');
+    expect(out).toContain("injectInto('home', LOGOUT_SCRIPT)");
+    expect(src()).toContain("logout: 'Logging out");
+  });
+
+  it('closes the section once the site confirms the sign-out', () => {
+    const s = src();
+    const at = s.indexOf("case 'auth': {");
+    expect(at).toBeGreaterThan(-1);
+    const arm = s.slice(at, at + 1600);
+    // Asked for -> the dashboard. applyAuth has just collapsed the stack to
+    // the login screen, which is the right end for an expired session only.
+    expect(arm).toContain('signOutReason.current');
+    expect(arm).toContain("applyAuth('signedOut')");
+    expect(arm).toContain('setAccountScreens(closeAccount())');
+  });
+
+  it('keeps a failed sign-out on the account screen, and says so there', () => {
+    // The one case where the customer must not be moved: they are still signed
+    // in, and the screen they are on is the one that can tell them.
+    const s = src();
+    const at = s.indexOf("case 'auth': {");
+    const arm = s.slice(at, at + 1600);
+    const failed = arm.slice(arm.indexOf("data.from === 'logout'"));
+    expect(failed).toContain('setAccountNotice(');
+    expect(failed).not.toContain('closeAccount(');
+  });
+
+  it('leaves an expired session on the login screen, as it always did', () => {
+    expect(resolveAuth(['account', 'address'], 'signedOut')).toEqual(['login']);
+  });
+});
+
 // --------------------------------------------------------------- the screens
 
 describe('the account screen', () => {

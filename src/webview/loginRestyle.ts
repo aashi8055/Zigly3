@@ -113,6 +113,33 @@ export const LOGIN_HOSTS = [
  */
 export const MARKETING_CONSENT = {hide: true, uncheck: false};
 
+/**
+ * The Email field on the signup step.
+ *
+ * The signup step -- SimplyOTP's `.update-user-box`, the one a customer whose
+ * phone number is new to the shop sees after the OTP -- asks for First Name,
+ * Last Name, Email and the phone it just verified. The app asks for no email:
+ * the account is created against the phone number, which is what the OTP
+ * proved, and an address nobody has verified adds a field to the one screen
+ * that stands between a customer and a session.
+ *
+ * State the risk plainly, because it is the same shape as MARKETING_CONSENT's:
+ * whether SimplyOTP *requires* that field is its business and not visible from
+ * here. Its live config carries `email_enable: false`, which is why step 1 asks
+ * for a phone number and nothing else, and the field on this step carries no
+ * `required` marker in the markup this app has seen -- but if a future config
+ * makes it mandatory, signup would fail against a field the customer cannot
+ * see. `hide: false` is the whole of the way back: the row shows again, already
+ * labelled and styled, and nothing else has to change.
+ *
+ * Hidden, never removed, and never filled in: an app that invents an email
+ * address for a customer is worse than one that asks for theirs.
+ */
+export const SIGNUP_EMAIL = {hide: true};
+
+/** Added to whatever the script hides on the app's own account, not SimplyOTP's. */
+export const HIDDEN_FIELD_CLASS = 'zigly-hidden-field';
+
 /** How a LOGIN_LABELS entry writes its string. See the table below. */
 export type LoginLabelMode = 'text' | 'replace' | 'append';
 
@@ -212,7 +239,10 @@ export const LOGIN_LABELS: LoginLabel[] = [
     mode: 'text',
     live: 'Email',
     text: 'Email Id',
-    why: 'The reference app labels it this way on the signup step.',
+    why:
+      'The reference app labels it this way on the signup step. The row is ' +
+      'hidden while SIGNUP_EMAIL.hide is true, and the label is kept so that ' +
+      'flag is still the only edit that brings the field back.',
   },
   {
     selector: '.input-label.mobile',
@@ -532,7 +562,18 @@ html.zigly-otp .send-btn {
   color: #ED2427 !important;
 }
 
-/* Step 2. Small, centred, and grey until there are six digits in the boxes.
+/* Step 2. A small centred pill, mid-grey with white type until there are six
+   digits in the boxes.
+
+   Everything here overrides the shared geometry above -- it is a fifth of the
+   screen wide and a little over half the height of the other two buttons, so
+   the height, the padding, the type size and the radius all come down with
+   it. It stays later in the sheet than that block, which is what lets it win
+   on equal specificity.
+
+   Grey with white type, not the pale chip with grey type this drew before:
+   the reference app's own screenshot is the source, and the difference was
+   the most visible thing on the screen.
 
    Appearance only. The widget does not disable this button -- its own
    toast_enter_otp string says it validates on the click instead -- so an
@@ -540,10 +581,15 @@ html.zigly-otp .send-btn {
    Nothing here blocks the press. */
 html.zigly-otp .verify-btn {
   width: auto !important;
-  min-width: 150px !important;
-  margin: 20px auto 0 !important;
-  background: #EEF1F5 !important;
-  color: #8B95A5 !important;
+  min-width: 0 !important;
+  min-height: 33px !important;
+  margin: 16px auto 0 !important;
+  padding: 0 14px !important;
+  border-radius: 8px !important;
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  background: #808080 !important;
+  color: #FFFFFF !important;
 }
 html.zigly-otp .verify-btn.zigly-otp-ready {
   background: #183761 !important;
@@ -552,8 +598,8 @@ html.zigly-otp .verify-btn.zigly-otp-ready {
 /* And if a future version of the widget does disable it, grey wins back. */
 html.zigly-otp .verify-btn:disabled,
 html.zigly-otp .verify-btn.disabled {
-  background: #EEF1F5 !important;
-  color: #8B95A5 !important;
+  background: #808080 !important;
+  color: #FFFFFF !important;
 }
 
 /* Step 3. Full-width black. The caps are in the label, so no text-transform. */
@@ -581,7 +627,26 @@ html.zigly-otp .button-wrapper {
 
 /* ------------------------------------------------------------------
    The OTP step.
+
+   Every measurement below is read off the reference app's own OTP screen
+   (screenshot, 2026-08-25) rather than chosen: the block sits well down the
+   screen, the boxes are near-square, and Submit is a small mid-grey pill with
+   white type -- not the pale chip with grey type this used to draw.
+
+   How exact "exact" is. The screenshot arrived rescaled, so the numbers are
+   proportions of its width converted to CSS px at the phone's own scale: the
+   boxes are 70% of the screen across, the gaps between them a seventh of a
+   box, Submit a fifth of the screen. That is accurate to a pixel or so, not
+   to the reference app's stylesheet, and a second screenshot at a known
+   device width is what would settle the last of it.
+
+   The step's own top offset lives on .verify-box and not on .ol, because .ol
+   is every step: only this one has been measured, so only this one moves.
    ------------------------------------------------------------------ */
+
+html.zigly-otp .verify-box {
+  padding-top: 115px !important;
+}
 
 /* "You will receive OTP on <number>", centred, with the number in bold. Shown
    back against the default hide above. */
@@ -603,7 +668,7 @@ html.zigly-otp .verify-box .user-details {
    svg goes and the element and its listener stay exactly as they were. */
 html.zigly-otp .edit-phone:not(.hideBox) {
   display: block !important;
-  margin: 0 0 20px !important;
+  margin: 0 0 34px !important;
   font-size: 14px !important;
   color: #5A6472 !important;
   text-align: center !important;
@@ -618,18 +683,21 @@ html.zigly-otp .otp-input-main,
 html.zigly-otp .input-boxes-container {
   display: flex !important;
   justify-content: center !important;
-  gap: 10px !important;
+  gap: 9px !important;
   width: 100% !important;
-  margin: 6px 0 0 !important;
+  margin: 0 !important;
   padding: 0 !important;
 }
+/* Near-square, and six of them plus their gaps come to 70% of the screen --
+   which is where the 38 and the 9 come from. The border is the same one the
+   phone row draws, so the two steps agree with each other. */
 html.zigly-otp .otp-input-box {
-  width: 48px !important;
-  min-height: 58px !important;
+  width: 38px !important;
+  min-height: 40px !important;
   margin: 0 !important;
   padding: 0 !important;
   border: 1px solid #9AA7B8 !important;
-  border-radius: 9px !important;
+  border-radius: 8px !important;
   background: #FFFFFF !important;
   color: #1B1B1B !important;
   font-size: 20px !important;
@@ -647,7 +715,7 @@ html.zigly-otp .resend-otp,
 html.zigly-otp .resend-otp-text,
 html.zigly-otp .resend-otp-message,
 html.zigly-otp .count-down-otp {
-  margin: 12px 0 0 !important;
+  margin: 23px 0 0 !important;
   text-align: center !important;
   font-size: 13.5px !important;
   line-height: 1.5 !important;
@@ -716,6 +784,24 @@ html.zigly-otp .update-user-box input[name="phone"]:disabled {
   color: #1B1B1B !important;
   opacity: 1 !important;
   background: transparent !important;
+}
+
+/* ------------------------------------------------------------------
+   The Email field, which this app does not ask for. See SIGNUP_EMAIL.
+
+   One class, added by the script to the field's own wrapper, its label and
+   its error message -- not a selector for the field itself, because which
+   element wraps it is SimplyOTP's business and the script can walk the DOM
+   where a stylesheet would have to guess. Hidden, never removed and never
+   filled in: the input is still the widget's own, still empty, still
+   submitted as the widget submits it.
+   ------------------------------------------------------------------ */
+${
+  SIGNUP_EMAIL.hide
+    ? `html.zigly-otp .${HIDDEN_FIELD_CLASS} {
+  display: none !important;
+}`
+    : '/* SIGNUP_EMAIL.hide is false: the Email row shows, labelled by LOGIN_LABELS. */'
 }
 
 /* ------------------------------------------------------------------
@@ -801,6 +887,10 @@ export const LOGIN_RESTYLE = `
   var INVALID = ${JSON.stringify(INVALID_CLASS)};
   var ERRORS = ${JSON.stringify(ERROR_SELECTOR)};
   var EDIT_LABEL = 'zigly-edit-label';
+  var HIDDEN = ${JSON.stringify(HIDDEN_FIELD_CLASS)};
+  var HIDE_EMAIL = ${JSON.stringify(SIGNUP_EMAIL.hide)};
+  var EMAIL_FIELD = 'input[type="email"], input[name="email"]';
+  var EMAIL_EXTRAS = '.input-label.email, .error-email-message';
   var LABELS = ${JSON.stringify(
     LOGIN_LABELS.map(entry => ({
       selector: entry.selector,
@@ -971,10 +1061,56 @@ export const LOGIN_RESTYLE = `
   }
   }
 
+  /** True if this element holds any field other than the one passed in. */
+  function holdsOther(el, keep) {
+    var fields = el.querySelectorAll('input, select, textarea');
+    for (var i = 0; i < fields.length; i++) {
+      if (fields[i] !== keep) { return true; }
+    }
+    return false;
+  }
+
+  /**
+   * The Email row on the signup step, hidden. See SIGNUP_EMAIL.
+   *
+   * The row is found by walking up from the widget's own input and stopping
+   * before the first ancestor that holds another field, so the worst this can
+   * do on a template nobody here has seen is hide too little: a store where
+   * the email and the phone share a wrapper stops the walk at the smaller one
+   * and keeps the phone. Scoped to .update-user-box, so step 1 -- which on
+   * this store is the phone and nothing else -- cannot be reached by it.
+   *
+   * The label and the error message are the widget's siblings of that row
+   * rather than its children, so they are named. Class only: nothing is
+   * removed, nothing is disabled and no value is written, which leaves the
+   * field exactly as SimplyOTP submits it.
+   */
+  function hideSignupEmail() {
+    if (!HIDE_EMAIL) { return; }
+    var box = document.querySelector('.update-user-box');
+    if (!box) { return; }
+    var input = box.querySelector(EMAIL_FIELD);
+    if (input) {
+      var target = input;
+      var parent = target.parentNode;
+      while (parent && parent !== box && parent.nodeType === 1 &&
+             !holdsOther(parent, input)) {
+        target = parent;
+        parent = target.parentNode;
+      }
+      if (target.classList) { target.classList.add(HIDDEN); }
+    }
+    var extras = box.querySelectorAll(EMAIL_EXTRAS);
+    for (var i = 0; i < extras.length; i++) {
+      extras[i].classList.add(HIDDEN);
+    }
+  }
+
   /** Everything that has to be re-applied when the widget rebuilds a step. */
   function sync() {
     relabel();
     uncheckMarketing();
+    hideSignupEmail();
     syncOtpReady();
     syncFieldErrors();
   }

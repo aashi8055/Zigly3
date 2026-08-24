@@ -520,10 +520,31 @@ Two things it will not do: hide the consent notice, which is a legal one with
 links to Zigly's policies, and offer the theme's email-and-password form, which
 is the web experience this screen replaces.
 
+**The OTP step is drawn from the reference app's own screenshot** (2026-08-25):
+the block sits low on the screen, the six boxes are near-square and come to 70%
+of the width, and Submit is a small mid-grey pill with white type rather than the
+pale chip with grey type it used to be. Those numbers are proportions read off a
+rescaled screenshot and converted at the phone's own width, so they are accurate
+to about a pixel rather than to Zigly's stylesheet; a screenshot at a known
+device width is what would settle the last of it. The step's top offset sits on
+`.verify-box`, not on the shared `.ol`, because only this step has been measured.
+
+The signup step — the one a phone number new to the shop reaches after the OTP —
+asks for First Name, Last Name and the number it just verified. **It does not ask
+for an email.** The account is created against the phone number, which is what
+the OTP proved, and SimplyOTP's own config already carries `email_enable: false`.
+The field is hidden rather than removed and is never filled in; `SIGNUP_EMAIL` in
+`loginRestyle.ts` is the one flag that brings it back, and it says there what
+would make that necessary.
+
 Success is Shopify's own signal — arriving at any Zigly page that is *not* the
 login form means the session exists — and the auth state flips at that moment
 rather than after a probe, because what the login WebView is showing right then is
-the website's account page. Navigation inside that one WebView is deliberately
+the website's account page. A completed login then **closes the account section
+and leaves the customer on the dashboard**: signing in is the end of what they
+came to the tab for. A `signedIn` answer that arrives from a *probe* instead
+still swaps login for the account screen — that customer never asked to log in,
+and must not be thrown to the dashboard for tapping Account. Navigation inside that one WebView is deliberately
 looser than everywhere else: any https destination renders, so an OTP provider's
 own host cannot bounce the customer into Chrome mid-login. That is the same
 relaxation checkout already gets, for the same reason.
@@ -566,6 +587,19 @@ and both are written down at the top of the code that implements them.
 
 When either endpoint exists, one function changes in each case — saveProfile
 and requestAccountDeletion — and the on-screen notices come off with them.
+
+**Both ways out say so, and both end on the dashboard.** Log Out and Delete
+Account make the same request — the site's own `/account/logout`, fetched inside
+the WebView so the one shared cookie jar is what gets cleared — and the screen
+does not change until the site answers, because an account screen that claims
+"signed out" over a website that is still signed in is the worse outcome. What
+covers that round trip is a toast, put up on the tap: *Logging out…* for one and
+*Deleted user data* for the other. When the site confirms, the section closes and
+the customer lands on the dashboard. A session that merely **expired** still
+collapses the section to the login screen instead — that customer was in the
+middle of something and login is the way back to it; `signOutReason` is what
+tells the two apart. A sign-out that fails moves nobody: the toast comes down and
+the account screen says it did not go through.
 
 **Screen order matters.** The section is drawn *below* the page layers: an order,
 or a product opened from Favorites, is a real page and has to come down over the
@@ -915,9 +949,13 @@ there -- so device testing is the only trustworthy signal.
       device**
 - [x] Search, cart, product navigation -- reported working
 - [x] OTP login completes (no SMS autofill in a WebView; code typed manually)
-- [ ] OTP login completes *through the restyled widget*, and lands on the native
-      account screen rather than the website's  <-- verify first, with a real
-      account: everything signed-in is untestable without one
+- [ ] OTP login completes *through the restyled widget*, and lands on the app's
+      dashboard rather than on the website's account page  <-- verify first, with
+      a real account: everything signed-in is untestable without one
+- [ ] A phone number the shop has never seen reaches the signup step, and that
+      step's **Email field is not shown** -- and SimplyOTP still creates the
+      account without it. See `SIGNUP_EMAIL`: if it turns out to be required,
+      that one flag brings the field back
 - [ ] Reach checkout; UPI intent opens a payment app  <-- highest remaining risk
 - [ ] Force-stop, relaunch -- still logged in, cart intact
 - [ ] Airplane mode shows the offline screen; Retry recovers
