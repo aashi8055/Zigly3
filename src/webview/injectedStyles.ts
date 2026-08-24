@@ -451,21 +451,24 @@ body.zigly-listing .card-variant-wrapper {
 /* ------------------------------------------------------------------
    Product pages: one Add to Bag, not two.
 
-   The served PDP was read on 2026-08-24 and it draws the control twice:
+   The served PDP was read on 2026-08-24 and it draws the pair twice:
 
      .product__buy-buttons-container    in the flow, under the quantity
-                                        stepper. <product-form> with
-                                        button.product-form__submit, "Add to
-                                        Bag". This is the one that stays.
-     .sticky-bar-container              pinned to the foot of the screen: a
-                                        thumbnail, the title, the price, a
-                                        second quantity stepper, "Buy Now" and
-                                        a second "Add to Bag". Hidden here.
+                                        stepper: button.product-form__submit
+                                        ("Add to Bag") inside <product-form>,
+                                        and .shiprocket-headless ("Buy Now").
+                                        This is the pair that stays -- pinned
+                                        to the foot of the screen by the block
+                                        below.
+     .sticky-bar-container              a bar of its own with a thumbnail, the
+                                        title, the price, a second quantity
+                                        stepper and copies of both buttons.
+                                        Hidden here.
 
-   The theme reveals the pinned bar once the in-flow one has scrolled off the
-   top, so the two are never a deliberate pair -- the second is a stand-in for
-   the first. Removing it also removes Buy Now, which exists only on that bar;
-   that is the trade this was asked for, and Buy Now is one tap from the bag.
+   The theme reveals its bar once the in-flow controls have scrolled off the
+   top, so the two were never a deliberate pair -- the bar is a stand-in. Its
+   copies are proxies rather than controls in their own right (see the pinning
+   block below), which is why the originals are the ones kept.
 
    display:none, and the element is left in the page on purpose. The theme's own
    scroll handler is stickyBar.classList.add(...) with no null guard -- it
@@ -478,6 +481,103 @@ body.zigly-listing .card-variant-wrapper {
    not read.
    ------------------------------------------------------------------ */
 body.zigly-product .sticky-bar-container {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------
+   Product pages: Add to Bag and Buy Now pinned to the foot.
+
+   The reference app keeps both at the bottom of the screen at every scroll
+   position, with Quantity and Select Size left in the flow above. There is one
+   pair of buttons, never two.
+
+   These are the page's *own* buttons, pinned where they stand -- not the
+   sticky bar's copies. That matters twice over:
+
+     - The bar's "Add to Bag" is .dummy-atc-button, and assets/pdp-logic.js
+       binds it as
+           dummyButtonATC.addEventListener('click', () => {
+             toggleLoader(...); setTimeout(() => mainButton.click(), 3e3);
+           })
+       -- a proxy that waits three seconds and then clicks this button. Pinning
+       the real one is the same action without the wait.
+     - Nothing is moved in the DOM. .product-form__submit stays inside its
+       <form>, so the theme's product-form.js still submits it, and pdp-logic's
+       mainButton still points at the node it captured at DOMContentLoaded.
+       Being CSS, this also survives product-info.js re-rendering the section
+       when a size is chosen, which a wrapper element would not.
+
+   Buy Now is .shiprocket-headless. The page chooses between the two Buy Now
+   controls itself, by timezone --
+
+       renderButton(isIndia)   // hides .dummy-buy-button, shows shiprocket
+
+   -- so which one appears is the site's decision, not this file's; the rule
+   only places whichever it renders. No colours are set here for the same
+   reason: the reference is this site drawn in a WebView, so the site's own
+   styling is the thing being matched.
+   ------------------------------------------------------------------ */
+body.zigly-product .product__buy-buttons-container .product-form__submit,
+body.zigly-product .product__buy-buttons-container .shiprocket-headless {
+  position: fixed !important;
+  bottom: 0 !important;
+  z-index: 30 !important;
+  margin: 0 !important;
+}
+body.zigly-product .product__buy-buttons-container .product-form__submit {
+  left: 0 !important;
+  width: 52% !important;
+}
+body.zigly-product .product__buy-buttons-container .shiprocket-headless {
+  right: 0 !important;
+  width: 48% !important;
+}
+
+/* If Shiprocket never fills its container, Add to Bag takes the whole bar
+   rather than leaving a gap where a button failed to arrive. */
+body.zigly-product .product__buy-buttons-container .shiprocket-headless:empty {
+  display: none !important;
+}
+body.zigly-product
+  .product-form__buttons:has(.shiprocket-headless:empty)
+  .product-form__submit {
+  width: 100% !important;
+}
+
+/* position:fixed resolves against the nearest transformed ancestor, and
+   assets/animations.js puts transforms on scroll-revealed blocks. Cleared on
+   the buy-buttons subtree only, so the page's animations elsewhere are
+   untouched. */
+body.zigly-product .product__buy-buttons-container,
+body.zigly-product .product__buy-buttons-container product-form,
+body.zigly-product .product__buy-buttons-container .form,
+body.zigly-product .product__buy-buttons-container .product-form__buttons {
+  transform: none !important;
+  filter: none !important;
+  perspective: none !important;
+  will-change: auto !important;
+}
+
+/* The white band the two buttons sit on. A pseudo-element, so the bar needs no
+   node of its own in a section the theme re-renders. */
+body.zigly-product .product__buy-buttons-container::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 74px;
+  background: #FFFFFF;
+  border-top: 1px solid #EFEFEF;
+  z-index: 29;
+}
+
+/* Room at the end of the page for the bar, and no bottom nav under it --
+   the reference shows the buttons alone at the foot of a product page. */
+body.zigly-product {
+  padding-bottom: 84px !important;
+}
+body.zigly-product .fixed-icons {
   display: none !important;
 }
 /* relative, for the reason spelled out on the Hot Picks rule above: static

@@ -912,17 +912,55 @@ describe('getInjectionForUrl', () => {
         );
       });
 
-      it('leaves the in-flow Add to Bag alone', () => {
+      it('pins the in-flow Add to Bag rather than hiding it', () => {
         /*
-         * The one that stays. A rule hiding the form, its submit button or
-         * its container would leave the page with no way to add to the bag at
-         * all, which is the failure this block must never become. Matched
-         * with the opening brace so the prose above the rule does not count.
+         * The one that stays. It is moved to the foot of the screen by
+         * position, never removed: a rule hiding the form, its submit button
+         * or its container would leave the page with no way to add to the bag
+         * at all, which is the failure this block must never become.
          */
         const script = productPage();
-        expect(script).not.toContain('.product__buy-buttons-container {');
-        expect(script).not.toContain('.product-form__submit {');
-        expect(script).not.toContain('product-form {');
+        expect(script).toContain(
+          `body.${PRODUCT_FLAG} .product__buy-buttons-container .product-form__submit`,
+        );
+        expect(script).toContain('position: fixed !important');
+        // Nothing in the pinned pair may be hidden outright. The one :empty
+        // rule is Shiprocket's container when its script never filled it,
+        // which is a button that does not exist rather than one being taken
+        // away.
+        // Read off the stylesheet itself: in the injected script the whole
+        // of the CSS is one escaped JavaScript string, so there are no rules
+        // to pick apart there. Comments are stripped first -- the prose above
+        // these rules describes what is hidden, and would otherwise read as a
+        // rule hiding it.
+        const {MOBILE_CSS} = require('../src/webview/injectedStyles');
+        const NEWLINE = String.fromCharCode(10);
+        const bare = (MOBILE_CSS as string).replace(/\/\*[\s\S]*?\*\//g, '');
+        const hidden = bare
+          .split('}')
+          .filter(rule => rule.indexOf('display: none') !== -1)
+          .map(rule => rule.split(NEWLINE).join(' ').trim())
+          // Shiprocket's own container when its script never filled it: a
+          // button that does not exist, not one being taken away.
+          .filter(rule => rule.indexOf(':empty') === -1);
+        expect(
+          hidden.filter(
+            rule =>
+              rule.indexOf('.product-form__submit') !== -1 ||
+              rule.indexOf('.product__buy-buttons-container') !== -1,
+          ),
+        ).toEqual([]);
+      });
+
+      it('keeps the page’s own buttons instead of the bar’s proxies', () => {
+        /*
+         * assets/pdp-logic.js binds .dummy-atc-button to click the real submit
+         * button three seconds later. Styling that proxy into the bar would
+         * put the delay in front of every add to bag, so no rule may name it.
+         */
+        const script = productPage();
+        expect(script).not.toContain('.dummy-atc-button {');
+        expect(script).not.toContain('.dummy-buy-button {');
       });
 
       it('never hides a sticky bar off a product page', () => {
