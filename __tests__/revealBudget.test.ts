@@ -28,6 +28,7 @@
  * deliberate: it tests the number that actually ships, not a copy of it.
  */
 import {
+  HOME_COVER_MAX_MS,
   SPLASH_MAX_MS,
   SPLASH_MIN_MS,
   SPLASH_READY_GRACE_MS,
@@ -138,6 +139,24 @@ describe('the document-level gate sits inside the native one', () => {
   });
 });
 
+describe('the dashboard cover outlasts the splash it stands behind', () => {
+  it('gives up only after the splash has exhausted its own failsafe', () => {
+    /*
+     * The bug this is here for. The splash's own failsafe (grace, then the
+     * hard cap) is a guess standing in for `dashboard-ready`, and it can fire
+     * before that signal does on a slow network. If the dashboard's cover gave
+     * up on the same clock, or an earlier one, the splash would dissolve into
+     * a cover that was already gone -- handing the customer the half-built
+     * mobile website, which is the exact failure this cover exists to hide.
+     */
+    expect(HOME_COVER_MAX_MS).toBeGreaterThan(SPLASH_MAX_MS);
+  });
+
+  it('leaves enough margin that this is an ordering, not a coin toss', () => {
+    expect(HOME_COVER_MAX_MS - SPLASH_MAX_MS).toBeGreaterThanOrEqual(1000);
+  });
+});
+
 describe('the whole budget, in order', () => {
   it('reads low to high with no inversions', () => {
     /*
@@ -152,6 +171,7 @@ describe('the whole budget, in order', () => {
       ['dashboard answers', HOME_MS()],
       ['splash grace', SPLASH_READY_GRACE_MS],
       ['splash hard cap', SPLASH_MAX_MS],
+      ['dashboard cover hard cap', HOME_COVER_MAX_MS],
     ] as const;
 
     const values = ladder.map(([, ms]) => ms);

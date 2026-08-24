@@ -55,6 +55,7 @@ import NetInfo from '@react-native-community/netinfo';
 import {
   CHANGE_PASSWORD_URL,
   COLORS,
+  HOME_COVER_MAX_MS,
   LOGIN_URL,
   SPLASH_READY_GRACE_MS,
   START_URL,
@@ -323,6 +324,27 @@ const isHomeUrl = (url: string): boolean => {
 /** Injection is re-applied on this schedule; see applyStyles. */
 const RESTYLE_DELAYS = [0, 500, 1500, 3000, 6000, 10000];
 
+/** Why the app asked the site to sign out. See signOutReason. */
+type SignOutReason = 'logout' | 'delete';
+
+/**
+ * What the toast says, for each of the two ways out of the account screen.
+ *
+ * It goes up on the tap rather than on the site's reply, so it is on screen
+ * for the round trip and stays up across the move back to the dashboard --
+ * which is the whole point of it: without it, Log Out is a button that empties
+ * the screen and says nothing. "Logging out" is therefore in the present
+ * tense, because at that moment it is true and "Logged out" would not yet be.
+ * A sign-out that fails takes the toast down again and says so on the account
+ * screen instead -- see handleAccountMessage's 'auth' case.
+ */
+const SIGN_OUT_MESSAGE: Record<SignOutReason, string> = {
+  logout: 'Logging out…',
+  // Read requestAccountDeletion before changing this one: nothing is deleted,
+  // and this line is the app telling the customer otherwise.
+  delete: 'Deleted user data',
+};
+
 const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   /**
    * The dashboard, mounted once and never navigated away from: it is expensive
@@ -387,6 +409,19 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
    * already here.
    */
   const [paintedLayers, setPaintedLayers] = useState<number[]>([]);
+  /**
+   * The dashboard itself has something to show.
+   *
+   * The one thing standing between the splash and the raw WebView. The splash
+   * has its own failsafe timers and can retire before `dashboard-ready` fires
+   * -- a slow network must not trap the customer behind a still logo -- but
+   * that must not hand them the half-built mobile website either. So this is
+   * decoupled from the splash entirely: false until the real signal (or a
+   * load error, or its own longer failsafe below) says otherwise, and
+   * `PageCover` draws the dashboard's shape over the WebView for as long as it
+   * stays false. See HOME_COVER_MAX_MS in ../constants/appConstants.
+   */
+  const [homePainted, setHomePainted] = useState(false);
   /**
    * A profile edit, laid over what the site rendered.
    *
@@ -527,6 +562,20 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   const [addressNotice, setAddressNotice] = useState<string | null>(null);
   /** Shown on the account screen when a sign-out did not take. */
   const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  /**
+   * Why the app asked the site to sign out, or null when it did not ask.
+   *
+   * The two are the same request and want different endings. A session that
+   * simply expired collapses the section to the login screen, because the
+   * customer was in the middle of something there and login is how they get
+   * back to it. A sign-out the customer *asked* for closes the section instead
+   * and leaves them on the dashboard: they have finished with their account,
+   * and answering "log out" with a login form reads as a failed log-out.
+   *
+   * A ref rather than state because it is written in a press handler and read
+   * in the WebView message callback, and nothing renders from it.
+   */
+  const signOutReason = useRef<SignOutReason | null>(null);
   /** Read inside native callbacks, so they must be refs, not state. */
   const authRef = useRef<AuthState>('unknown');
   const accountScreensRef = useRef<AccountStack>(EMPTY_ACCOUNT_STACK);
@@ -711,6 +760,21 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
     const timer = setTimeout(() => markPainted(key), PAGE_COVER_CAP_MS);
     return () => clearTimeout(timer);
   }, [showing, paintedLayers, markPainted]);
+
+  /**
+   * The same failsafe, for the dashboard's own cover -- on a clock long enough
+   * to outlast the splash's, so that giving up here never happens before the
+   * splash already has. Re-arms whenever `homePainted` goes back to false,
+   * which is what lets a retry after a failed load get a fresh deadline
+   * rather than inheriting one that was already counting down.
+   */
+  useEffect(() => {
+    if (homePainted) {
+      return;
+    }
+    const timer = setTimeout(() => setHomePainted(true), HOME_COVER_MAX_MS);
+    return () => clearTimeout(timer);
+  }, [homePainted]);
 
   /**
    * Forget layers that have been evicted.
@@ -1520,12 +1584,30 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
    * shared cookie jar is what gets cleared. The screen is not updated here: it
    * waits for the reply, because an account screen that says "signed out" over
    * a website that is still signed in is the one outcome worse than a moment's
-   * delay.
+   * delay. What the customer gets in the meantime is the toast, which is why it
+   * is set here and not on the reply -- see SIGN_OUT_MESSAGE.
+   *
+   * `reason` is carried to the reply rather than acted on now: both reasons
+   * make the same request, and all it decides is what the toast says and that
+   * the section closes to the dashboard when the site confirms.
    */
-  const logOut = useCallback(() => {
-    setAccountNotice(null);
-    injectInto('home', LOGOUT_SCRIPT);
-  }, [injectInto]);
+  const signOut = useCallback(
+    (reason: SignOutReason) => {
+      setAccountNotice(null);
+      signOutReason.current = reason;
+      setToastMessage(SIGN_OUT_MESSAGE[reason]);
+      injectInto('home', LOGOUT_SCRIPT);
+    },
+    [injectInto],
+  );
+
+  /**
+   * The Log Out button.
+   *
+   * Its own function because it is a press handler: wiring `signOut` straight
+   * to `onPress` would hand it the gesture event as its `reason`.
+   */
+  const logOut = useCallback(() => signOut('logout'), [signOut]);
 
   /**
    * Delete Account.
@@ -1563,16 +1645,16 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            // logOut clears accountNotice, and the account screen is replaced
-            // by the login screen a moment later -- so the confirmation has to
-            // be the toast, which is drawn outside the section.
-            logOut();
-            setToastMessage('Deleted user');
+            // The confirmation is the toast, because it has to outlive the
+            // screen that asked for it: by the time the site answers, the
+            // account section has closed and the customer is on the dashboard.
+            // The toast is drawn outside the section, so it survives that.
+            signOut('delete');
           },
         },
       ],
     );
-  }, [logOut, showPage]);
+  }, [showPage, signOut]);
 
   /**
    * A bottom-navigation tab.
@@ -1873,9 +1955,18 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
       }
       log('login completed, landed on', nav.url);
       applyAuth('signedIn');
+      // And out of the account section altogether: signing in is the end of
+      // what the customer came here to do, so they land on the dashboard --
+      // the app's own home -- rather than on the account screen. applyAuth has
+      // just swapped login for that screen, which is still the right answer
+      // when it is a *probe* that corrects a stale signed-out state: that
+      // customer never asked to log in and must not be thrown to the
+      // dashboard for tapping Account. Only a completed login lands here, so
+      // only a completed login closes the section.
+      closeAccountSection();
       probeAccount();
     },
-    [applyAuth, probeAccount],
+    [applyAuth, closeAccountSection, probeAccount],
   );
 
   /**
@@ -2046,11 +2137,25 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
         }
 
         case 'auth': {
+          const reason = signOutReason.current;
           if (data.state === 'signedOut') {
+            signOutReason.current = null;
             applyAuth('signedOut');
+            if (reason !== null) {
+              // Asked for, and now confirmed by the site: the section closes
+              // and the dashboard is what the customer lands on. applyAuth has
+              // just collapsed it to the login screen, which is the right end
+              // for a session that expired underneath them and the wrong one
+              // for a log-out they pressed -- see signOutReason.
+              setAccountScreens(closeAccount());
+            }
           } else if (data.from === 'logout') {
             // The request went through and the customer is still signed in.
+            signOutReason.current = null;
             warn('logout did not clear the session');
+            // The toast said this was happening. It is not, so it comes down
+            // rather than sitting over a screen that is about to contradict it.
+            setToastMessage(null);
             setAccountNotice(
               'Sign out did not go through. Check your connection and try again.',
             );
@@ -2072,6 +2177,9 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
       layerRefs.current.get(current.key)?.reload();
       return;
     }
+    // Cover the dashboard again: the document being reloaded is the one this
+    // app never re-covers on its own, so nothing else would.
+    setHomePainted(false);
     webRef.current?.reload();
   }, []);
 
@@ -2341,6 +2449,10 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
             setLoadError(nativeEvent.description ?? 'Load failed');
             // Still release the splash, otherwise it hides the error screen.
             retireSplash();
+            // And the dashboard's own cover, for the same reason: the error
+            // screen draws over it regardless, but nothing should be left
+            // waiting on a signal this load is never going to send.
+            setHomePainted(true);
           }}
           onHttpError={({nativeEvent}) => {
             // Shopify serves a real 404 page; only surface server-side failures.
@@ -2378,6 +2490,9 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
                 // The moment the splash has been waiting for: styled, laid out,
                 // sections transplanted, top imagery decoded.
                 retireSplash();
+                // Its own cover, independent of the splash: this is the real
+                // signal it has been waiting for too.
+                setHomePainted(true);
                 // Read the menu now so the first tap of the hamburger opens on
                 // a filled drawer rather than a spinner.
                 injectInto('home', READ_MENU_SCRIPT);
@@ -2473,9 +2588,22 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
             // Android may kill the renderer under memory pressure. Recover in
             // place rather than letting the screen go permanently blank.
             warn('render process gone — reloading');
+            // The renderer is gone, so whatever the cover thought was on
+            // screen no longer is; re-cover it for the reload about to start.
+            setHomePainted(false);
             webRef.current?.reload();
           }}
         />
+
+        {/*
+          The dashboard's own shape, over its WebView until `homePainted` says
+          otherwise -- see the state declaration above for why that is not the
+          same moment the splash retires. `crossfade` is always false: on a
+          fresh launch there is nothing behind it worth dissolving over, and
+          the only other time this reloads is a retry after a failed load,
+          where there is nothing good behind it either.
+        */}
+        <PageCover ready={homePainted} crossfade={false} variant="home" />
 
         {/*
           The account section.

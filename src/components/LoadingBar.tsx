@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     // Above the WebView, below nothing else: it must not cover page content.
     zIndex: 5,
   },
-  chip: {height: 2.5, borderRadius: 2, backgroundColor: COLORS.red},
+  chip: {height: 2.5, borderRadius: 2, backgroundColor: COLORS.navy},
 });
 
 export default LoadingBar;

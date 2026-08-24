@@ -386,7 +386,8 @@ describe('the screen owns the deadline', () => {
     // one-off per layer, so every page after the first was the website
     // assembling itself in full view.
     const s = src();
-    // The layer's own handler, not the dashboard's -- that one has no cover.
+    // The layer's own handler, not the dashboard's -- the dashboard has its
+    // own separate cover, released by its own signal, not this one.
     const at = s.indexOf('setLoadingTarget(layer.key);');
     expect(at).toBeGreaterThan(-1);
     expect(s.slice(at, at + 1800)).toContain('unmarkPainted(layer.key)');
@@ -440,7 +441,8 @@ describe('the screen owns the deadline', () => {
   it('reveals a failed page too, rather than hiding it behind a spinner', () => {
     // The header's back arrow is the way out of a broken page, and it is no use
     // under a cover. Located by the layer's own handler, not the first onError
-    // in the file -- that one belongs to the dashboard, which has no cover.
+    // in the file -- that one belongs to the dashboard's WebView, which
+    // releases its own, separate cover rather than this one.
     const s = src();
     const at = s.indexOf("warn('page load error:'");
     expect(at).toBeGreaterThan(-1);
@@ -461,7 +463,11 @@ describe('the screen owns the deadline', () => {
     // no longer wanted. It is mounted for as long as the layer is on screen and
     // told whether the page is ready.
     const s = src();
-    const at = s.indexOf('<PageCover');
+    // The second of the two: the first is the dashboard's own, standing over
+    // its WebView with no layer to read `layer.key` off of.
+    const first = s.indexOf('<PageCover');
+    expect(first).toBeGreaterThan(-1);
+    const at = s.indexOf('<PageCover', first + 1);
     expect(at).toBeGreaterThan(-1);
     const el = s.slice(at, at + 1400);
     expect(el).toContain('ready={paintedLayers.includes(layer.key)}');

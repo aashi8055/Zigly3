@@ -242,6 +242,23 @@ export const SPLASH_FADE_MS = 240;
  */
 export const SPLASH_READY_GRACE_MS = 6000;
 
+/**
+ * The dashboard's own cover, held over its WebView until `dashboard-ready`
+ * fires -- independent of the splash, and on a longer clock than either of
+ * its timers.
+ *
+ * The splash retires on its own failsafe (SPLASH_READY_GRACE_MS, then
+ * SPLASH_MAX_MS) so a slow network never traps the customer behind a still
+ * logo. But that failsafe is a guess standing in for a signal that has not
+ * arrived, and a splash that gives up before the dashboard actually answers
+ * used to hand the customer straight to the half-built mobile website -- the
+ * thing this whole arrangement exists not to show. This cover is what the
+ * splash now dissolves into instead, so it must outlast every timer the
+ * splash answers to: giving up first would only move today's bug from the
+ * splash to this cover.
+ */
+export const HOME_COVER_MAX_MS = 9000;
+
 /* ------------------------------------------------------------------
    Account.
 
