@@ -13,11 +13,32 @@ import {ActivityIndicator, Image, Text} from 'react-native';
 import SplashScreen from '../src/screens/SplashScreen';
 import {COLORS} from '../src/constants/appConstants';
 
+/**
+ * Every tree rendered here, so it can be taken down again.
+ *
+ * The splash arms a deferred animation -- the mark dissolving into the
+ * dashboard's shape after SPLASH_SKELETON_AFTER_MS -- and its cleanup is what
+ * cancels it. A tree that is never unmounted never runs that cleanup, so the
+ * animation woke up after Jest had torn the environment down and reached for an
+ * `Animated` that was no longer there: a hard crash of the worker, on a suite
+ * that otherwise reported itself green.
+ */
+const trees: ReactTestRenderer.ReactTestRenderer[] = [];
+
+afterEach(() => {
+  ReactTestRenderer.act(() => {
+    while (trees.length) {
+      trees.pop()?.unmount();
+    }
+  });
+});
+
 const render = () => {
   let tree!: ReactTestRenderer.ReactTestRenderer;
   ReactTestRenderer.act(() => {
     tree = ReactTestRenderer.create(<SplashScreen />);
   });
+  trees.push(tree);
   return tree;
 };
 

@@ -23,9 +23,25 @@
  * So the seeded ids are a cache hint, never a source of truth: a stale one
  * costs one page fetch and then self-heals. Deliberately nothing is written to
  * the site's sessionStorage -- that namespace belongs to Zigly, and the brief
- * is clear about leaving their storage alone. The cost is that a stale id is
- * re-discovered once per page view rather than once per session; if Zigly
- * re-saves their theme, update SEEDED_IDS.
+ * is clear about leaving their storage alone.
+ *
+ * WHAT A RE-DISCOVERED ID NOW COSTS. It used to be re-discovered once per page
+ * view, which meant that after Zigly re-saved their theme every single launch
+ * paid a ~2 MB page fetch to learn the same ids over again. Rediscovery now
+ * posts what it learned to the app, which keeps it on the device and hands it
+ * back on the next launch (see `bestId` below, and the 'section-ids' message in
+ * ../screens/ZiglyWebViewScreen). So a stale seed costs one page fetch per theme
+ * change rather than one per launch, and SEEDED_IDS becomes a first-run hint
+ * rather than something anybody has to keep up to date.
+ *
+ * This does not weaken the rule above: the ids go to the app's own storage, not
+ * into Zigly's namespace. Nothing about the site's state is touched.
+ *
+ * ONLY IDS ARE KEPT, NEVER THE SECTION MARKUP. The markup carries prices and
+ * stock. Painting a dashboard from yesterday's copy of it would be a wrong
+ * storefront, which is a correctness bug wearing a performance costume. An id
+ * cannot be wrong in a way the customer can see -- at worst it misses, and the
+ * miss self-heals.
  */
 const DOG = 'template--26530973942076__';
 const CAT = 'template--26530973843772__';
@@ -133,7 +149,12 @@ export const PAGE_CACHE_SCRIPT = `
         var found = doc.querySelector('[id*="' + frag + '"]');
         if (!found) { job.resolve(null); continue; }
         var realId = (found.getAttribute('id') || '').replace('shopify-section-', '');
-        if (realId) { discovered[path + '|' + job.fragment] = realId; }
+        if (realId) {
+          discovered[path + '|' + job.fragment] = realId;
+          // Worth remembering past this page view: rediscovery cost a whole-page
+          // fetch, and Zigly re-saves their theme rarely.
+          reportIds();
+        }
         job.resolve(document.importNode(found, true));
       }
     });
@@ -204,6 +225,52 @@ export const PAGE_CACHE_SCRIPT = `
       .catch(function () { rediscover(path, jobs); });
   }
 
+  /**
+   * The best id known for a key, most trustworthy first.
+   *
+   *   discovered            learned from the page in this very page view
+   *   __ziglySectionIds     learned in an earlier RUN, handed back by the app
+   *   SEEDED                written down here
+   *
+   * The app's map is read HERE rather than folded into SEEDED when this script
+   * installs, and that is the whole reason it works. The app reads it from disk
+   * asynchronously while the dashboard is already loading, so it can arrive after
+   * this script has run. Consulting it per lookup means a map that lands late
+   * still serves every section not yet asked for -- which is most of them, since
+   * everything below the fold is deferred until it nears the viewport.
+   */
+  function bestId(key) {
+    if (discovered[key]) { return discovered[key]; }
+    try {
+      if (window.__ziglySectionIds && window.__ziglySectionIds[key]) {
+        return window.__ziglySectionIds[key];
+      }
+    } catch (e) {}
+    return SEEDED[key] || null;
+  }
+
+  /**
+   * Hand a freshly learned id back to the app, which keeps it across launches.
+   *
+   * Debounced to one message per burst: rediscovery resolves a batch at a time,
+   * and the map is small enough that sending it whole is cheaper than tracking
+   * which entries are new.
+   */
+  var reportTimer = null;
+  function reportIds() {
+    if (reportTimer) { return; }
+    reportTimer = setTimeout(function () {
+      reportTimer = null;
+      try {
+        if (!window.ReactNativeWebView) { return; }
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          tag: 'section-ids',
+          ids: discovered
+        }));
+      } catch (e) {}
+    }, 400);
+  }
+
   /** Get one section by its stable name fragment. Resolves to an element or null. */
   window.__ziglyFetchSection = function (path, fragment) {
     var key = path + '|' + fragment;
@@ -213,7 +280,7 @@ export const PAGE_CACHE_SCRIPT = `
       queue.push({
         path: path,
         fragment: fragment,
-        id: discovered[key] || SEEDED[key] || null,
+        id: bestId(key),
         resolve: resolve
       });
       if (!flushScheduled) {

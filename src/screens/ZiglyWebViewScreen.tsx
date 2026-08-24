@@ -74,6 +74,12 @@ import {
 } from '../utils/urlUtils';
 import {getInjectionForUrl} from '../webview/injectedScripts';
 import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../webview/prefetch';
+import {
+  loadSectionIds,
+  saveSectionIds,
+  seedSectionIdsScript,
+} from '../webview/sectionIdStore';
+import type {SectionIds} from '../webview/sectionIdStore';
 import {log, warn} from '../utils/logger';
 import LoadingBar from '../components/LoadingBar';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
@@ -233,7 +239,14 @@ export const isShopUrl = (url: string): boolean => {
  *
  * '/collections' with no handle is the all-collections page, which is a set of
  * category tiles rather than a product grid: it takes 'plain' rather than being
- * promised a grid it is not going to draw.
+ * promised a grid it is not going to draw. Same for '/pages/pet-breeds'. That is
+ * deliberate and it stays -- a shape the page will not draw is worse than none.
+ *
+ * The dashboard is the third shape this app can claim honestly, because it is the
+ * one page whose layout the app itself decides: ../webview/homeLayout puts the
+ * category circles above the banner and the coupon strip below it, so the
+ * placeholder is not guessing at Zigly's template, it is describing the app's own
+ * arrangement.
  */
 export const coverVariantFor = (url: string): CoverVariant => {
   const path = (url || '').split('?')[0].split('#')[0];
@@ -242,6 +255,11 @@ export const coverVariantFor = (url: string): CoverVariant => {
   }
   if (path.indexOf('/collections/') !== -1 || path.indexOf('/search') !== -1) {
     return 'grid';
+  }
+  // Guarded on a real url: isHomeUrl('') resolves to '/' and would hand the
+  // dashboard's shape to a layer that has no destination yet.
+  if (url && isHomeUrl(url)) {
+    return 'home';
   }
   return 'plain';
 };
@@ -496,10 +514,46 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * which should not happen silently on mobile data.
    */
   const unmeteredRef = useRef(false);
+  /**
+   * Section ids learned on earlier launches (see ../webview/sectionIdStore).
+   *
+   * A ref, not state: nothing renders differently because of it, and it is read
+   * from WebView callbacks, which see a ref rather than a stale closure. Empty
+   * until the read off disk lands, which is not a problem -- an empty map means
+   * the page falls back to the written-down seeds, exactly as it always did.
+   */
+  const sectionIds = useRef<SectionIds>({});
   const [offline, setOffline] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const showing = visibleLayer(stack);
+
+  // ----------------------------------------------------------- section ids
+  /**
+   * Read what earlier launches learned, and give it to the page as soon as both
+   * exist.
+   *
+   * Started on mount, which is the earliest it can be, and deliberately not
+   * awaited by anything: the dashboard is already loading and must not be held up
+   * for a cache. If the read wins the race the ids are in place before the first
+   * section is asked for; if it loses, ../webview/pageCache consults the global
+   * per lookup, so everything deferred until it nears the viewport -- which is
+   * most of the dashboard -- still gets the benefit.
+   */
+  useEffect(() => {
+    let live = true;
+    loadSectionIds().then(ids => {
+      if (!live || Object.keys(ids).length === 0) {
+        return;
+      }
+      sectionIds.current = ids;
+      injectInto('home', seedSectionIdsScript(ids));
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------------------------------------------------------------- network
   useEffect(() => {
@@ -735,6 +789,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       injectInto(target, REPORT_CART_COUNT);
+      /*
+       * The section ids, into the document that has actually committed.
+       *
+       * This is the injection that has to land, and the two earlier attempts at it
+       * cannot be relied on. The mount-time read resolves off disk on its own
+       * schedule -- if it wins the race it lands in a document that is about to be
+       * replaced, and the global goes with it. The onLoadStart injection has the
+       * same problem from the other side: on a first launch the read has usually
+       * not finished, so there is nothing to inject yet.
+       *
+       * Here the document exists and is the one that will be shown, and the
+       * sections that matter most have not been requested yet: everything below
+       * the fold waits until it nears the viewport. ../webview/pageCache reads the
+       * global per lookup precisely so a seed arriving at this point still counts.
+       */
+      if (Object.keys(sectionIds.current).length > 0) {
+        injectInto(target, seedSectionIdsScript(sectionIds.current));
+      }
       if (target === 'home') {
         // The bar mirrors the dashboard's own announcements; an inner page
         // reporting its (possibly absent) bar would blank it.
@@ -2122,6 +2194,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             // injecting here as well gives the rule a second, earlier chance to
             // land. It is idempotent, so running twice costs nothing.
             injectInto('home', EARLY_HEADER_CSS);
+            /*
+             * And the section ids again, because a new document does not inherit
+             * the global the last one was given. This is the path that matters
+             * on a reload; the mount-time read covers the first load.
+             */
+            if (Object.keys(sectionIds.current).length > 0) {
+              injectInto('home', seedSectionIdsScript(sectionIds.current));
+            }
           }}
           onLoadEnd={handleLoadEnd}
           onError={({nativeEvent}) => {
@@ -2145,6 +2225,19 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               }
               if (data && data.tag === 'search-diag') {
                 log('SEARCHDIAG', JSON.stringify(data));
+              } else if (data && data.tag === 'section-ids') {
+                /*
+                 * The page had to rediscover a section id, which cost it a
+                 * whole-page fetch. Keeping it means the next launch does not pay
+                 * that again -- see ../webview/sectionIdStore.
+                 *
+                 * Merged rather than replaced: the page only reports what IT had
+                 * to look up, so replacing would discard ids learned on an
+                 * earlier launch that this one never needed to ask about.
+                 */
+                saveSectionIds(data.ids, sectionIds.current).then(merged => {
+                  sectionIds.current = merged;
+                });
               } else if (data && data.tag === 'cart-count') {
                 setCartCount(typeof data.n === 'number' ? data.n : 0);
               } else if (data && data.tag === 'menu') {

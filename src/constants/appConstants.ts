@@ -191,6 +191,20 @@ export const LISTING_PATHS = ['/collections/', '/search'];
 export const SPLASH_MIN_MS = 900;
 
 /**
+ * When the splash stops being a logo and becomes the shape of the dashboard.
+ *
+ * A warmed dashboard is often ready inside a second, and a placeholder that
+ * appears and vanishes again reads as a stutter -- the same reason the page
+ * cover holds its own shapes back behind SKELETON_DELAY_MS. So this sits above
+ * SPLASH_MIN_MS: a launch that is already finished shows the mark and nothing
+ * else, and only a wait long enough to need explaining gets the explanation.
+ *
+ * Comfortably below the deadlines that end the wait, so the shape is something
+ * the customer actually sees rather than a frame before the reveal.
+ */
+export const SPLASH_SKELETON_AFTER_MS = 1300;
+
+/**
  * Hard cap on the splash.
  *
  * It normally lifts when the page reports the dashboard assembled, which is
@@ -225,8 +239,22 @@ export const SPLASH_FADE_MS = 240;
  * So this is the middle deadline: measured from load end rather than from
  * launch, which is what makes it a grace period for assembly rather than a
  * second guess at how slow the network is.
+ *
+ * IT MUST OUTLAST THE DASHBOARD'S OWN DEADLINE, and it did not. This was 2500
+ * against a home watcher allowed 9900ms (HOME_TRIES in ../webview/readySignal),
+ * which is the same inversion `PageCover` and `readySignal` each record having
+ * fixed for inner pages -- and never fixed for home. The grace fired first, so
+ * on every dashboard that took more than two and a half seconds to assemble the
+ * splash came down at the one moment nobody had said the dashboard was ready:
+ * the customer got the half-built page, which is the thing the splash exists to
+ * hide.
+ *
+ * The dashboard now answers inside 5.4s and this is the failsafe behind it, for
+ * the case where the signal never comes at all. The ordering that matters --
+ * HOME_TRIES x TICK_MS < this < SPLASH_MAX_MS -- is asserted in
+ * __tests__/revealBudget.test.ts so it cannot be inverted again by accident.
  */
-export const SPLASH_READY_GRACE_MS = 2500;
+export const SPLASH_READY_GRACE_MS = 6000;
 
 /* ------------------------------------------------------------------
    Account.

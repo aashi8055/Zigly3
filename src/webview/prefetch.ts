@@ -126,8 +126,24 @@ export const PREFETCH_SCRIPT = `
       .then(function () { next(i + 1); });
   }
 
-  // Let the dashboard settle first; it is still finishing its own images.
-  setTimeout(function () { next(0); }, 2500);
+  /*
+   * A breath, and no longer a guess.
+   *
+   * NOTE: no backticks in this comment. It lives inside a template literal, so a
+   * backtick here ends the string and the file stops parsing -- which is exactly
+   * what happened when this comment was first written.
+   *
+   * This was 2500ms, which was this script guessing how long after the
+   * dashboard-ready signal the dashboard was *actually* settled. That was a fair
+   * guess while the signal fired with sections still arriving. It does not any
+   * more: the watcher now waits for the category rail to be the one the app keeps
+   * and for the coupon strip to have landed (see ./readySignal), so by the time
+   * the app runs this, the dashboard genuinely is done with the network.
+   *
+   * Not zero. The top imagery is decoded but the page is still settling, and this
+   * must never be the reason the first scroll stutters.
+   */
+  setTimeout(function () { next(0); }, 800);
 })();
 true;
 `;

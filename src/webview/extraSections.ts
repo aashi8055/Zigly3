@@ -278,10 +278,34 @@ export const EXTRA_SECTIONS_SCRIPT = `
 
       var slot = document.createElement('div');
       slot.id = spec.mark;
+      /*
+       * Readiness, for the watcher that decides when this page may be shown.
+       *
+       * Same convention as the breed rails (see ./breedSection): 'loading' when
+       * the slot is reserved, 'ready' once it has settled. Only the eager
+       * sections are ever waited on -- ../webview/readySignal is above-the-fold
+       * only, on purpose -- but every slot carries the attribute so a future
+       * section promoted to eager needs no change here.
+       */
+      slot.setAttribute('data-state', 'loading');
 
       var after = spec.key === 'coupon_slider' ? banner : tail;
       after.parentNode.insertBefore(slot, after.nextSibling);
       if (spec.key !== 'coupon_slider') { tail = slot; }
+
+      /*
+       * Settled, whatever the outcome.
+       *
+       * Called on the way out of every path through \`load\`, including the ones
+       * that give up, for the same reason the paint gate is lifted on its own
+       * failure paths (see ./headerBridge): a slot that never settles does not
+       * delay the reveal, it holds it to the deadline. A section Zigly has
+       * removed, or a request that failed, is a FINAL state for this slot -- not
+       * a pending one -- and the watcher must be told so.
+       */
+      function settle() {
+        try { slot.setAttribute('data-state', 'ready'); } catch (e) {}
+      }
 
       function load() {
         // Every section resolves from '/', so they all share one batched
@@ -290,7 +314,7 @@ export const EXTRA_SECTIONS_SCRIPT = `
         // with that entry would mean rebuilding it for the next such section.
         window.__ziglyFetchSection(spec.path || '/', spec.key)
           .then(function (sec) {
-            if (!sec) { warn('unavailable: ' + spec.key); return; }
+            if (!sec) { warn('unavailable: ' + spec.key); settle(); return; }
             var imported = document.importNode(sec, true);
 
             var scripts = imported.querySelectorAll('script');
@@ -324,8 +348,9 @@ export const EXTRA_SECTIONS_SCRIPT = `
             }
 
             slot.appendChild(imported);
+            settle();
           })
-          .catch(function (e) { warn('failed ' + spec.key + ': ' + e); });
+          .catch(function (e) { warn('failed ' + spec.key + ': ' + e); settle(); });
       }
 
       if (spec.eager) { load(); } else { whenNear(slot, load); }

@@ -50,6 +50,13 @@ import {
   View,
 } from 'react-native';
 import {COLORS} from '../constants/appConstants';
+import {
+  Block,
+  CardSkeleton,
+  HomeSkeleton,
+  styles as shapes,
+  usePulse,
+} from './Skeleton';
 
 /**
  * How long the cover may stay up.
@@ -103,19 +110,19 @@ const FADE_OUT_MS = 200;
 
 const FADE_MS = 160;
 
-/** How long one breath of the placeholder's pulse takes. */
-const PULSE_MS = 850;
-
 /**
  * Which shape the placeholder takes.
  *
+ *   home    the dashboard -- a rail of category circles, the banner, the coupon
+ *           strip, then the first product rail. The order is not a guess: it is
+ *           what ../webview/homeLayout actually arranges the page into.
  *   grid    a listing -- collections and search, where the theme draws a card
  *           grid below the app's own Sort / Filter bar
  *   detail  a product -- one large gallery image, a title block, a buy control
- *   plain   everything else: a breed page, a content page, checkout. The old
- *           bare ground, because these have no shape worth claiming.
+ *   plain   everything else: a content page, checkout. The old bare ground,
+ *           because these have no shape worth claiming.
  */
-export type CoverVariant = 'grid' | 'detail' | 'plain';
+export type CoverVariant = 'home' | 'grid' | 'detail' | 'plain';
 
 interface Props {
   /**
@@ -133,37 +140,6 @@ interface Props {
   crossfade?: boolean;
   variant?: CoverVariant;
 }
-
-/** One placeholder block, breathing in step with the rest. */
-const Block = ({
-  pulse,
-  style,
-}: {
-  pulse: Animated.Value;
-  style: object;
-}) => (
-  <Animated.View
-    style={[
-      styles.block,
-      style,
-      {
-        opacity: pulse.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0.55, 1],
-        }),
-      },
-    ]}
-  />
-);
-
-/** A listing card: image, then two lines of type. */
-const CardSkeleton = ({pulse}: {pulse: Animated.Value}) => (
-  <View style={styles.card}>
-    <Block pulse={pulse} style={styles.cardImage} />
-    <Block pulse={pulse} style={styles.lineWide} />
-    <Block pulse={pulse} style={styles.lineNarrow} />
-  </View>
-);
 
 const PageCover = ({
   ready = false,
@@ -190,7 +166,8 @@ const PageCover = ({
   crossfadeNow.current = crossfade;
   const spinner = useRef(new Animated.Value(0)).current;
   const skeleton = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(1)).current;
+  /** Shared with the splash, so the hand-off between them is not a stutter. */
+  const pulse = usePulse(variant !== 'plain' && !ready);
   /** Set once the fade-out has finished; this component then draws nothing. */
   const [gone, setGone] = useState(false);
 
@@ -262,31 +239,6 @@ const PageCover = ({
     };
   }, [ready, spinner, skeleton]);
 
-  /** The placeholder breathes, so it reads as waiting rather than as broken. */
-  useEffect(() => {
-    if (variant === 'plain' || ready) {
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 0,
-          duration: PULSE_MS,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 1,
-          duration: PULSE_MS,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [variant, ready, pulse]);
-
   useEffect(() => {
     if (!ready) {
       return;
@@ -331,7 +283,9 @@ const PageCover = ({
         </Animated.View>
       ) : (
         <Animated.View style={[styles.sheet, {opacity: skeleton}]}>
-          {variant === 'grid' ? (
+          {variant === 'home' ? (
+            <HomeSkeleton pulse={pulse} />
+          ) : variant === 'grid' ? (
             <>
               {/*
                 Cards only. There used to be a bar block above them, standing in
@@ -341,7 +295,7 @@ const PageCover = ({
                 something the customer can see would be the one shape in here
                 guaranteed not to line up.
               */}
-              <View style={styles.grid}>
+              <View style={shapes.grid}>
                 <CardSkeleton pulse={pulse} />
                 <CardSkeleton pulse={pulse} />
                 <CardSkeleton pulse={pulse} />
@@ -350,11 +304,11 @@ const PageCover = ({
             </>
           ) : (
             <>
-              <Block pulse={pulse} style={styles.hero} />
-              <Block pulse={pulse} style={styles.lineNarrow} />
-              <Block pulse={pulse} style={styles.lineWide} />
-              <Block pulse={pulse} style={styles.lineWide} />
-              <Block pulse={pulse} style={styles.button} />
+              <Block pulse={pulse} style={shapes.hero} />
+              <Block pulse={pulse} style={shapes.lineNarrow} />
+              <Block pulse={pulse} style={shapes.lineWide} />
+              <Block pulse={pulse} style={shapes.lineWide} />
+              <Block pulse={pulse} style={shapes.button} />
             </>
           )}
         </Animated.View>
@@ -363,9 +317,11 @@ const PageCover = ({
   );
 };
 
-/** Placeholder fill: the navy of the app's own chrome, at a whisper. */
-const FILL = 'rgba(24,55,97,0.07)';
-
+/*
+ * The shapes themselves live in ./Skeleton, shared with the splash. What is left
+ * here is the cover: the ground it paints, and the spacing between the shapes on
+ * this particular screen.
+ */
 const styles = StyleSheet.create({
   cover: {
     position: 'absolute',
@@ -387,20 +343,6 @@ const styles = StyleSheet.create({
   },
   /** The placeholder sheet starts at the top, where the real page does. */
   sheet: {flex: 1, paddingHorizontal: 12, paddingTop: 12},
-  block: {backgroundColor: FILL, borderRadius: 8},
-  grid: {flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -5},
-  card: {width: '50%', paddingHorizontal: 5, marginBottom: 18},
-  /**
-   * Roughly square. The theme's cards are portrait overall but their image is
-   * close to square, and the point of the shape is the rhythm of the grid rather
-   * than a pixel match -- it dissolves into the real thing either way.
-   */
-  cardImage: {width: '100%', aspectRatio: 1, borderRadius: 12, marginBottom: 10},
-  lineWide: {height: 12, width: '86%', marginBottom: 7},
-  lineNarrow: {height: 12, width: '54%', marginBottom: 7},
-  /** A product page opens on its gallery, the full width of the screen. */
-  hero: {width: '100%', aspectRatio: 1, borderRadius: 14, marginBottom: 16},
-  button: {height: 46, borderRadius: 23, marginTop: 12},
 });
 
 export default PageCover;

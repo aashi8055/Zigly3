@@ -22,25 +22,48 @@ import {LISTING_TEST_JS} from './listingPage';
 
 /** Poll interval. Fine-grained: this decides how long a ready page waits. */
 const TICK_MS = 150;
-/** ~10s for the dashboard, which has sections to assemble. */
-const HOME_TRIES = 66;
 /**
- * ~2.4s for an inner page, and it must stay BELOW the app's own cover cap.
+ * ~5.4s for the dashboard, which has sections to assemble.
  *
- * This was 24 (~3.6s), which was longer than PAGE_COVER_CAP_MS -- and that one
- * ordering was the whole of the "it shows the website for a moment" bug. The
- * app's cap fired first, so on every page that was not ready inside three
- * seconds the cover came off while this watcher was still counting: the reveal
- * happened at the one moment nobody had said the page was ready.
+ * This was 66 (~9.9s), and like INNER_TRIES below it was on the wrong side of
+ * the deadline it is racing. The splash's own grace period was 2500ms measured
+ * from load end, so on any dashboard slower than that the splash came down
+ * while this watcher was still counting -- the reveal happened at the one
+ * moment nobody had said the dashboard was ready, and what the customer saw was
+ * the sections still arriving.
  *
- * Now the page always answers first and the cap is what it is meant to be -- a
- * failsafe for a page whose script never ran at all.
+ * So the dashboard now answers first and SPLASH_READY_GRACE_MS (6000) is what
+ * it was always meant to be: a failsafe for a signal that never comes. Kept
+ * below that with a comfortable margin, because the answer has to travel over
+ * the bridge and be acted on.
+ */
+const HOME_TRIES = 36;
+/**
+ * ~3.6s for an inner page, and it must stay BELOW the app's own cover cap.
+ *
+ * The ordering is what matters and it has been wrong in both directions. It was
+ * 24 (~3.6s) against a cover cap of 3000ms, which is the wrong way round: the
+ * app's cap fired first, so on every slow page the cover came off while this
+ * watcher was still counting -- the reveal happened at the one moment nobody had
+ * said the page was ready. It was then cut to 16 (~2.4s) to get under that cap.
+ *
+ * The cap is now PAGE_COVER_CAP_MS = 4200, so 2.4s is no longer buying safety, it
+ * is just giving a listing less time than it needs. And what happens at this
+ * deadline is not "keep waiting": a styled page reports ready REGARDLESS of
+ * whether its grid has arrived (see the interval below). On a collection that
+ * meant the cover could come off over the site's own empty column at 2.4s --
+ * which is the "it shows the page half-built" this whole watcher exists to
+ * prevent.
+ *
+ * So it goes back to 24, which is what it was designed to be, now that there is
+ * room for it: 3.6s answered against a 4.2s cap leaves the same 600ms margin the
+ * original arrangement had. Asserted in __tests__/revealBudget.test.ts.
  *
  * Answering is not the same as giving up: reaching this deadline unstyled does
  * NOT report ready (see innerReady). Revealing an unstyled page is the thing
  * the cover exists to prevent, so that case waits for the app's cap instead.
  */
-const INNER_TRIES = 16;
+const INNER_TRIES = 24;
 /**
  * The hard stop on polling, unstyled or not. ~9s.
  *
@@ -90,6 +113,17 @@ ${LISTING_TEST_JS}
    * Above-the-fold only. Waiting on the whole page would hold the reveal for
    * sections the user cannot see yet, which is slower than the site itself.
    */
+  /**
+   * A slot the app reserved has finished, one way or the other.
+   *
+   * Absent is not pending: every one of these sections is one Zigly can add or
+   * remove, so a slot that is not on the page is not something to wait for. Only
+   * a slot that exists and has not settled counts against readiness.
+   */
+  function settled(el) {
+    return !el || el.getAttribute('data-state') === 'ready';
+  }
+
   function homeReady() {
     var banner = document.querySelector('[id*="homepage_banner"]');
     var cats = document.querySelector('[id*="home_category_section"]');
@@ -98,9 +132,31 @@ ${LISTING_TEST_JS}
     // The category rail must actually have its tiles, not just its container.
     if (!cats.querySelector('img')) { return false; }
 
+    /*
+     * ...and it must be the rail the app is going to keep.
+     *
+     * The image test above passes on the site's own rail the moment it renders,
+     * but ../webview/homeLayout replaces that rail with a different set of
+     * Zigly's circles. Passing here on the outgoing node revealed the dashboard
+     * and then swapped its topmost element in full view. This is the check that
+     * closes that gap; homeLayout settles the attribute on every path, including
+     * the ones where the site's own rail is what stays.
+     */
+    if (!settled(cats)) { return false; }
+
     // The first breed rail is the first transplant the user sees.
     var breeds = document.getElementById('zigly-breed-dogs');
     if (breeds && breeds.getAttribute('data-state') !== 'ready') { return false; }
+
+    /*
+     * The coupon strip, which sits directly below the banner.
+     *
+     * The only eagerly-loaded transplant (see ../webview/extraSections), so it
+     * is the only one of that set that lands inside the first screen. Its slot is
+     * reserved with no height, so it arriving after the reveal pushed everything
+     * below it down -- a shift the customer reads as the page still building.
+     */
+    if (!settled(document.getElementById('zigly-x-coupon'))) { return false; }
 
     return true;
   }

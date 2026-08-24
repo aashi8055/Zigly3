@@ -82,10 +82,29 @@ export const HOME_LAYOUT_SCRIPT = `
     var current = document.querySelector('[id*="home_category_section"]');
     if (!current || current.getAttribute('data-zigly-swapped') === 'true') { return; }
     current.setAttribute('data-zigly-swapped', 'true');
+    /*
+     * Readiness, and this is the marker that matters most on the dashboard.
+     *
+     * The category circles are the first thing under the search bar, and this
+     * function REPLACES them with a different set of Zigly's own. The reveal
+     * watcher used to pass as soon as the rail it found had images -- which the
+     * site's own rail does, immediately -- so the dashboard was shown and then
+     * its topmost element visibly swapped. That is the single most conspicuous
+     * "it changes after it appears" on the whole screen.
+     *
+     * Settled on every path out, including the ones that give up: the site's own
+     * rail staying put is a FINAL answer, not a pending one. A slot that never
+     * settles would hold the reveal to the deadline for nothing.
+     */
+    current.setAttribute('data-state', 'loading');
+
+    function settle(el) {
+      try { el.setAttribute('data-state', 'ready'); } catch (e) {}
+    }
 
     window.__ziglyFetchSection('/', 'home_category_section')
       .then(function (sec) {
-        if (!sec) { return; }
+        if (!sec) { settle(current); return; }
         // Same section id would collide with the node being replaced.
         var replacement = document.importNode(sec, true);
         replacement.setAttribute('data-zigly-swapped', 'true');
@@ -103,11 +122,15 @@ export const HOME_LAYOUT_SCRIPT = `
          * can never be applied to a rail Swiper is already sliding.
          */
         replacement.setAttribute('data-zigly-native-scroll', 'true');
+        settle(replacement);
         if (current.parentNode) {
           current.parentNode.replaceChild(replacement, current);
+        } else {
+          // Never landed, so the node the page is showing is the original one.
+          settle(current);
         }
       })
-      .catch(function (e) { warn('category swap failed: ' + e); });
+      .catch(function (e) { warn('category swap failed: ' + e); settle(current); });
   }
 
   try {
