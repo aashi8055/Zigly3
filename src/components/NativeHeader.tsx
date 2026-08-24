@@ -18,7 +18,7 @@
  * the exceptions -- both are real paths, because neither shape can be built
  * honestly out of stacked Views; see ./glyphs.
  */
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import {
   Image,
   Pressable,
@@ -461,4 +461,11 @@ const styles = StyleSheet.create({
   },
 });
 
-export default NativeHeader;
+/**
+ * Memoised: the parent screen carries dozens of state values unrelated to the
+ * header (cart contents, account data, page stack...), and every one of them
+ * used to re-render this too. All of that churn was landing on the same frame
+ * as the WebView's own scroll compositing, which is what made scrolling feel
+ * uneven even though the header itself was not changing.
+ */
+export default memo(NativeHeader);

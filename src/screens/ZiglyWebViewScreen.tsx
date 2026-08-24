@@ -203,6 +203,16 @@ import type {AccountStack} from '../navigation/accountStack';
 interface Props {
   /** Fired once the first page has painted, so the splash can retire. */
   onFirstLoad: () => void;
+  /**
+   * True for as long as the native splash is covering the screen.
+   *
+   * The home load that happens behind the splash also flips `busy` true,
+   * which used to draw the hairline LoadingBar under the header for that
+   * whole stretch -- visible the instant the splash's own opacity animation
+   * started, before it fully covered the screen. Progress for a load the
+   * splash is already communicating is a second, redundant "loading" signal.
+   */
+  splashActive?: boolean;
 }
 
 /**
@@ -289,7 +299,7 @@ const isHomeUrl = (url: string): boolean => {
 /** Injection is re-applied on this schedule; see applyStyles. */
 const RESTYLE_DELAYS = [0, 500, 1500, 3000, 6000, 10000];
 
-const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
+const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   /**
    * The dashboard, mounted once and never navigated away from: it is expensive
    * to assemble (several section requests plus transplants) and Zigly's pages
@@ -1307,6 +1317,42 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, [closeMenu, openMenu]);
 
   /**
+   * Header's back button. Same rule as the hardware back button.
+   *
+   * Kept as a stable callback (rather than inline in the JSX) so NativeHeader
+   * -- memoised below -- does not see a new function identity, and therefore
+   * does not re-render, on every one of this screen's many unrelated state
+   * changes. That churn used to compete with the WebView's own scroll
+   * compositing for the same frame.
+   */
+  const handleHeaderBackPress = useCallback(() => {
+    if (searchOpen) {
+      closeSearch();
+    } else if (wishlistOpen) {
+      closeWishlist();
+    } else if (showCart) {
+      closeCart();
+    } else if (!stepBack() && !stepBackAccount() && canGoBackRef.current) {
+      webRef.current?.goBack();
+    }
+  }, [
+    searchOpen,
+    wishlistOpen,
+    showCart,
+    closeSearch,
+    closeWishlist,
+    closeCart,
+    stepBack,
+    stepBackAccount,
+  ]);
+
+  /** The logo means home, so the section comes down with the pages. */
+  const handleLogoPress = useCallback(() => {
+    closeAccountSection();
+    dismissPages();
+  }, [closeAccountSection, dismissPages]);
+
+  /**
    * A row in the drawer was tapped.
    *
    * The support block at the foot of the menu is `tel:`, `mailto:` and a
@@ -2142,25 +2188,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           onAccountScreen
         }
         onWishlistPress={openWishlist}
-        onBackPress={() => {
-          // Same rule as the hardware back button.
-          if (searchOpen) {
-            closeSearch();
-          } else if (wishlistOpen) {
-            closeWishlist();
-          } else if (showCart) {
-            closeCart();
-          } else if (!stepBack() && !stepBackAccount() && canGoBackRef.current) {
-            webRef.current?.goBack();
-          }
-        }}
+        onBackPress={handleHeaderBackPress}
         onMenuPress={toggleMenu}
         onCartPress={openCart}
-        onLogoPress={() => {
-          // The logo means home, so the section comes down with the pages.
-          closeAccountSection();
-          dismissPages();
-        }}
+        onLogoPress={handleLogoPress}
         onSearchPress={openSearch}
       />
 
@@ -2782,7 +2813,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           onAccountPress={openAccountFromMenu}
         />
 
-        {busy ? <LoadingBar /> : null}
+        {busy && !splashActive ? <LoadingBar /> : null}
 
         {/*
           Inside `body` too, so the header stays reachable: the offline screen

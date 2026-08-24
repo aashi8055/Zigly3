@@ -116,7 +116,7 @@ const Shell = () => {
 
       {/* Mounted immediately and never unmounted: the page loads behind the
           splash, so the first paint is already done when the splash lifts. */}
-      <ZiglyWebViewScreen onFirstLoad={handleFirstLoad} />
+      <ZiglyWebViewScreen onFirstLoad={handleFirstLoad} splashActive={!ready} />
 
       {/* Splash ignores the insets and covers the whole screen. */}
       {splashGone ? null : (
