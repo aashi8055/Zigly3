@@ -395,13 +395,27 @@ describe('getInjectionForUrl', () => {
       // A collection page is fetched whole, so neither tab may become eager.
       const s = home();
       expect(s).toContain('whenNear(section, function () {');
-      expect(s).toContain("loadCards(HOT_SOURCE, paneHot, LIMIT)");
+      expect(s).toContain("loadCards(HOT_SOURCE, paneHot)");
     });
 
     it('loads the New Arrivals collection only when that tab is opened', () => {
       const s = home();
       expect(s).toContain('if (newLoaded) { return; }');
-      expect(s).toContain('loadCards(NEW_SOURCE, paneNew, LIMIT)');
+      expect(s).toContain('loadCards(NEW_SOURCE, paneNew)');
+    });
+
+    it('shows every product in the collection, not a first few', () => {
+      /*
+       * The rail used to stop at twelve cards. Nothing may bound the loop that
+       * copies them across, and the theme's own "next" link is followed so a
+       * collection that outgrows one page still arrives whole.
+       */
+      const s = home();
+      expect(s).not.toContain('added < limit');
+      expect(s).toContain('for (var i = 0; i < cards.length; i++)');
+      expect(s).toContain('next ? readPage(next, depth + 1) : added');
+      // The page walk is guarded, so a malformed link cannot run away.
+      expect(s).toContain('depth < MAX_PAGES');
     });
 
     it('defaults to the Hot Picks tab', () => {

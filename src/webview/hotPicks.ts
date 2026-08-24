@@ -21,17 +21,28 @@
  *
  * The New Arrivals tab is fetched on first tap rather than up front, so the
  * homepage does not pull a second collection nobody may look at.
+ *
+ * Every product in each collection is shown -- the rail is not truncated. It
+ * used to stop at twelve cards. If a collection ever outgrows one page of the
+ * theme's own pagination, the "next" link is followed, so "all of them" stays
+ * true as Zigly add products rather than meaning "all of the first page".
  */
 const HOT_SOURCE = '/collections/hot-picks-squeaker-toys';
 const NEW_SOURCE = '/collections/hot-deals';
-const CARDS_PER_TAB = 12;
+/**
+ * A guard, not a limit on what is shown.
+ *
+ * Both collections fit on a single page today, so this never comes into play;
+ * it exists so a malformed "next" link cannot walk the fetcher forever.
+ */
+const MAX_PAGES = 6;
 
 export const HOT_PICKS_SCRIPT = `
 (function () {
   var ID = 'zigly-hot-picks';
   var HOT_SOURCE = ${JSON.stringify(HOT_SOURCE)};
   var NEW_SOURCE = ${JSON.stringify(NEW_SOURCE)};
-  var LIMIT = ${CARDS_PER_TAB};
+  var MAX_PAGES = ${MAX_PAGES};
   var CARD_SEL = '.card-wrapper.product-card-wrapper';
 
   function warn(msg) {
@@ -101,23 +112,48 @@ export const HOT_PICKS_SCRIPT = `
     pane.appendChild(p);
   }
 
-  /** Pull real product cards out of a fetched Zigly collection page. */
-  function loadCards(path, pane, limit) {
-    // Fetched whole: a collection page has no single named section to ask the
-    // Section Rendering API for, and both of these collections are small.
-    return window.__ziglyFetchDoc(path)
-      .then(function (scope) {
-        if (!scope) { warn('could not load ' + path); return 0; }
+  /**
+   * The theme's own link to the next page of a collection, if there is one.
+   *
+   * Relative paths only. An absolute one would be a link off Zigly, and this
+   * only ever reads Zigly's own collections.
+   */
+  function nextPage(scope) {
+    var link = scope.querySelector('link[rel="next"]')
+            || scope.querySelector('a[rel="next"]')
+            || scope.querySelector('.pagination__item--next a');
+    var href = link ? (link.getAttribute('href') || '') : '';
+    return href.charAt(0) === '/' ? href : null;
+  }
 
+  /**
+   * Pull every real product card out of a Zigly collection, across its pages.
+   *
+   * Fetched whole: a collection page has no single named section to ask the
+   * Section Rendering API for. Both of these collections are one page, so in
+   * practice this is a single request.
+   */
+  function loadCards(path, pane) {
+    var added = 0;
+
+    function readPage(at, depth) {
+      return window.__ziglyFetchDoc(at).then(function (scope) {
+        if (!scope) {
+          if (depth === 1) { warn('could not load ' + at); }
+          return added;
+        }
         var cards = scope.querySelectorAll(CARD_SEL);
-        var added = 0;
-        for (var i = 0; i < cards.length && added < limit; i++) {
+        for (var i = 0; i < cards.length; i++) {
           pane.appendChild(document.importNode(cards[i], true));
           added++;
         }
-        return added;
-      })
-      .catch(function (e) { warn('load failed ' + path + ': ' + e); return 0; });
+        var next = depth < MAX_PAGES ? nextPage(scope) : null;
+        return next ? readPage(next, depth + 1) : added;
+      });
+    }
+
+    return readPage(path, 1)
+      .catch(function (e) { warn('load failed ' + path + ': ' + e); return added; });
   }
 
   /**
@@ -144,7 +180,7 @@ export const HOT_PICKS_SCRIPT = `
 
   // Hot Picks: whatever Zigly currently has in the collection, in their order.
   whenNear(section, function () {
-    loadCards(HOT_SOURCE, paneHot, LIMIT).then(function (added) {
+    loadCards(HOT_SOURCE, paneHot).then(function (added) {
       if (!added) {
         // Nothing to show is not an error worth shouting about, but an empty
         // section would look broken -- remove it instead.
@@ -158,7 +194,7 @@ export const HOT_PICKS_SCRIPT = `
     setActive('new');
     if (newLoaded) { return; }
     newLoaded = true;
-    loadCards(NEW_SOURCE, paneNew, LIMIT).then(function (n) {
+    loadCards(NEW_SOURCE, paneNew).then(function (n) {
       if (!n) { note(paneNew, 'New arrivals are not available right now.'); }
     });
   });
