@@ -69,7 +69,7 @@ const CAT = 'template--26530973843772__';
  * Ids carry a Shopify-generated suffix that changes when the theme is re-saved,
  * so a miss falls back to discovery by fragment and self-heals.
  */
-const SEEDED_IDS: Record<string, string> = {
+export const SEEDED_IDS: Record<string, string> = {
   '/|home_category_section': DOG + 'home_category_section_ej8trH',
   '/|home_shop_by_breed_section@dog': DOG + 'home_shop_by_breed_section_arbGWM',
   '/|home_shop_by_breed_section@cat': CAT + 'home_shop_by_breed_section_arbGWM',
@@ -271,10 +271,47 @@ export const PAGE_CACHE_SCRIPT = `
     }, 400);
   }
 
+  /**
+   * The markup ../webview/sectionPrewarm already asked for at document-start.
+   *
+   * This script runs when the document has finished loading, so without the
+   * prewarm every section on the critical path -- the ones the splash is
+   * waiting for -- began its round trip only after the whole ~2 MB homepage had
+   * arrived. The prewarm issues that one batched request while the page is
+   * still downloading, so by the time anything here asks, the answer is
+   * usually already in hand.
+   *
+   * Returns a promise of an HTML string, or null when nothing was prewarmed for
+   * this key -- which is every key on every page that is not the dashboard.
+   */
+  function prewarmed(key) {
+    try {
+      var store = window.__ziglySectionPrewarm;
+      return store ? store[key] || null : null;
+    } catch (e) { return null; }
+  }
+
   /** Get one section by its stable name fragment. Resolves to an element or null. */
   window.__ziglyFetchSection = function (path, fragment) {
     var key = path + '|' + fragment;
     if (sectionCache[key]) { return sectionCache[key]; }
+
+    var early = prewarmed(key);
+    if (early) {
+      sectionCache[key] = early.then(function (html) {
+        if (typeof html === 'string' && html) { return toElement(html); }
+        /*
+         * The prewarm missed -- a stale seed, or the request failed. Drop both
+         * cache entries and ask again the ordinary way, which rediscovers the
+         * real id and self-heals. Clearing the prewarm entry FIRST is what stops
+         * that retry finding this same dead promise and recursing for ever.
+         */
+        try { delete window.__ziglySectionPrewarm[key]; } catch (e) {}
+        delete sectionCache[key];
+        return window.__ziglyFetchSection(path, fragment);
+      });
+      return sectionCache[key];
+    }
 
     sectionCache[key] = new Promise(function (resolve) {
       queue.push({

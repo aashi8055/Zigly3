@@ -80,6 +80,10 @@ import {
   seedSectionIdsScript,
 } from '../webview/sectionIdStore';
 import type {SectionIds} from '../webview/sectionIdStore';
+import {
+  buildSectionPrewarmScript,
+  SECTION_WARM_SCRIPT,
+} from '../webview/sectionPrewarm';
 import {log, warn} from '../utils/logger';
 import LoadingBar from '../components/LoadingBar';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
@@ -221,6 +225,23 @@ interface Props {
  * into a layer that has since been evicted is a no-op rather than a warning.
  */
 type Target = 'home' | 'login' | number;
+
+/**
+ * What the dashboard's WebView runs before the page's own scripts.
+ *
+ * The header rule, plus the section prewarm -- which is the whole reason the
+ * dashboard now assembles while it downloads instead of afterwards; see
+ * ../webview/sectionPrewarm.
+ *
+ * A module constant rather than something built per render, so the prop never
+ * changes identity: `injectedJavaScriptBeforeContentLoaded` is read once per
+ * navigation, and handing the WebView a fresh string on every render of this
+ * very busy screen would be churn for no gain. It is compiled with the
+ * written-down section id seeds only -- what earlier launches learned arrives
+ * from disk a moment later, and `onLoadStart` re-injects a payload carrying it.
+ */
+const HOME_EARLY_SCRIPT = `${EARLY_HEADER_CSS}
+${buildSectionPrewarmScript()}`;
 
 /**
  * Whether a page is a shopping page.
@@ -2207,8 +2228,9 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
           style={styles.web}
           injectedJavaScript={getInjectionForUrl(START_URL) ?? undefined}
           // Runs before the page's own scripts, so the site's header never
-          // flashes alongside ours.
-          injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
+          // flashes alongside ours -- and so the dashboard's own sections are
+          // already being fetched while the page downloads.
+          injectedJavaScriptBeforeContentLoaded={HOME_EARLY_SCRIPT}
           onShouldStartLoadWithRequest={handleHomeShouldStart}
           onNavigationStateChange={handleNavStateChange}
           onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
@@ -2233,6 +2255,20 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
             if (Object.keys(sectionIds.current).length > 0) {
               injectInto('home', seedSectionIdsScript(sectionIds.current));
             }
+            /*
+             * The section prewarm, for the same reason the header rule is
+             * repeated here: document-start injection is unreliable on Android,
+             * and this is the one payload where landing late costs the whole
+             * benefit -- a prewarm that fires after load end has saved nothing.
+             *
+             * Injected AFTER the ids above so it can use what earlier launches
+             * learned rather than the seeds alone. Guarded on its own global, so
+             * whichever of the two paths lands first wins and the other is free.
+             */
+            injectInto(
+              'home',
+              buildSectionPrewarmScript(sectionIds.current),
+            );
           }}
           onLoadEnd={handleLoadEnd}
           onError={({nativeEvent}) => {
@@ -2284,8 +2320,21 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
                 // answer decides what the Account tab opens, and asking now
                 // means the tap does not have to wait for a round trip.
                 probeAccount();
-                // Warm the next pages, but only on an unmetered connection.
+                /*
+                 * Warm the rest of THIS page, then the next pages -- and both
+                 * only on an unmetered connection, which is the same trade
+                 * ../webview/prefetch already makes: data for speed, never made
+                 * silently on mobile data.
+                 *
+                 * Sections first. Everything below the fold is deferred until it
+                 * nears the viewport, so without this the customer's first scroll
+                 * is what starts the round trip -- the dashboard visibly loading
+                 * itself under their thumb. Warming puts the markup in the page's
+                 * own section cache, so the deferred loader finds it already
+                 * there and places it with no network at all.
+                 */
                 if (unmeteredRef.current) {
+                  injectInto('home', SECTION_WARM_SCRIPT);
                   injectInto('home', PREFETCH_SCRIPT);
                 } else {
                   log('prefetch skipped: metered connection');
