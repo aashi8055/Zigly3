@@ -147,6 +147,11 @@ import {
 import type {PageStack} from '../navigation/pageStack';
 import BottomNav from '../components/BottomNav';
 import SortFilterBar from '../components/SortFilterBar';
+import ProductActionBar from '../components/ProductActionBar';
+import {
+  PRODUCT_ADD_TO_BAG_SCRIPT,
+  PRODUCT_BUY_NOW_SCRIPT,
+} from '../webview/productActions';
 import SortSheet from '../components/SortSheet';
 import FilterSheet from '../components/FilterSheet';
 import {
@@ -2239,13 +2244,36 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const onListing = headerUrl !== null && showsSortFilterBar(headerUrl);
 
   /**
+   * The visible page is a product's own page -- reusing the same test
+   * PageCover uses to pick its gallery shape (coverVariantFor), so the app
+   * has one answer for "is this a product page" rather than two that could
+   * drift apart.
+   *
+   * Excluded exactly as showSortFilter is below: the cart, wishlist and
+   * account section draw over the page layer, and a bar for the product
+   * behind them would be a control for a screen nobody is looking at.
+   */
+  const onProductPage =
+    headerUrl !== null &&
+    coverVariantFor(headerUrl) === 'detail' &&
+    !searchOpen &&
+    !menuOpen &&
+    !inCheckout &&
+    !showCart &&
+    !wishlistOpen &&
+    !onAccountScreen &&
+    !showError;
+
+  /**
    * When the bar stands down.
    *
    * Search, because it is keyboard-first and the bar would sit on the keyboard.
    * Checkout, because that page is Shopify's and not somewhere to offer five
    * ways out. Listing pages, because the Sort / Filter bar takes this slot
-   * there and the reference app shows that bar *instead of* the tabs. And the
-   * login screen, which is a single-purpose screen in the reference app too.
+   * there and the reference app shows that bar *instead of* the tabs. Product
+   * pages, for the same reason -- ProductActionBar takes the slot there. And
+   * the login screen, which is a single-purpose screen in the reference app
+   * too.
    */
   const showNav =
     !searchOpen &&
@@ -2254,7 +2282,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !menuOpen &&
     !inCheckout &&
     !(onAccountScreen && accountTop === 'login') &&
-    !onListing;
+    !onListing &&
+    !onProductPage;
 
   /**
    * When the Sort / Filter bar shows: on a listing, and only when the listing
@@ -2884,6 +2913,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       if (unmeteredRef.current) {
                         injectInto(layer.key, PAGE_PREFETCH_SCRIPT);
                       }
+                    } else if (data && data.tag === 'product-action-unavailable') {
+                      // The native bar's own controls could not find (or
+                      // could not confirm) the site's real button -- see
+                      // ../webview/productActions. Say so rather than leaving
+                      // a tap that visibly did nothing.
+                      setToastMessage(
+                        data.action === 'buy'
+                          ? "Buy Now isn't available for this item right now"
+                          : "Couldn't add to bag — please try again",
+                      );
                     } else if (data && data.tag === 'facets') {
                       /*
                        * The page's own sort and filter state, as SearchTap has
@@ -3091,6 +3130,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         <SortFilterBar
           onSortPress={openSortSheet}
           onFilterPress={openFilterSheet}
+        />
+      ) : null}
+
+      {/*
+        Add to Bag and Buy Now, in the same slot, on a product page. Outside
+        `body` for the same reason as the other two: the WebView above it
+        shrinks to fit rather than being covered, so nothing on the page is
+        ever hidden behind it and it cannot jump or flicker as the page
+        scrolls. Presses drive the site's own controls -- see
+        ../webview/productActions -- so the write is still Shopify's.
+      */}
+      {onProductPage ? (
+        <ProductActionBar
+          onAddToBag={() => {
+            if (showing) {
+              injectInto(showing.key, PRODUCT_ADD_TO_BAG_SCRIPT);
+            }
+          }}
+          onBuyNow={() => {
+            if (showing) {
+              injectInto(showing.key, PRODUCT_BUY_NOW_SCRIPT);
+            }
+          }}
         />
       ) : null}
 

@@ -476,8 +476,20 @@ body.zigly-listing .card-variant-wrapper {
    Scoped to body.zigly-product, from ./listingPage. Not scoped by class alone:
    an unscoped .sticky-bar-container would be this file reaching a page it has
    not read.
+
+   UPDATE, native Add to Bag / Buy Now: the app now draws its own sticky bar
+   below the WebView (see ../components/ProductActionBar) and presses these
+   same buttons from outside the page (../webview/productActions), so the
+   in-flow one is hidden too. Only the button, not
+   .product__buy-buttons-container itself: the theme's own validation message
+   for that form -- no size chosen, out of stock -- renders as a sibling of the
+   button inside that container, and hiding the container would hide that
+   message along with it.
    ------------------------------------------------------------------ */
 body.zigly-product .sticky-bar-container {
+  display: none !important;
+}
+body.zigly-product .product__buy-buttons-container .product-form__submit {
   display: none !important;
 }
 /* relative, for the reason spelled out on the Hot Picks rule above: static

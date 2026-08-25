@@ -48,6 +48,10 @@ import {
   READ_FACETS_SCRIPT,
   toggleFacetScript,
 } from '../src/webview/facetBridge';
+import {
+  PRODUCT_ADD_TO_BAG_SCRIPT,
+  PRODUCT_BUY_NOW_SCRIPT,
+} from '../src/webview/productActions';
 
 const parses = (src: string): boolean => {
   try {
@@ -146,6 +150,8 @@ describe('every separately injected payload is valid too', () => {
     // apostrophe in it is one product away.
     ['toggleFacetScript', toggleFacetScript(3, "Cat's", "rice 'n' oats \\ x")],
     ['applySortScript', applySortScript("Price: 'low' \\ high")],
+    ['PRODUCT_ADD_TO_BAG_SCRIPT', PRODUCT_ADD_TO_BAG_SCRIPT],
+    ['PRODUCT_BUY_NOW_SCRIPT', PRODUCT_BUY_NOW_SCRIPT],
   ])('%s parses cleanly', (_name, script) => {
     expect(typeof script).toBe('string');
     expect(parses(script as string)).toBe(true);

@@ -912,17 +912,23 @@ describe('getInjectionForUrl', () => {
         );
       });
 
-      it('leaves the in-flow Add to Bag alone', () => {
+      it('hides the in-flow Add to Bag button, but not its container', () => {
         /*
-         * The one that stays. A rule hiding the form, its submit button or
-         * its container would leave the page with no way to add to the bag at
-         * all, which is the failure this block must never become. Matched
-         * with the opening brace so the prose above the rule does not count.
+         * The native ProductActionBar (see ../src/components/ProductActionBar
+         * and ../src/webview/productActions) now presses this same button
+         * from outside the page, so the button itself is hidden -- but the
+         * container is not: the theme's own validation message for the form
+         * (no size chosen, out of stock) is a sibling of the button inside
+         * it, and hiding the container would take that message with it.
+         * Matched with the opening brace so the prose above the rule does
+         * not count.
          */
         const script = productPage();
         expect(script).not.toContain('.product__buy-buttons-container {');
-        expect(script).not.toContain('.product-form__submit {');
         expect(script).not.toContain('product-form {');
+        expect(script).toContain(
+          `body.${PRODUCT_FLAG} .product__buy-buttons-container .product-form__submit {`,
+        );
       });
 
       it('never hides a sticky bar off a product page', () => {
