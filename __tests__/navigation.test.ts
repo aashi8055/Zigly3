@@ -122,17 +122,23 @@ describe('header state follows which view is showing', () => {
     expect(src.indexOf('<NetworkErrorScreen')).toBeGreaterThan(body);
   });
 
-  it('has no floating spinner left to cover the page', () => {
+  it('has no floating spinner or progress bar left to cover the page', () => {
     // A spinner sat in the top-right corner of every page, over whatever the
-    // page itself puts there, and offered nothing to press. Progress is a
-    // hairline under the header now; getting back is the header's job.
+    // page itself puts there, and offered nothing to press -- replaced by a
+    // hairline LoadingBar under the header. That bar was itself dropped later:
+    // it read as a website's own progress indicator, and every gap it used to
+    // paper over is now held by a skeleton placeholder (PageCover) instead, so
+    // there is no bar left to draw at all. Getting back is the header's job.
     const src = require('fs').readFileSync(
       'src/screens/ZiglyWebViewScreen.tsx',
       'utf8',
     );
     expect(src).not.toContain('LoadingOverlay');
-    expect(src).toContain('<LoadingBar />');
+    expect(src).not.toContain('LoadingBar');
     expect(require('fs').existsSync('src/components/LoadingOverlay.tsx')).toBe(
+      false,
+    );
+    expect(require('fs').existsSync('src/components/LoadingBar.tsx')).toBe(
       false,
     );
   });

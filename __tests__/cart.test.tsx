@@ -166,12 +166,15 @@ describe('an empty cart', () => {
 describe('a cart that has not loaded yet', () => {
   it('waits rather than claiming the cart is empty', () => {
     // null means "no answer from /cart.js yet". Showing "No items" there would
-    // tell the customer their cart had been emptied.
+    // tell the customer their cart had been emptied. It waits behind a
+    // skeleton now, not a spinner -- a spinner is the one shape this app
+    // must never draw, because it reads as a website's own loading widget.
     const tree = render(
       screen({cart: null}),
     );
-    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
     expect(textOf(tree)).not.toContain('No items');
+    expect(textOf(tree)).not.toContain('Your Cart is Empty');
   });
 });
 

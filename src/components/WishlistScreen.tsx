@@ -19,7 +19,7 @@
  */
 import React from 'react';
 import {
-  ActivityIndicator,
+  Animated,
   Image,
   Pressable,
   ScrollView,
@@ -32,6 +32,7 @@ import {money} from '../utils/money';
 import EmptyState from './EmptyState';
 import {HeartShape} from './glyphs';
 import type {WishlistItem} from '../wishlist/wishlistItems';
+import {Block, usePulse} from './Skeleton';
 
 interface Props {
   /** Null until the page has been read; then possibly empty. */
@@ -118,6 +119,17 @@ const Tile = ({
   </View>
 );
 
+/** One tile's shape: the image, two lines of title, a price, and the button. */
+const WishlistTileSkeleton = ({pulse}: {pulse: Animated.Value}) => (
+  <View style={styles.tile}>
+    <Block pulse={pulse} style={styles.skImage} />
+    <Block pulse={pulse} style={styles.skTitle} />
+    <Block pulse={pulse} style={styles.skTitleShort} />
+    <Block pulse={pulse} style={styles.skPrice} />
+    <Block pulse={pulse} style={styles.skButton} />
+  </View>
+);
+
 const WishlistScreen = ({
   items,
   onOpenItem,
@@ -129,9 +141,15 @@ const WishlistScreen = ({
     // Not yet read. Short now that the read is a storage lookup plus one
     // request per saved product, but not nothing -- and showing the empty
     // screen during it would tell the customer their saved items were gone.
+    const pulse = usePulse(true);
     return (
-      <View style={styles.centre}>
-        <ActivityIndicator color={COLORS.navy} />
+      <View style={styles.root}>
+        <View style={styles.grid}>
+          <WishlistTileSkeleton pulse={pulse} />
+          <WishlistTileSkeleton pulse={pulse} />
+          <WishlistTileSkeleton pulse={pulse} />
+          <WishlistTileSkeleton pulse={pulse} />
+        </View>
       </View>
     );
   }
@@ -172,12 +190,6 @@ const HAIRLINE = '#ECEEF2';
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: COLORS.ground},
-  centre: {
-    flex: 1,
-    backgroundColor: COLORS.ground,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 
   /** Only ever appears when a removal could not be confirmed. */
   notice: {
@@ -265,6 +277,12 @@ const styles = StyleSheet.create({
     fontSize: 15.5,
     fontWeight: '600',
   },
+
+  skImage: {width: '100%', aspectRatio: 1, borderRadius: 8},
+  skTitle: {height: 14.5, width: '90%', borderRadius: 4, marginTop: 8},
+  skTitleShort: {height: 14.5, width: '55%', borderRadius: 4, marginTop: 4},
+  skPrice: {height: 15, width: '40%', borderRadius: 4, marginTop: 8},
+  skButton: {height: 46, borderRadius: 6, marginTop: 10},
 });
 
 export default WishlistScreen;

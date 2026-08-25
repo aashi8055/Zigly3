@@ -257,7 +257,7 @@ describe('the filter sheet', () => {
         onClose={noop}
       />,
     );
-    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
     expect(labels(tree)).not.toContain('No filters for this listing');
   });
 

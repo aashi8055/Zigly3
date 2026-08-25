@@ -87,7 +87,6 @@ import {
   SECTION_WARM_SCRIPT,
 } from '../webview/sectionPrewarm';
 import {log, warn} from '../utils/logger';
-import LoadingBar from '../components/LoadingBar';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
 import type {CoverVariant} from '../components/PageCover';
 import NativeHeader from '../components/NativeHeader';
@@ -211,16 +210,6 @@ import type {AccountStack} from '../navigation/accountStack';
 interface Props {
   /** Fired once the first page has painted, so the splash can retire. */
   onFirstLoad: () => void;
-  /**
-   * True for as long as the native splash is covering the screen.
-   *
-   * The home load that happens behind the splash also flips `busy` true,
-   * which used to draw the hairline LoadingBar under the header for that
-   * whole stretch -- visible the instant the splash's own opacity animation
-   * started, before it fully covered the screen. Progress for a load the
-   * splash is already communicating is a second, redundant "loading" signal.
-   */
-  splashActive?: boolean;
 }
 
 /**
@@ -303,8 +292,8 @@ export const coverVariantFor = (url: string): CoverVariant => {
  * Whether a url is a document this app should treat as a navigation at all.
  *
  * `about:blank`, `javascript:` and `data:` urls reach onLoadStart on some paths,
- * and treating one as a page load would put a progress bar over a page that is
- * not going anywhere.
+ * and treating one as a page load would put a cover over a page that is not
+ * going anywhere.
  */
 const isDocumentUrl = (url: string): boolean =>
   url.indexOf('http://') === 0 || url.indexOf('https://') === 0;
@@ -345,7 +334,7 @@ const SIGN_OUT_MESSAGE: Record<SignOutReason, string> = {
   delete: 'Deleted user data',
 };
 
-const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
+const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /**
    * The dashboard, mounted once and never navigated away from: it is expensive
    * to assemble (several section requests plus transplants) and Zigly's pages
@@ -379,11 +368,6 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   /** The wait for `dashboard-ready` after the document has finished loading. */
   const splashGrace = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /**
-   * Which WebView is mid-navigation, or null. Only the visible one's progress
-   * is drawn -- a hidden layer finishing a load is not the user's business.
-   */
-  const [loadingTarget, setLoadingTarget] = useState<Target | null>(null);
   /** Mirrors the site's own cart bubble; never tracked independently. */
   const [cartCount, setCartCount] = useState(0);
   /** Offer strings mirrored from the site's own announcement bar. */
@@ -2016,7 +2000,6 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
 
   const handleLoadEnd = useCallback(
     (event: {nativeEvent: {url: string}}) => {
-      setLoadingTarget(prev => (prev === 'home' ? null : prev));
       applyStyles('home', event.nativeEvent.url);
       /*
        * The splash deliberately does NOT lift here -- see retireSplash. What is
@@ -2221,19 +2204,6 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
   const shownCustomer =
     customer === null ? null : applyProfileEdits(customer, profileEdits);
 
-  /** Progress is only ever drawn for whatever the user is actually looking at. */
-  const busy =
-    !showCart &&
-    !showError &&
-    loadingTarget !== null &&
-    (onAccountScreen
-      ? // The account screens that load anything are the two WebViews in the
-        // section: login, and the site's own password page.
-        loadingTarget === 'login' || loadingTarget === 'password'
-      : showing
-      ? loadingTarget === showing.key
-      : loadingTarget === 'home');
-
   /**
    * Which tab is lit.
    *
@@ -2410,7 +2380,6 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
             handleScroll(e.nativeEvent.contentOffset.y)
           }
           onLoadStart={() => {
-            setLoadingTarget('home');
             // Hide the site's header as early as Android will let us.
             //
             // injectedJavaScriptBeforeContentLoaded is unreliable on Android
@@ -2700,16 +2669,13 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
               injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
               onShouldStartLoadWithRequest={handleLoginShouldStart}
               onNavigationStateChange={handleLoginNav}
-              onLoadStart={() => setLoadingTarget('login')}
               onLoadEnd={() => {
-                setLoadingTarget(prev => (prev === 'login' ? null : prev));
                 // Again after the load: the widget is built by a script that
                 // runs later than this, and the restyle is idempotent.
                 injectInto('login', LOGIN_RESTYLE);
               }}
               onError={({nativeEvent}) => {
                 warn('login page error:', nativeEvent.description);
-                setLoadingTarget(prev => (prev === 'login' ? null : prev));
               }}
               onMessage={({nativeEvent}) => {
                 try {
@@ -2756,16 +2722,13 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
               // Android allows, so it never flashes above the native one.
               injectedJavaScriptBeforeContentLoaded={EARLY_HEADER_CSS}
               onShouldStartLoadWithRequest={handlePasswordShouldStart}
-              onLoadStart={() => setLoadingTarget('password')}
               onLoadEnd={() => {
-                setLoadingTarget(prev => (prev === 'password' ? null : prev));
                 // Again after the load: a full page load discards the injected
                 // <style> node, and the payload is idempotent.
                 injectInto('password', PASSWORD_RESTYLE);
               }}
               onError={({nativeEvent}) => {
                 warn('password page error:', nativeEvent.description);
-                setLoadingTarget(prev => (prev === 'password' ? null : prev));
               }}
               onRenderProcessGone={() => {
                 warn('password render process gone — reloading');
@@ -2828,11 +2791,10 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
                 onLoadStart={e => {
                   const url = e.nativeEvent.url;
                   // about:blank and javascript: urls are not navigations; a
-                  // progress bar over one is a bar over a page going nowhere.
+                  // cover over one is a cover over a page going nowhere.
                   if (!isDocumentUrl(url)) {
                     return;
                   }
-                  setLoadingTarget(layer.key);
                   injectInto(layer.key, EARLY_HEADER_CSS);
                   /*
                    * Three kinds of load reach here and only one of them wants a
@@ -2847,8 +2809,8 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
                    *     reports through onPageStarted exactly like a navigation,
                    *     or a reload of the page already on screen. The customer
                    *     is looking at that page. Blanking it and putting up a
-                   *     spinner would be the app taking something away and
-                   *     giving nothing back; the progress bar above is enough.
+                   *     cover would be the app taking something away and
+                   *     giving nothing back.
                    *
                    * The renderer dying is the fourth, and it is handled where it
                    * happens: there the page really is gone, so it re-covers.
@@ -2859,9 +2821,6 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
                   }
                 }}
                 onLoadEnd={e => {
-                  setLoadingTarget(prev =>
-                    prev === layer.key ? null : prev,
-                  );
                   const url = e.nativeEvent.url;
                   /*
                    * The cover used to come off here, and that was the bug: a
@@ -2894,9 +2853,6 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
                   // only if the cover is not still over it.
                   warn('page load error:', nativeEvent.description);
                   markPainted(layer.key);
-                  setLoadingTarget(prev =>
-                    prev === layer.key ? null : prev,
-                  );
                 }}
                 onMessage={({nativeEvent}) => {
                   try {
@@ -3097,8 +3053,6 @@ const ZiglyWebViewScreen = ({onFirstLoad, splashActive = false}: Props) => {
           onNavigate={openFromMenu}
           onAccountPress={openAccountFromMenu}
         />
-
-        {busy && !splashActive ? <LoadingBar /> : null}
 
         {/*
           Inside `body` too, so the header stays reachable: the offline screen

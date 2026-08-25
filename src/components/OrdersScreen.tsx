@@ -19,7 +19,7 @@
  */
 import React from 'react';
 import {
-  ActivityIndicator,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,6 +30,7 @@ import { COLORS, FONT_FAMILY } from '../constants/appConstants';
 import type { Order } from '../account/accountData';
 import EmptyState from './EmptyState';
 import { ChevronRight } from './glyphs';
+import { Block, usePulse } from './Skeleton';
 
 interface Props {
   /** null while the read is out; [] means the customer has no orders. */
@@ -43,13 +44,35 @@ const Chip = ({ label }: { label: string }) => (
   </View>
 );
 
+/** One order card's shape: the name/total line, the date, then two chips. */
+const OrderCardSkeleton = ({ pulse }: { pulse: Animated.Value }) => (
+  <View style={styles.card}>
+    <View style={styles.cardText}>
+      <View style={styles.topLine}>
+        <Block pulse={pulse} style={styles.skName} />
+        <Block pulse={pulse} style={styles.skTotal} />
+      </View>
+      <Block pulse={pulse} style={styles.skDate} />
+      <View style={styles.chips}>
+        <Block pulse={pulse} style={styles.skChip} />
+        <Block pulse={pulse} style={styles.skChip} />
+      </View>
+    </View>
+  </View>
+);
+
 const OrdersScreen = ({ orders, onOpenOrder }: Props) => {
   if (orders === null) {
     // The same rule the cart follows: a screen that has not been told yet must
     // wait, not claim the customer has never ordered anything.
+    const pulse = usePulse(true);
     return (
-      <View style={styles.centre}>
-        <ActivityIndicator color={COLORS.navy} />
+      <View style={styles.root}>
+        <View style={styles.list}>
+          <OrderCardSkeleton pulse={pulse} />
+          <OrderCardSkeleton pulse={pulse} />
+          <OrderCardSkeleton pulse={pulse} />
+        </View>
       </View>
     );
   }
@@ -107,12 +130,6 @@ const styles = StyleSheet.create({
    * ground is white now, which would flatten the list into one sheet.
    */
   root: { flex: 1, backgroundColor: COLORS.surface },
-  centre: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.surface,
-  },
   list: { paddingVertical: 10, gap: 10 },
 
   card: {
@@ -158,6 +175,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#4A5361',
   },
+
+  skName: { height: 17, width: '34%', borderRadius: 4 },
+  skTotal: { height: 16, width: '22%', borderRadius: 4 },
+  skDate: { height: 13.5, width: '30%', borderRadius: 4, marginTop: 5 },
+  skChip: { height: 21, width: 64, borderRadius: 4 },
 });
 
 export default OrdersScreen;

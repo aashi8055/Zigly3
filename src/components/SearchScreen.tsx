@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import {
-  ActivityIndicator,
+  Animated,
   Image,
   Pressable,
   ScrollView,
@@ -26,6 +26,7 @@ import {
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import {money, percentOff} from '../utils/money';
 import {isEmpty} from '../search/suggestions';
+import {Block, usePulse} from './Skeleton';
 import type {
   CollectionHit,
   ProductHit,
@@ -129,6 +130,18 @@ const ProductRow = ({
   );
 };
 
+/** One suggestion row's shape: a thumbnail beside a title and a price line. */
+const SuggestionRowSkeleton = ({pulse}: {pulse: Animated.Value}) => (
+  <View style={styles.productRow}>
+    <Block pulse={pulse} style={styles.skThumb} />
+    <View style={styles.productDetails}>
+      <Block pulse={pulse} style={styles.skTitle} />
+      <Block pulse={pulse} style={styles.skTitleShort} />
+      <Block pulse={pulse} style={styles.skPrice} />
+    </View>
+  </View>
+);
+
 const SearchScreen = ({
   query,
   onQueryChange,
@@ -139,6 +152,7 @@ const SearchScreen = ({
   recents,
   onClearRecents,
 }: Props) => {
+  const pulse = usePulse(busy);
   const trimmed = query.trim();
   const typing = trimmed.length > 0;
   /**
@@ -238,9 +252,11 @@ const SearchScreen = ({
 
             {current === null ? (
               busy ? (
-                <View style={styles.centre}>
-                  <ActivityIndicator color={COLORS.navy} />
-                </View>
+                <>
+                  <SuggestionRowSkeleton pulse={pulse} />
+                  <SuggestionRowSkeleton pulse={pulse} />
+                  <SuggestionRowSkeleton pulse={pulse} />
+                </>
               ) : null
             ) : (
               <>
@@ -457,7 +473,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
-  centre: {paddingVertical: 36, alignItems: 'center'},
   empty: {paddingHorizontal: 32, paddingTop: 48, alignItems: 'center'},
   emptyTitle: {
     fontFamily: FONT_FAMILY,
@@ -474,6 +489,11 @@ const styles = StyleSheet.create({
     color: COLORS.inkMuted,
     textAlign: 'center',
   },
+
+  skThumb: {width: 60, height: 60, borderRadius: 8},
+  skTitle: {height: 14.5, width: '85%', borderRadius: 4, marginTop: 2},
+  skTitleShort: {height: 14.5, width: '50%', borderRadius: 4, marginTop: 6},
+  skPrice: {height: 14.5, width: '30%', borderRadius: 4, marginTop: 8},
 });
 
 export default SearchScreen;

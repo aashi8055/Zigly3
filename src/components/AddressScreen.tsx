@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import {
-  ActivityIndicator,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { COLORS, FONT_FAMILY } from '../constants/appConstants';
 import type { Address } from '../account/accountData';
+import { Block, usePulse } from './Skeleton';
 
 interface Props {
   /** null while the read is out. */
@@ -32,6 +33,15 @@ interface Props {
   notice: string | null;
 }
 
+/** One saved address's shape: the name line, then two shorter address lines. */
+const AddressCardSkeleton = ({ pulse }: { pulse: Animated.Value }) => (
+  <View style={styles.card}>
+    <Block pulse={pulse} style={styles.skName} />
+    <Block pulse={pulse} style={styles.skLine} />
+    <Block pulse={pulse} style={styles.skLineShort} />
+  </View>
+);
+
 const AddressScreen = ({
   addresses,
   onAdd,
@@ -40,9 +50,13 @@ const AddressScreen = ({
   notice,
 }: Props) => {
   if (addresses === null) {
+    const pulse = usePulse(true);
     return (
-      <View style={styles.centre}>
-        <ActivityIndicator color={COLORS.navy} />
+      <View style={styles.root}>
+        <View style={styles.scroll}>
+          <AddressCardSkeleton pulse={pulse} />
+          <AddressCardSkeleton pulse={pulse} />
+        </View>
       </View>
     );
   }
@@ -125,12 +139,6 @@ const AddressScreen = ({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.ground },
-  centre: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.ground,
-  },
   scroll: { paddingHorizontal: 16, paddingTop: 34, paddingBottom: 28, gap: 16 },
 
   empty: {
@@ -194,6 +202,10 @@ const styles = StyleSheet.create({
     color: COLORS.navy,
   },
   deleteText: { color: COLORS.red },
+
+  skName: { height: 16, width: '52%', borderRadius: 4, marginBottom: 6 },
+  skLine: { height: 14.5, width: '80%', borderRadius: 4, marginBottom: 6 },
+  skLineShort: { height: 14.5, width: '44%', borderRadius: 4 },
 });
 
 export default AddressScreen;

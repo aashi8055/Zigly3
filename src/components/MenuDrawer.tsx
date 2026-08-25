@@ -34,7 +34,6 @@ import React, {
   useState,
 } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   Easing,
   Image,
@@ -50,6 +49,10 @@ import type {AuthState, Customer} from '../account/accountData';
 import type {MenuNode} from '../menu/menuTree';
 import {isDrawableIcon, levelsFor, nodesFor} from '../menu/menuTree';
 import {ChevronRight, PersonIcon} from './glyphs';
+import {ListRowSkeleton, usePulse} from './Skeleton';
+
+/** One skeleton row's leading shape: square, like the menu's own icons. */
+const ROW_LEAD = {width: 24, height: 24, borderRadius: 4};
 
 /** How much of the screen the panel takes. The rest stays the store. */
 const PANEL_FRACTION = 2 / 3;
@@ -87,6 +90,7 @@ const MenuDrawer = forwardRef<MenuDrawerHandle, Props>(
   ({open, items, auth, customer, onClose, onNavigate, onAccountPress}, ref) => {
     const {width} = useWindowDimensions();
     const panelWidth = Math.round(width * PANEL_FRACTION);
+    const pulse = usePulse(items.length === 0);
 
     /**
      * Mounted separately from `open` so the close animation has something to
@@ -261,7 +265,11 @@ const MenuDrawer = forwardRef<MenuDrawerHandle, Props>(
 
           {items.length === 0 ? (
             <View style={styles.waiting}>
-              <ActivityIndicator color={COLORS.navy} />
+              <ListRowSkeleton pulse={pulse} leading={ROW_LEAD} style={styles.row} />
+              <ListRowSkeleton pulse={pulse} leading={ROW_LEAD} style={styles.row} />
+              <ListRowSkeleton pulse={pulse} leading={ROW_LEAD} style={styles.row} />
+              <ListRowSkeleton pulse={pulse} leading={ROW_LEAD} style={styles.row} />
+              <ListRowSkeleton pulse={pulse} leading={ROW_LEAD} style={styles.row} />
             </View>
           ) : (
             <View style={styles.levelClip}>
@@ -401,7 +409,7 @@ const styles = StyleSheet.create({
     color: '#4A5361',
   },
 
-  waiting: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  waiting: {flex: 1},
 
   /** Clips the level to the panel, so the one off to the right is not drawn. */
   levelClip: {flex: 1, overflow: 'hidden'},

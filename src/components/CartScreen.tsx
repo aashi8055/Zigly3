@@ -42,6 +42,7 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Image,
   Pressable,
   ScrollView,
@@ -52,6 +53,7 @@ import {
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import {money, percentOff} from '../utils/money';
 import EmptyState from './EmptyState';
+import {Block, usePulse} from './Skeleton';
 
 export interface CartLine {
   key: string;
@@ -82,6 +84,37 @@ interface Props {
   /** Leaves the empty cart for the dashboard. */
   onContinueShopping: () => void;
 }
+
+/** One cart line's shape: the thumbnail, the title, then the price. */
+const CartLineSkeleton = ({pulse}: {pulse: Animated.Value}) => (
+  <View style={styles.card}>
+    <View style={styles.cardBody}>
+      <Block pulse={pulse} style={styles.skThumb} />
+      <View style={styles.details}>
+        <Block pulse={pulse} style={styles.skTitle} />
+        <Block pulse={pulse} style={styles.skTitleShort} />
+        <Block pulse={pulse} style={styles.skPrice} />
+      </View>
+    </View>
+  </View>
+);
+
+/**
+ * Shown while the cart's own read is still out -- Shopify's /cart.js has not
+ * answered yet, so there is nothing here to draw but the shape of the lines
+ * and the summary that are about to arrive.
+ */
+const CartSkeleton = () => {
+  const pulse = usePulse(true);
+  return (
+    <View style={styles.root}>
+      <View style={styles.scroll}>
+        <CartLineSkeleton pulse={pulse} />
+        <CartLineSkeleton pulse={pulse} />
+      </View>
+    </View>
+  );
+};
 
 const CartScreen = ({
   cart,
@@ -127,11 +160,7 @@ const CartScreen = ({
   };
 
   if (!cart) {
-    return (
-      <View style={styles.centre}>
-        <ActivityIndicator color={COLORS.navy} />
-      </View>
-    );
+    return <CartSkeleton />;
   }
 
   if (cart.itemCount === 0) {
@@ -326,13 +355,6 @@ const HAIRLINE = '#ECEEF2';
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: GROUND},
-  centre: {
-    flex: 1,
-    backgroundColor: GROUND,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-  },
   /** No bottom padding: the pinned footers below are not scrolled past. */
   scroll: {paddingTop: 8},
 
@@ -516,6 +538,11 @@ const styles = StyleSheet.create({
     fontSize: 16.5,
     fontWeight: '700',
   },
+
+  skThumb: {width: 84, height: 84, borderRadius: 8},
+  skTitle: {height: 15, width: '90%', borderRadius: 4, marginTop: 2},
+  skTitleShort: {height: 15, width: '55%', borderRadius: 4, marginTop: 6},
+  skPrice: {height: 15, width: '30%', borderRadius: 4, marginTop: 12},
 });
 
 export default CartScreen;

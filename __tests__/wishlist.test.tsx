@@ -311,8 +311,9 @@ describe('adding to the bag from the wishlist', () => {
 describe('the wishlist screen', () => {
   it('waits rather than claiming nothing is saved', () => {
     // Swym renders client-side, so null is a real state and it is not "empty".
+    // It waits behind a skeleton grid, not a spinner.
     const tree = render(screen({items: null}));
-    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
     expect(textOf(tree)).not.toContain('No items');
   });
 

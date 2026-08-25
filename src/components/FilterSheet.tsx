@@ -20,6 +20,7 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Modal,
   Pressable,
   ScrollView,
@@ -31,6 +32,41 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import {CloseIcon} from './glyphs';
 import type {Facets} from '../listing/facets';
+import {Block, usePulse} from './Skeleton';
+
+/** One facet group's shape: a heading, then a row of chip-sized blocks. */
+const FacetGroupSkeleton = ({
+  pulse,
+  chipCount,
+}: {
+  pulse: Animated.Value;
+  chipCount: number;
+}) => (
+  <View style={styles.group}>
+    <Block pulse={pulse} style={styles.skGroupTitle} />
+    <View style={styles.chips}>
+      {Array.from({length: chipCount}, (_, i) => (
+        <Block key={i} pulse={pulse} style={styles.skChip} />
+      ))}
+    </View>
+  </View>
+);
+
+/**
+ * Shown before the site has answered which facets this listing even
+ * publishes. Not the same nothing as a listing with no filters at all --
+ * see the comment at the call site -- so this is a wait, not an empty state.
+ */
+const FiltersSkeleton = () => {
+  const pulse = usePulse(true);
+  return (
+    <View style={styles.body}>
+      <FacetGroupSkeleton pulse={pulse} chipCount={4} />
+      <FacetGroupSkeleton pulse={pulse} chipCount={6} />
+      <FacetGroupSkeleton pulse={pulse} chipCount={3} />
+    </View>
+  );
+};
 
 interface Props {
   visible: boolean;
@@ -78,21 +114,21 @@ const FilterSheet = ({visible, facets, busy, onToggle, onClose}: Props) => {
         </View>
 
         {facets.groups.length === 0 ? (
-          <View style={styles.centre}>
-            {/*
-              Two different nothings, and telling them apart is the point of
-              `ready`. Before the site has answered this is a WAIT -- on a
-              collection page SearchTap fetches its facets only when something
-              asks, so an empty first frame is normal. Once it has answered and
-              there is still nothing, this listing genuinely publishes no
-              filters, and a spinner would be a lie that never resolves.
-            */}
-            {facets.ready ? (
+          /*
+            Two different nothings, and telling them apart is the point of
+            `ready`. Before the site has answered this is a WAIT -- on a
+            collection page SearchTap fetches its facets only when something
+            asks, so an empty first frame is normal. Once it has answered and
+            there is still nothing, this listing genuinely publishes no
+            filters, and a placeholder would be a lie that never resolves.
+          */
+          facets.ready ? (
+            <View style={styles.centre}>
               <Text style={styles.none}>No filters for this listing</Text>
-            ) : (
-              <ActivityIndicator color={COLORS.navy} />
-            )}
-          </View>
+            </View>
+          ) : (
+            <FiltersSkeleton />
+          )
         ) : (
           <ScrollView contentContainerStyle={styles.body}>
             {facets.groups.map((group, index) => (
@@ -205,6 +241,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.white,
   },
+
+  skGroupTitle: {height: 14.5, width: '34%', borderRadius: 4, marginBottom: 10},
+  skChip: {height: 30, width: 74, borderRadius: 5},
 });
 
 export default FilterSheet;

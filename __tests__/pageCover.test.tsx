@@ -90,10 +90,12 @@ describe('the page cover', () => {
   });
 
   it('covers the layer from the first frame', () => {
-    // Opaque immediately, or the half-drawn page shows through the gap.
+    // Opaque immediately, or the half-drawn page shows through the gap. The
+    // placeholder shapes are already in the tree at this point too, just at
+    // zero opacity until their own delay -- see 'holds the shapes back...'.
     const tree = render();
-    const cover = tree.root.findAllByType(ActivityIndicator);
-    expect(cover).toHaveLength(1);
+    expect(opacityOf(tree)).toBe(1);
+    expect(blockCount(tree)).toBeGreaterThan(0);
   });
 
   it('is fully opaque at once when there is nothing behind it', () => {
@@ -128,16 +130,16 @@ describe('the page cover', () => {
     expect(root.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('holds the spinner back, so a fast page does not flash one', () => {
+  it('holds the shapes back, so a fast page does not flash them', () => {
     // A warmed page is often ready inside a couple of hundred milliseconds, and
-    // a spinner that appears and vanishes reads as a stutter.
+    // a placeholder that appears and vanishes reads as a stutter.
     const tree = render();
-    // Nothing scheduled would mean the spinner is shown at once.
+    // Nothing scheduled would mean the shapes are revealed at once.
     expect(jest.getTimerCount()).toBeGreaterThan(0);
     ReactTestRenderer.act(() => {
       jest.advanceTimersByTime(1000);
     });
-    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
+    expect(blockCount(tree)).toBeGreaterThan(0);
   });
 
   it('fades out over the arriving page rather than being cut away', () => {
@@ -289,12 +291,14 @@ describe('the shape it holds while it waits', () => {
     return tree;
   };
 
-  it('stays a bare ground and one spinner where the layout is unknown', () => {
-    // A breed page, a content page, checkout. Claiming a shape for these would
-    // be inventing one.
+  it('draws generic lines, never a spinner, where the layout is unknown', () => {
+    // A breed page, a content page, checkout. Claiming a specific shape --
+    // a grid, a gallery -- for these would be inventing one, but a spinner
+    // is the one shape this app must never fall back to: it reads as a
+    // website's own loading indicator.
     const tree = settled('plain');
-    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
-    expect(blockCount(tree)).toBe(0);
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+    expect(blockCount(tree)).toBeGreaterThan(0);
   });
 
   it('promises a grid on a listing, and no spinner beside it', () => {
@@ -386,9 +390,9 @@ describe('the screen owns the deadline', () => {
     // one-off per layer, so every page after the first was the website
     // assembling itself in full view.
     const s = src();
-    // The layer's own handler, not the dashboard's -- the dashboard has its
-    // own separate cover, released by its own signal, not this one.
-    const at = s.indexOf('setLoadingTarget(layer.key);');
+    // The layer's own onLoadStart, not the dashboard's -- the dashboard has
+    // its own separate cover, released by its own signal, not this one.
+    const at = s.indexOf('onLoadStart={e => {');
     expect(at).toBeGreaterThan(-1);
     expect(s.slice(at, at + 1800)).toContain('unmarkPainted(layer.key)');
   });
@@ -410,9 +414,9 @@ describe('the screen owns the deadline', () => {
     expect(handler).toContain('committedUrls.current.get(layer.key)');
     expect(handler).toContain('!sameDocument(committed, url)');
     // And a url that is not a document at all is not a load to report: the
-    // guard comes before the progress bar is even turned on.
+    // guard comes before the header is even re-injected for it.
     expect(handler.indexOf('isDocumentUrl(url)')).toBeLessThan(
-      handler.indexOf('setLoadingTarget(layer.key)'),
+      handler.indexOf('injectInto(layer.key, EARLY_HEADER_CSS)'),
     );
   });
 

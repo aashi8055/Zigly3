@@ -161,7 +161,7 @@ src/
 │                               WishlistScreen, AccountScreen, OrdersScreen,
 │                               AddressScreen, AddressFormScreen, SelectSheet,
 │                               SortFilterBar, SortSheet, FilterSheet,
-│                               EmptyState, LoadingBar, NetworkErrorScreen,
+│                               EmptyState, Skeleton, PageCover, NetworkErrorScreen,
 │                               glyphs
 └── screens/                    SplashScreen, ZiglyWebViewScreen
 ```
@@ -183,9 +183,13 @@ reference app carries its offer strip above the header on the collection list
 and the product grid alike. Only the search screen stands the strip down, being
 keyboard-first. The header is the way back from all of them.
 
-There is no floating progress spinner — that used to sit in the top-right corner
-over whatever the page itself puts there. Progress is `LoadingBar`, a hairline
-under the header, drawn only for the view the user is actually looking at.
+There is no floating progress spinner and no progress bar either — a spinner
+used to sit in the top-right corner over whatever the page itself puts there,
+and the hairline `LoadingBar` that replaced it was later dropped too, because
+a progress bar under the header is exactly the kind of chrome that reads as a
+website rather than an app. Every load that used to need one is now held
+behind `PageCover`, a placeholder shaped like the destination (`Skeleton`),
+until the real page has something to show.
 
 ## The inner-page stack
 

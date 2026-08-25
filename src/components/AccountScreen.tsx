@@ -30,7 +30,6 @@
  */
 import React from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -47,6 +46,7 @@ import {
   PersonIcon,
   PinIcon,
 } from './glyphs';
+import { Block, ListRowSkeleton, usePulse } from './Skeleton';
 
 export type AccountRow =
   | 'orders'
@@ -99,6 +99,37 @@ const ROWS: {
   },
 ];
 
+/**
+ * Shown while the read is still out. Showing the rows over an empty profile
+ * would be showing an account screen to somebody the app cannot yet confirm
+ * is signed in -- and if the answer is "no", this screen is about to become
+ * the login screen instead. The shape below is the profile block and the
+ * four rows this screen actually draws once the read answers.
+ */
+const AccountSkeleton = () => {
+  const pulse = usePulse(true);
+  return (
+    <View style={styles.root}>
+      <View style={styles.profile}>
+        <Block pulse={pulse} style={styles.skAvatar} />
+        <View style={styles.who}>
+          <Block pulse={pulse} style={styles.skName} />
+          <Block pulse={pulse} style={styles.skContact} />
+        </View>
+      </View>
+      <View style={styles.rows}>
+        {ROWS.map((row, index) => (
+          <ListRowSkeleton
+            key={row.key}
+            pulse={pulse}
+            style={[styles.row, index > 0 && styles.rowDivided]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+};
+
 const AccountScreen = ({
   customer,
   onOpenRow,
@@ -108,15 +139,7 @@ const AccountScreen = ({
   notice,
 }: Props) => {
   if (customer === null) {
-    // The read is still out. Showing the rows over an empty profile would be
-    // showing an account screen to somebody the app cannot yet confirm is
-    // signed in -- and if the answer is "no", this screen is about to become
-    // the login screen instead.
-    return (
-      <View style={styles.centre}>
-        <ActivityIndicator color={COLORS.navy} />
-      </View>
-    );
+    return <AccountSkeleton />;
   }
 
   return (
@@ -221,13 +244,11 @@ const AccountScreen = ({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.ground },
-  centre: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.ground,
-  },
   scroll: { paddingBottom: 24 },
+
+  skAvatar: { width: 74, height: 74, borderRadius: 37 },
+  skName: { height: 19, width: '46%', borderRadius: 5, marginBottom: 6 },
+  skContact: { height: 13, width: '64%', borderRadius: 4 },
 
   profile: {
     flexDirection: 'row',

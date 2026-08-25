@@ -153,6 +153,11 @@ export const styles = StyleSheet.create({
   bannerGap: {marginBottom: 16},
   stripGap: {marginBottom: 22},
   railTitleGap: {marginBottom: 14},
+
+  /* A native list row: account, orders, addresses, search suggestions. */
+  listRow: {flexDirection: 'row', alignItems: 'center', gap: 16},
+  listLead: {width: 24, height: 24, borderRadius: 6},
+  listRowText: {flex: 1, minWidth: 0, gap: 7},
 });
 
 /** One card in a sideways rail: narrower than a grid card, and never wrapped. */
@@ -160,6 +165,35 @@ export const RailCardSkeleton = ({pulse}: {pulse: Animated.Value}) => (
   <View style={styles.railCard}>
     <Block pulse={pulse} style={styles.railImage} />
     <Block pulse={pulse} style={styles.lineWide} />
+  </View>
+);
+
+/**
+ * One row of a native list screen: an optional leading shape, then two lines
+ * of text. This is the one row shape shared by every native list this app
+ * draws while its data is still out — account, orders, addresses, search
+ * suggestions — because all of them are, at bottom, an icon or a thumbnail
+ * next to a couple of lines of type. Passing `leading={null}` drops the
+ * leading shape for a list with none (an order card, an address card); any
+ * other `leading` style stands in for that row's own icon or thumbnail size.
+ */
+export const ListRowSkeleton = ({
+  pulse,
+  leading,
+  style,
+}: {
+  pulse: Animated.Value;
+  leading?: object | null;
+  style?: object;
+}) => (
+  <View style={[styles.listRow, style]}>
+    {leading !== null ? (
+      <Block pulse={pulse} style={leading ?? styles.listLead} />
+    ) : null}
+    <View style={styles.listRowText}>
+      <Block pulse={pulse} style={styles.lineWide} />
+      <Block pulse={pulse} style={styles.lineNarrow} />
+    </View>
   </View>
 );
 

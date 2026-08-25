@@ -122,10 +122,13 @@ describe('the dashboard placeholder', () => {
     expect(wide).toHaveLength(1);
   });
 
-  it('still draws a spinner for a destination with no shape to claim', () => {
-    expect(
-      render({variant: 'plain'}).root.findAllByType(ActivityIndicator),
-    ).toHaveLength(1);
+  it('still draws generic lines, never a spinner, for a destination with no shape to claim', () => {
+    // A spinner reads as a website's own loading indicator, so 'plain' gets a
+    // paragraph of generic lines instead -- a placeholder that promises
+    // nothing specific, but is still a placeholder rather than a spinner.
+    const tree = render({variant: 'plain'});
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+    expect(shapes(tree).length).toBeGreaterThan(0);
   });
 });
 
