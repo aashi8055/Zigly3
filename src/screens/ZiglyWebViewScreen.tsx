@@ -2338,8 +2338,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // Dashboard and shopping pages carry the search band; breed and content
         // pages show only the back arrow and the logo.
         // The search screen brings its own field, so the band stands down.
+        // A product's own page drops it too: ProductActionBar already takes
+        // the screen's bottom slot, and the reference app's product page
+        // shows no search band either.
         showSearch={
           (headerUrl === null || onShopPage) &&
+          !onProductPage &&
           !showCart &&
           !searchOpen &&
           !wishlistOpen &&

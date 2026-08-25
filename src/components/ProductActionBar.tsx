@@ -48,15 +48,18 @@ const ProductActionBar = ({onAddToBag, onBuyNow}: Props) => (
 
 const styles = StyleSheet.create({
   root: {
+    flexDirection: 'row',
     backgroundColor: COLORS.white,
     borderTopWidth: 1,
     borderTopColor: '#E8EDF4',
     paddingHorizontal: 14,
     paddingTop: 10,
     paddingBottom: 10,
-    gap: 8,
+    gap: 10,
   },
   button: {
+    flex: 1,
+    minWidth: 0,
     minHeight: 48,
     borderRadius: 10,
     alignItems: 'center',

@@ -480,16 +480,22 @@ body.zigly-listing .card-variant-wrapper {
    UPDATE, native Add to Bag / Buy Now: the app now draws its own sticky bar
    below the WebView (see ../components/ProductActionBar) and presses these
    same buttons from outside the page (../webview/productActions), so the
-   in-flow one is hidden too. Only the button, not
-   .product__buy-buttons-container itself: the theme's own validation message
-   for that form -- no size chosen, out of stock -- renders as a sibling of the
-   button inside that container, and hiding the container would hide that
-   message along with it.
+   in-flow ones are hidden too -- both the Add to Bag button and, separately,
+   the in-flow Buy Now / dynamic checkout button
+   (.shopify-payment-button, Shopify's own dynamic checkout widget, which
+   sits in .product__buy-buttons-container beside the form rather than inside
+   it). Only these two controls, not .product__buy-buttons-container itself:
+   the theme's own validation message for the form -- no size chosen, out of
+   stock -- renders as a sibling of the Add to Bag button inside that
+   container, and hiding the container would hide that message along with it.
    ------------------------------------------------------------------ */
 body.zigly-product .sticky-bar-container {
   display: none !important;
 }
 body.zigly-product .product__buy-buttons-container .product-form__submit {
+  display: none !important;
+}
+body.zigly-product .product__buy-buttons-container .shopify-payment-button {
   display: none !important;
 }
 /* relative, for the reason spelled out on the Hot Picks rule above: static

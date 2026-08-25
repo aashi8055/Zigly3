@@ -19,8 +19,19 @@
  * literal early and silently drop everything after it.
  */
 
-/** How long to wait before re-reading the cart to confirm an add landed. */
-const VERIFY_DELAY_MS = 500;
+/**
+ * How long to wait before the first re-read of the cart, and then between
+ * each retry if that one has not shown the add yet.
+ *
+ * The tap must never wait on a network round trip -- see below -- but a
+ * single check shortly after it does not give the theme's own /cart/add.js
+ * request time to land on a slow connection, and the customer would see a
+ * "couldn't add" toast moments before the site's own drawer opens and proves
+ * it worked. Retrying, rather than lengthening one delay, keeps the common
+ * case (a fast network) reporting success quickly while still giving a slow
+ * one room before this gives up.
+ */
+const VERIFY_DELAYS_MS = [500, 1000, 1800, 3000];
 
 export const PRODUCT_ADD_TO_BAG_SCRIPT = `
 (function () {
@@ -56,19 +67,39 @@ export const PRODUCT_ADD_TO_BAG_SCRIPT = `
     return;
   }
 
-  readCount(function (before) {
-    btn.click();
-    setTimeout(function () {
-      readCount(function (after) {
-        if (after !== null && (before === null || after > before)) {
-          send({tag: 'cart-added'});
-          send({tag: 'cart-count', n: after});
-        } else {
-          send({tag: 'product-action-unavailable', action: 'add'});
-        }
-      });
-    }, ${VERIFY_DELAY_MS});
+  // The tap itself never waits on a fetch: clicking synchronously, before
+  // asking Shopify anything, is what makes this feel as fast as the site's
+  // own button. The baseline count is read in parallel, after the click, only
+  // to tell a real add apart from one already in progress when the bar was
+  // pressed.
+  var before = null;
+  var haveBefore = false;
+  readCount(function (n) {
+    before = n;
+    haveBefore = true;
   });
+  btn.click();
+
+  var delays = ${JSON.stringify(VERIFY_DELAYS_MS)};
+  var attempt = 0;
+
+  function check() {
+    readCount(function (after) {
+      var baseline = haveBefore ? before : null;
+      if (after !== null && (baseline === null || after > baseline)) {
+        send({tag: 'cart-added'});
+        send({tag: 'cart-count', n: after});
+        return;
+      }
+      attempt++;
+      if (attempt < delays.length) {
+        setTimeout(check, delays[attempt]);
+      } else {
+        send({tag: 'product-action-unavailable', action: 'add'});
+      }
+    });
+  }
+  setTimeout(check, delays[0]);
 })();
 true;
 `;
