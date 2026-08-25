@@ -24,7 +24,7 @@
  */
 const HOT_SOURCE = '/collections/hot-picks-squeaker-toys';
 const NEW_SOURCE = '/collections/hot-deals';
-const CARDS_PER_TAB = 12;
+const CARDS_PER_TAB = 15;
 
 export const HOT_PICKS_SCRIPT = `
 (function () {
