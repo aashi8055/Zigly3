@@ -135,7 +135,7 @@ export const MARKETING_CONSENT = {hide: true, uncheck: false};
  * Hidden, never removed, and never filled in: an app that invents an email
  * address for a customer is worse than one that asks for theirs.
  */
-export const SIGNUP_EMAIL = {hide: true};
+export const SIGNUP_EMAIL = {hide: false};
 
 /** Added to whatever the script hides on the app's own account, not SimplyOTP's. */
 export const HIDDEN_FIELD_CLASS = 'zigly-hidden-field';
@@ -515,7 +515,15 @@ html.zigly-otp .sotp-widget input[type="email"] {
   font-size: 17px !important;
   color: #1B1B1B !important;
 }
+html.zigly-otp .login-box input[type="email"],
+html.zigly-otp .login-box input[name="email"] {
+  display: none !important;
+}
 
+html.zigly-otp .login-box .input-label.email,
+html.zigly-otp .login-box .error-email-message {
+  display: none !important;
+}
 /* The country list, which is a dropdown over the row rather than a modal. */
 html.zigly-otp .country-selector-list {
   top: auto !important;
@@ -748,7 +756,9 @@ html.zigly-otp .lastname-wrapper {
   flex: 1 1 0 !important;
   min-width: 0 !important;
 }
-
+html.zigly-otp .verify-box .login-inputBox {
+  display: none !important;
+}
 /* Labels, on this step only. "First Name" and "Last Name" are already the
    widget's own strings; "Email Id" and "Phone Number" come from LOGIN_LABELS. */
 html.zigly-otp .update-user-box .input-label:not(.hideBox) {
@@ -1105,12 +1115,48 @@ export const LOGIN_RESTYLE = `
       extras[i].classList.add(HIDDEN);
     }
   }
+    function hideLoginEmail() {
+  var box = document.querySelector('.login-box');
+  if (!box) { return; }
+
+  var input = box.querySelector(
+    'input[type="email"], input[name="email"]'
+  );
+
+  if (input) {
+    var target = input;
+    var parent = target.parentNode;
+
+    while (
+      parent &&
+      parent !== box &&
+      parent.nodeType === 1 &&
+      !holdsOther(parent, input)
+    ) {
+      target = parent;
+      parent = target.parentNode;
+    }
+
+    if (target.classList) {
+      target.classList.add(HIDDEN);
+    }
+  }
+
+  var extras = box.querySelectorAll(
+    '.input-label.email, .error-email-message'
+  );
+
+  for (var i = 0; i < extras.length; i++) {
+    extras[i].classList.add(HIDDEN);
+  }
+}
 
   /** Everything that has to be re-applied when the widget rebuilds a step. */
   function sync() {
     relabel();
     uncheckMarketing();
     hideSignupEmail();
+    hideLoginEmail();
     syncOtpReady();
     syncFieldErrors();
   }
