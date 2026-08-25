@@ -903,8 +903,8 @@ body.zigly-listing .st-main-content-wrap {
       reason the width does not go lower -- "Labrador Retriever" needs room to
       wrap to two lines without hyphenating. */
 [id^="zigly-breed-"] .swiper-slide {
-  flex: 0 0 24% !important;
-  max-width: 24% !important;
+ flex: 0 0 calc((100% - 52px) / 3) !important;
+max-width: calc((100% - 52px) / 3) !important;
 }
 [id^="zigly-breed-"] .home-category-list-image-wrapper,
 [id^="zigly-breed-"] .category-list-image {
