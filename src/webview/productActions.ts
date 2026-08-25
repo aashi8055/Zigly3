@@ -104,6 +104,21 @@ export const PRODUCT_ADD_TO_BAG_SCRIPT = `
 true;
 `;
 
+/**
+ * The site's real Buy Now, read off a live product page on 2026-08-26: a
+ * control carrying onclick="shiprocketCheckoutEvents.buyProduct(event)" -- a
+ * Shiprocket checkout app embed, not Shopify's own dynamic checkout button
+ * and not confined to either known buy-box container. Matched on that
+ * attribute for the same reason removeFromWishlistScript matches on
+ * data-product-handle rather than a class: it is the one thing about the
+ * control this app can confirm, and a class guessed instead could match
+ * nothing, or something else, without ever saying so.
+ *
+ * Shopify's own dynamic checkout (.shopify-payment-button__button) is kept as
+ * a fallback in case a variant or a future theme change ever renders that
+ * instead -- cheap to keep, and it is exactly what the CSS beside this file
+ * hides as a fallback too.
+ */
 export const PRODUCT_BUY_NOW_SCRIPT = `
 (function () {
   function send(payload) {
@@ -112,6 +127,16 @@ export const PRODUCT_BUY_NOW_SCRIPT = `
         window.ReactNativeWebView.postMessage(JSON.stringify(payload));
       }
     } catch (e) {}
+  }
+
+  function findShiprocketButton() {
+    var scopes = ['.product__buy-buttons-container', '.sticky-bar-container'];
+    for (var i = 0; i < scopes.length; i++) {
+      var root = document.querySelector(scopes[i]);
+      var btn = root ? root.querySelector('[onclick*="shiprocketCheckoutEvents"]') : null;
+      if (btn) { return btn; }
+    }
+    return document.querySelector('[onclick*="shiprocketCheckoutEvents"]');
   }
 
   function enabledPaymentButton(root) {
@@ -123,14 +148,17 @@ export const PRODUCT_BUY_NOW_SCRIPT = `
     return null;
   }
 
-  function findButton() {
+  function findFallbackButton() {
     var scoped = enabledPaymentButton(document.querySelector('.sticky-bar-container')) ||
       enabledPaymentButton(document.querySelector('.product__buy-buttons-container'));
     if (scoped) { return scoped; }
     return enabledPaymentButton(document);
   }
 
-  var btn = findButton();
+  // Click synchronously, the instant this runs -- nothing here waits on a
+  // fetch or a cart read first, so the tap reaches Shiprocket's own handler
+  // exactly as fast as tapping their button on the page would.
+  var btn = findShiprocketButton() || findFallbackButton();
   if (btn) {
     btn.click();
   } else {
