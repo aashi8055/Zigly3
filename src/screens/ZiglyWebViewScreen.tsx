@@ -1552,7 +1552,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       armSendWatchdog(
         'No answer from Zigly. Check your connection and try again.',
       );
-      injectInto('login', driveSendOtp(country.dial, phone));
+      injectInto('login', driveSendOtp(country.dial, phone, country.iso2));
     },
     [armSendWatchdog, injectInto],
   );

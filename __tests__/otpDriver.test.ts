@@ -32,7 +32,7 @@ import {
 /** Every payload this module can inject, named for the failure messages. */
 const PAYLOADS: [string, string][] = [
   ['OTP_DRIVER', OTP_DRIVER],
-  ['driveSendOtp', driveSendOtp('91', '9004976917')],
+  ['driveSendOtp', driveSendOtp('91', '9004976917', 'IN')],
   ['driveSubmitOtp', driveSubmitOtp('123456')],
   ['driveResend', driveResend()],
   ['driveEditPhone', driveEditPhone()],
@@ -81,18 +81,43 @@ describe('it drives -- which is the whole point of this file', () => {
   it('presses the widget’s own buttons', () => {
     // The opposite of loginRestyle's invariant, stated so the difference
     // between the two files cannot be mistaken for an oversight in one of them.
-    expect(driveSendOtp('91', '9004976917')).toContain('button.click()');
+    expect(driveSendOtp('91', '9004976917', 'IN')).toContain('button.click()');
     expect(driveSubmitOtp('123456')).toContain('button.click()');
     expect(driveResend()).toContain('button.click()');
     expect(driveEditPhone()).toContain('link.click()');
   });
 
   it('names the real controls rather than rebuilding them', () => {
-    expect(driveSendOtp('91', '1')).toContain(".querySelector('.send-btn')");
+    expect(driveSendOtp('91', '1', 'IN')).toContain(".querySelector('.send-btn')");
     expect(driveSubmitOtp('1')).toContain(".querySelector('.verify-btn')");
     expect(driveSubmitOtp('1')).toContain(".querySelectorAll('.otp-input-box')");
     expect(driveResend()).toContain(".querySelector('.resend-btn')");
     expect(driveEditPhone()).toContain(".querySelector('.edit-phone')");
+  });
+
+  it('writes the number into the field the widget actually reads', () => {
+    // The widget renders three '.user-name-input' boxes -- mobile, WhatsApp and
+    // email -- and reads only '.input-box-content.active .user-name-input',
+    // then sends getDialCode() + parseInt(thatValue). Writing into any other
+    // one means it reads an empty box, parseInt('') is NaN, it sends '91NaN',
+    // and its own validator calls a good number invalid.
+    expect(driveSendOtp('91', '9004976917', 'IN')).toContain(
+      '.input-box-content.active .user-name-input',
+    );
+  });
+
+  it('tries the phone selectors in order rather than in document order', () => {
+    // querySelector with a comma list returns the first match in the DOM, not
+    // the first selector that matched -- which silently defeats a preference
+    // list. This is the bug that made a valid Indian number fail, so the
+    // ordering is asserted rather than assumed.
+    expect(OTP_DRIVER).toContain('ZO.pick');
+    expect(driveSendOtp('91', '1', 'IN')).toContain('ZO.pick(box,');
+    const order = driveSendOtp('91', '1', 'IN');
+    const active = order.indexOf('.input-box-content.active .user-name-input');
+    const fallback = order.indexOf('input.olInput');
+    expect(active).toBeGreaterThan(-1);
+    expect(fallback).toBeGreaterThan(active);
   });
 
   it('dispatches the events a real edit would, not just a value', () => {
@@ -129,20 +154,33 @@ describe('what it must never do', () => {
     });
   });
 
-  it('sends only once the widget’s own dial code matches', () => {
-    const script = driveSendOtp('44', '7700900000');
+  it('sends only once the widget’s own country matches', () => {
+    const script = driveSendOtp('44', '7700900000', 'GB');
     // The confirmation is read off the widget, not inferred from the click:
     // an OTP charged to the wrong country is worse than a visible failure.
-    expect(script).toContain('function onDial()');
-    expect(script).toContain("'.dial-code, .selected-country'");
-    expect(script).toContain('return onDial() && send()');
+    expect(script).toContain('function onCountry()');
+    expect(script).toContain('return onCountry() && send()');
     // And when it cannot be confirmed, it says so instead of sending anyway.
     expect(script).toContain("ZO.fail('phone', 'country did not change')");
   });
 
-  it('matches a dial code exactly, so +1 cannot select +1268', () => {
-    const script = driveSendOtp('1', '2025550123');
-    expect(script).toContain('ZO.digits(ZO.text(all[i])) !== want');
+  it('confirms the country the way the widget itself resolves it', () => {
+    // getDialCode reads data-selected-country off the widget root. It does NOT
+    // read '.dial-code' text -- that class is on the ~240 <li> rows only, and
+    // the closed cell shows a flag with no text at all. A document-wide query
+    // for it therefore returns the FIRST row in the list, Afghanistan, so the
+    // check could never pass and every send died as 'country did not change'.
+    const script = driveSendOtp('91', '9004976917', 'IN');
+    expect(script).toContain('data-selected-country');
+    expect(script).not.toContain("'.dial-code, .selected-country'");
+  });
+
+  it('matches the row by ISO code, so +1 cannot select +1268', () => {
+    // The row carries its own data-country-code, which is exact by
+    // construction -- no digit parsing, and no way to confuse two +1 countries.
+    const script = driveSendOtp('1', '2025550123', 'US');
+    expect(script).toContain("rows[i].getAttribute('data-country-code')");
+    expect(script).toContain('=== ISO');
   });
 
   it('writes no error message of its own', () => {
@@ -172,7 +210,7 @@ describe('what it must never do', () => {
     });
     // And every write is scoped to the step that owns the field, so the signup
     // step's disabled phone field is not reachable from here.
-    expect(driveSendOtp('91', '1')).toContain(".shown('.login-box')");
+    expect(driveSendOtp('91', '1', 'IN')).toContain(".shown('.login-box')");
     expect(driveSubmitOtp('1')).toContain(".shown('.verify-box')");
   });
 
@@ -254,7 +292,7 @@ describe('bounded, so a missing control reports rather than spins', () => {
 
   it('every drive has somewhere to report failure to', () => {
     // A drive that quietly finds nothing is a button that does nothing.
-    expect(driveSendOtp('91', '1')).toContain("ZO.fail('phone'");
+    expect(driveSendOtp('91', '1', 'IN')).toContain("ZO.fail('phone'");
     expect(driveSubmitOtp('1')).toContain("ZO.fail('otp'");
     expect(driveResend()).toContain("ZO.fail('otp'");
     expect(driveEditPhone()).toContain("ZO.fail('otp'");
@@ -263,7 +301,7 @@ describe('bounded, so a missing control reports rather than spins', () => {
   it('quotes what the customer typed rather than splicing it in', () => {
     // The number and the code reach the page as JSON literals, so a stray
     // quote is a string and never syntax.
-    expect(driveSendOtp('91', '900" + x + "')).toContain(
+    expect(driveSendOtp('91', '900" + x + "', 'IN')).toContain(
       JSON.stringify('900" + x + "'),
     );
     expect(driveSubmitOtp("1'2")).toContain(JSON.stringify("1'2"));

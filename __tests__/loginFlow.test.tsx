@@ -668,14 +668,14 @@ describe('the bridge to the widget', () => {
     expect(OTP_DRIVER).toContain('ZO.sent = function (step)');
     expect(OTP_DRIVER).toContain("tag: 'otp-sent'");
     expect(driveResend()).toContain("ZO.sent('otp')");
-    expect(driveSendOtp('91', '9004976917')).toContain("ZO.sent('phone')");
+    expect(driveSendOtp('91', '9004976917', 'IN')).toContain("ZO.sent('phone')");
   });
 
   it('presses the widget’s own controls and calls no provider api', () => {
     // The captcha and the fraud check only run inside the page. Every payload
     // here is a press of a real control, never a request of its own.
     const payloads = [
-      driveSendOtp('91', '9004976917'),
+      driveSendOtp('91', '9004976917', 'IN'),
       driveSubmitOtp('483920'),
       driveResend(),
       driveEditPhone(),
@@ -696,7 +696,7 @@ describe('the bridge to the widget', () => {
     expect(OTP_DRIVER).toContain('ZO.reask = function ()');
     expect(driveSubmitOtp('483920')).toContain('ZO.reask()');
     expect(driveResend()).toContain('ZO.reask()');
-    expect(driveSendOtp('91', '9004976917')).toContain('ZO.reask()');
+    expect(driveSendOtp('91', '9004976917', 'IN')).toContain('ZO.reask()');
   });
 
   it('does not report a submit as a send, which would restart the clock', () => {
@@ -704,7 +704,7 @@ describe('the bridge to the widget', () => {
   });
 
   it('carries the number and the country it was told, and nothing else', () => {
-    const payload = driveSendOtp('44', '7911123456');
+    const payload = driveSendOtp('44', '7911123456', 'GB');
     expect(payload).toContain('"44"');
     expect(payload).toContain('"7911123456"');
     expect(driveSubmitOtp('483920')).toContain('"483920"');
@@ -734,7 +734,7 @@ describe('the bridge to the widget', () => {
   it('uses no backslash, which a template literal would eat', () => {
     const payloads = [
       OTP_DRIVER,
-      driveSendOtp('91', '9004976917'),
+      driveSendOtp('91', '9004976917', 'IN'),
       driveSubmitOtp('483920'),
       driveResend(),
       driveEditPhone(),

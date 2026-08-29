@@ -139,6 +139,31 @@ const PHONE_FIELDS =
   "input.olInput, input[type='tel'], input[name='phone']";
 
 /**
+ * The phone field the widget will actually READ, in preference order.
+ *
+ * The widget renders three of these -- mobile, WhatsApp and email -- all with
+ * the same `.olInput.user-name-input` classes, and reads exactly one of them:
+ *
+ *     updateActiveOption = e =>
+ *       e.querySelector('.input-box-content.active .user-name-input')
+ *
+ * then sends `getDialCode() + parseInt(thatValue)`. So writing into the wrong
+ * one is silent and total: the widget reads an empty box, `parseInt('')` is
+ * NaN, it sends '91NaN', its own validator refuses that, and the customer is
+ * told their perfectly good number is invalid.
+ *
+ * A single querySelector with a comma list cannot express this, because it
+ * returns the first match in DOCUMENT order rather than the first selector that
+ * matched -- which is how the bug arose. Hence a list, tried in order, with the
+ * active box first and the old selectors kept as the fallback for a template
+ * that does not mark one active.
+ */
+const PHONE_FIELD_ORDER = [
+  '.input-box-content.active .user-name-input',
+  PHONE_FIELDS,
+];
+
+/**
  * The shared half of every payload below.
  *
  * Installed once under `window.__ziglyOtp` and re-used, so the repeat
@@ -160,6 +185,24 @@ const DRIVER_CORE = `
     /** The visible element for a selector, or null when the step is hidden. */
     ZO.shown = function (selector) {
       return document.querySelector(selector + ':not(.hideBox)');
+    };
+
+    /**
+     * The first selector in the list that matches, not the first match in the
+     * document.
+     *
+     * querySelector with a comma list answers a different question: it returns
+     * whichever match comes first in the DOM, whatever order the selectors were
+     * written in. Where the selectors are a preference -- "the field the widget
+     * reads, else any phone field" -- that difference is the whole meaning, so
+     * the list is walked here instead.
+     */
+    ZO.pick = function (root, selectors) {
+      for (var i = 0; i < selectors.length; i++) {
+        var found = root.querySelector(selectors[i]);
+        if (found) { return found; }
+      }
+      return null;
     };
 
     /** Which step the widget is on. Same order of tests as the restyle's. */
@@ -379,51 +422,94 @@ true;
  *
  * The country is settled BEFORE the number is written and the button pressed,
  * and the send is abandoned if it cannot be confirmed -- see the note at the top
- * of this file. `dial` is checked against the widget's own `.dial-code`, which
- * is what the widget will actually use, rather than against anything this app
- * believes it selected.
+ * of this file.
+ *
+ * What "confirmed" means here is the ISO code on the widget's own root, because
+ * that is the single thing the widget consults when it builds the number:
+ *
+ *     getDialCode = e => {
+ *       let d = e.getAttribute('data-selected-country') || this.selectedCountry;
+ *       return '+' + e.querySelector(
+ *         '.country-selector-list li[data-country-code="' + d + '"]'
+ *       ).getAttribute('data-dial-code');
+ *     }
+ *
+ * It is emphatically NOT the visible '.dial-code' text. That class exists only
+ * on the ~240 <li> rows in the list -- the closed cell shows a flag and no text
+ * whatsoever -- so a document-wide query for it returns the FIRST row in the
+ * list, Afghanistan, on every store. Checking against that is how this driver
+ * came to refuse every country including the selected one.
  */
-export const driveSendOtp = (dial: string, digits: string): string => `
+export const driveSendOtp = (
+  dial: string,
+  digits: string,
+  iso2: string,
+): string => `
 (function () {
   ${DRIVER_CORE}
 
   var DIAL = ${JSON.stringify(dial)};
   var DIGITS = ${JSON.stringify(digits)};
+  /** Lower case, because that is the case the widget stores and compares in. */
+  var ISO = ${JSON.stringify(iso2)}.toLowerCase();
 
-  /** Whether the widget is already set to the country we want. */
-  function onDial() {
-    var cell = document.querySelector('.dial-code, .selected-country');
-    if (!cell) { return false; }
-    return ZO.digits(ZO.text(cell)) === ZO.digits(DIAL);
+  /**
+   * Whether the widget is already set to the country we want.
+   *
+   * Read from 'data-selected-country' on the widget's own root, which is what
+   * getDialCode consults -- see the note above this function's payload. The
+   * attribute is written by the widget's selectCountry as a lower-case ISO
+   * code, and is present from the moment the box is built.
+   *
+   * The flag element is the fallback: selectCountry stamps the same code onto
+   * '.selected-country .country-flag' as a data attribute, so a template that
+   * moved the root attribute still has somewhere honest to read.
+   */
+  function onCountry() {
+    var root = document.querySelector('[data-selected-country]');
+    if (root) {
+      var said = root.getAttribute('data-selected-country');
+      if (said) { return String(said).toLowerCase() === ISO; }
+    }
+    var flag = document.querySelector('.selected-country .country-flag');
+    if (flag) {
+      var code = flag.getAttribute('data-country-code');
+      if (code) { return String(code).toLowerCase() === ISO; }
+    }
+    return false;
   }
 
   /**
-   * The row for a dialling code in the widget's own open list.
+   * The row for our country in the widget's own open list.
    *
-   * The innermost element whose text carries the code, so the click lands on
-   * the row rather than on the list around it. Which tag the widget uses for a
-   * row is its business, so this asks the DOM instead of assuming one.
+   * Matched on the row's own 'data-country-code', which the widget writes as it
+   * builds each <li>, rather than on the text inside it. That is exact by
+   * construction -- it cannot confuse the United States with Antigua the way a
+   * '+1' text match can, and it needs no digit parsing at all.
+   *
+   * The <li> itself is returned, not a descendant, because the widget binds its
+   * click listener to the row and reads ev.currentTarget -- the element the
+   * listener sits on. Clicking a child still bubbles to it, but returning the
+   * row says plainly which element is meant to be pressed.
    */
   function rowFor(list) {
-    var all = list.querySelectorAll('*');
-    var want = ZO.digits(DIAL);
-    var best = null;
-    for (var i = 0; i < all.length; i++) {
-      // Exact, so '+1' cannot select '+1268'. A row's text is its country name
-      // and its code, and the name carries no digits on this widget.
-      if (ZO.digits(ZO.text(all[i])) !== want) { continue; }
-      // The innermost match, so the click lands on the row and not on the list
-      // wrapping it: if the one held so far contains this one, this is deeper.
-      if (best === null || best.contains(all[i])) { best = all[i]; }
+    var rows = list.querySelectorAll('[data-country-code]');
+    for (var i = 0; i < rows.length; i++) {
+      var code = rows[i].getAttribute('data-country-code');
+      if (code && String(code).toLowerCase() === ISO) {
+        // The row, not the flag <div> inside it that carries the same
+        // attribute: the listener is on the <li>.
+        return rows[i].closest ? (rows[i].closest('li') || rows[i]) : rows[i];
+      }
     }
-    return best;
+    return null;
   }
 
   /** Write the number and press Send. The last thing this function does. */
   function send() {
     var box = ZO.shown('.login-box');
     if (!box) { return false; }
-    var input = box.querySelector(${JSON.stringify(PHONE_FIELDS)});
+    var input = ZO.pick(box, ${JSON.stringify(PHONE_FIELD_ORDER)});
     var button = box.querySelector('.send-btn');
     if (!input || !button) { return false; }
     ZO.write(input, DIGITS);
@@ -453,10 +539,10 @@ export const driveSendOtp = (dial: string, digits: string): string => `
         var row = rowFor(list);
         if (!row) { return false; }
         row.click();
-        // Confirmed against the widget's own dial cell, not against the click:
-        // what matters is the country the widget will actually send to.
+        // Confirmed against the widget's own selected country, not against the
+        // click: what matters is the country the widget will actually send to.
         ZO.until(
-          function () { return onDial() && send(); },
+          function () { return onCountry() && send(); },
           function () { ZO.fail('phone', 'country did not change'); }
         );
         return true;
@@ -466,7 +552,7 @@ export const driveSendOtp = (dial: string, digits: string): string => `
   }
 
   ZO.start();
-  if (onDial()) {
+  if (onCountry()) {
     ZO.until(send, function () { ZO.fail('phone', 'send button not found'); });
   } else {
     pickCountry();

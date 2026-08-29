@@ -138,8 +138,8 @@ describe('every separately injected payload is valid too', () => {
     // The drives, with the arguments the screens really pass. Each is built
     // from a country code, a number or a code, so each is a place a quote
     // could get out.
-    ['driveSendOtp', driveSendOtp('91', '9004976917')],
-    ['driveSendOtp(quotes)', driveSendOtp('1', 'a\'b"c')],
+    ['driveSendOtp', driveSendOtp('91', '9004976917', 'IN')],
+    ['driveSendOtp(quotes)', driveSendOtp('1', 'a\'b"c', 'US')],
     ['driveSubmitOtp', driveSubmitOtp('483920')],
     ['driveResend', driveResend()],
     ['driveEditPhone', driveEditPhone()],

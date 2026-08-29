@@ -4,7 +4,11 @@ buildscript {
         minSdkVersion = 24
         compileSdkVersion = 37
         targetSdkVersion = 36
-        ndkVersion = "27.1.12297006"
+        // 28.2.13676358 is NDK r28c. Was 27.1.12297006, which is not installed
+        // on this machine -- only an aborted .installer husk of it is, and AGP
+        // rejects that with CXX1101 rather than ignoring it. Change back if the
+        // pinned one is properly installed; RN 0.87 supports both.
+        ndkVersion = "28.2.13676358"
         kotlinVersion = "2.2.0"
     }
     repositories {
