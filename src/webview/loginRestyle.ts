@@ -797,21 +797,28 @@ html.zigly-otp .update-user-box input[name="phone"]:disabled {
 }
 
 /* ------------------------------------------------------------------
-   The Email field, which this app does not ask for. See SIGNUP_EMAIL.
+   The class the script hides a whole field row with.
 
-   One class, added by the script to the field's own wrapper, its label and
-   its error message -- not a selector for the field itself, because which
-   element wraps it is SimplyOTP's business and the script can walk the DOM
-   where a stylesheet would have to guess. Hidden, never removed and never
-   filled in: the input is still the widget's own, still empty, still
-   submitted as the widget submits it.
+   One class, added by the script to a field's own wrapper, its label and its
+   error message -- not a selector for the field itself, because which element
+   wraps it is SimplyOTP's business and the script can walk the DOM where a
+   stylesheet would have to guess. Hidden, never removed and never filled in:
+   the input is still the widget's own, still empty, still submitted as the
+   widget submits it.
+
+   UNCONDITIONAL, and that is the fix for a bug this file shipped with. The
+   rule used to be gated on SIGNUP_EMAIL.hide, as if the class existed only for
+   the signup step's Email row. It does not: hideLoginEmail below uses the
+   same class on step 1, where the widget renders an email input this store
+   never asks for. With the flag off, the script went on adding a class that no
+   longer had a rule -- so the input stayed hidden by its own selector and its
+   bordered wrapper did not, which is the empty box that appeared under the
+   number field. A mechanism and a policy are two things; the policy is the
+   flag, and it belongs on the script that applies the class, not on the rule
+   that makes the class mean anything.
    ------------------------------------------------------------------ */
-${
-  SIGNUP_EMAIL.hide
-    ? `html.zigly-otp .${HIDDEN_FIELD_CLASS} {
+html.zigly-otp .${HIDDEN_FIELD_CLASS} {
   display: none !important;
-}`
-    : '/* SIGNUP_EMAIL.hide is false: the Email row shows, labelled by LOGIN_LABELS. */'
 }
 
 /* ------------------------------------------------------------------

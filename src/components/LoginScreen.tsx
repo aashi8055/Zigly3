@@ -32,13 +32,22 @@ import {
   View,
 } from 'react-native';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
-import {DEFAULT_COUNTRY, emojiFlag} from '../account/dialCodes';
+import {
+  DEFAULT_COUNTRY,
+  digitsOnly,
+  emojiFlag,
+  validatePhone,
+} from '../account/dialCodes';
 import type {DialCountry} from '../account/dialCodes';
 import CountryPickerSheet from './CountryPickerSheet';
 import {ChevronDown} from './glyphs';
 
 interface Props {
-  /** Sent the country and the digits, in that order. */
+  /**
+   * Sent the country and the digits, in that order -- and only ever a number
+   * that passed ../account/dialCodes' rules for that country. A caller can
+   * therefore treat this as "send an OTP", not as "consider sending one".
+   */
   onSubmit: (country: DialCountry, phone: string) => void;
   /**
    * What to open on -- so returning from the OTP screen finds the number that
@@ -46,8 +55,24 @@ interface Props {
    */
   initialCountry?: DialCountry;
   initialPhone?: string;
-  /** Shown under the row. Null draws nothing at all. */
+  /**
+   * Shown under the row. Null draws nothing at all.
+   *
+   * This is the *provider's* verdict, forwarded by the caller. What the field
+   * itself refuses is decided here; see `press` below for why the two are kept
+   * apart.
+   */
   error?: string | null;
+  /**
+   * A send is out and has not been answered yet.
+   *
+   * Presses are ignored while it is true, which is the whole of its job: the
+   * widget behind this screen charges for an SMS, and a second tap during the
+   * second it takes to hear back sends a second one. Drawn as the press state
+   * and nothing more -- the reference screen has no spinner on it, and adding
+   * one would be inventing UI the brief does not ask for.
+   */
+  busy?: boolean;
 }
 
 const LoginScreen = ({
@@ -55,10 +80,54 @@ const LoginScreen = ({
   initialCountry = DEFAULT_COUNTRY,
   initialPhone = '',
   error = null,
+  busy = false,
 }: Props) => {
   const [country, setCountry] = useState<DialCountry>(initialCountry);
   const [phone, setPhone] = useState(initialPhone);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * What this screen itself refused, as opposed to what the provider refused.
+   *
+   * Two sources, one line of red under the row. Kept apart because they expire
+   * differently: a local complaint is answered by the next keystroke, and a
+   * provider's is not this screen's to withdraw.
+   */
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  /**
+   * Receive OTP.
+   *
+   * Validated here rather than by the caller, because this is where the country
+   * and the number are: a caller that had to be handed both in order to check
+   * them would be a caller that could also be handed an unchecked pair, and the
+   * cost of that is an SMS to a number that cannot receive one.
+   */
+  const press = () => {
+    if (busy) {
+      return;
+    }
+    const said = validatePhone(country, phone);
+    setLocalError(said);
+    if (said !== null) {
+      return;
+    }
+    // Digits only: what the customer typed may carry the spaces a keypad
+    // offers, and the widget behind this screen wants the bare number.
+    onSubmit(country, digitsOnly(phone));
+  };
+
+  /**
+   * Changing the country re-judges the number against the new country's rules
+   * rather than leaving a complaint that was about the old one's. The number
+   * itself is kept -- a customer correcting the country has not changed their
+   * mind about their number.
+   */
+  const chooseCountry = (next: DialCountry) => {
+    setCountry(next);
+    setLocalError(null);
+  };
+
+  const shown = localError ?? error;
 
   return (
     <View style={styles.root}>
@@ -88,22 +157,34 @@ const LoginScreen = ({
 
         <TextInput
           value={phone}
-          onChangeText={setPhone}
+          onChangeText={value => {
+            setPhone(value);
+            // The complaint was about what was there a keystroke ago.
+            setLocalError(null);
+          }}
           keyboardType="phone-pad"
           autoComplete="tel"
+          // The keyboard's own Done sends, so the customer never has to put it
+          // away to reach a button it is sitting on.
+          returnKeyType="done"
+          onSubmitEditing={press}
           accessibilityLabel="Mobile number"
           // No placeholder: the reference field is empty but for the caret.
           style={styles.input}
         />
       </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {shown ? <Text style={styles.error}>{shown}</Text> : null}
 
       <Pressable
-        onPress={() => onSubmit(country, phone)}
+        onPress={press}
         accessibilityRole="button"
         accessibilityLabel="Receive OTP"
-        style={({pressed}) => [styles.button, pressed && styles.pressed]}
+        accessibilityState={{disabled: busy}}
+        style={({pressed}) => [
+          styles.button,
+          (pressed || busy) && styles.pressed,
+        ]}
       >
         <Text style={styles.buttonText}>Receive OTP</Text>
       </Pressable>
@@ -113,7 +194,7 @@ const LoginScreen = ({
       <CountryPickerSheet
         visible={pickerOpen}
         selected={country}
-        onSelect={setCountry}
+        onSelect={chooseCountry}
         onClose={() => setPickerOpen(false)}
       />
     </View>

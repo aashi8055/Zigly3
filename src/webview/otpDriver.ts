@@ -72,6 +72,46 @@ export const readPhase = (value: unknown): LoginPhase => {
 };
 
 /**
+ * Which drive an `otp-error` came from. Mirrors the `step` on the message.
+ */
+export type OtpStep = 'phone' | 'otp';
+
+/**
+ * What the login screens show for a failed drive.
+ *
+ * The rule this file is built on is that SimplyOTP's own words win: whenever
+ * `message` carries something, that is what the customer reads, verbatim, and
+ * nothing here paraphrases it. `why` is the other case -- the drive never got
+ * as far as the provider, because a control it needed was not in the page -- and
+ * the customer still has to be told something rather than left looking at a
+ * button that did nothing.
+ *
+ * So the strings below describe *what the app observed*, never what the
+ * provider decided. "Resend is not available yet" is the widget's own countdown
+ * still running, which is a fact about the page; the rest say only that the app
+ * could not complete the step, because that is all it knows.
+ */
+export const otpErrorText = (
+  step: OtpStep,
+  message: string,
+  why: string,
+): string => {
+  const said = message.trim();
+  if (said) {
+    return said;
+  }
+  if (why === 'resend not available yet') {
+    return 'Resend is not available yet. Please wait a moment.';
+  }
+  if (why === 'country not found in the list' || why === 'country did not change') {
+    return 'That country is not available for OTP login.';
+  }
+  return step === 'phone'
+    ? 'Could not send the code. Please try again.'
+    : 'Could not check the code. Please try again.';
+};
+
+/**
  * How long a drive keeps looking for the control it needs.
  *
  * The widget rebuilds a step after its own validation and renders the country
@@ -196,6 +236,42 @@ const DRIVER_CORE = `
     /** Say why a drive could not finish. The native screen shows this. */
     ZO.fail = function (step, why) {
       ZO.post({tag: 'otp-error', step: step, message: '', why: why});
+    };
+
+    /**
+     * Say that the widget's own button was found and pressed.
+     *
+     * NOT "an SMS arrived" -- nothing in this page can know that, and this file
+     * does not invent knowledge it lacks. It is the difference between a press
+     * the widget accepted and a control that was never there, which is the only
+     * distinction the native screens actually need:
+     *
+     *   - the phone step waits for the *phase* to move to 'otp' before it
+     *     navigates, because the widget advancing is the closest thing to proof
+     *     the send went out;
+     *   - the OTP step has no phase change to wait for on a resend, so this is
+     *     what restarts its countdown.
+     */
+    ZO.sent = function (step) {
+      ZO.post({tag: 'otp-sent', step: step});
+    };
+
+    /**
+     * A fresh attempt has been made, so the next verdict is news again.
+     *
+     * ZO.reportErrors only posts a message that has changed, which is right for
+     * an observer that fires on every re-render and wrong across attempts: a
+     * customer who submits the same wrong code twice gets the widget's same
+     * complaint, and without this it would be posted once and swallowed for
+     * ever after -- leaving the native screen waiting on an answer that had
+     * already been given.
+     *
+     * Called after the click and not before it: clearing it first would let
+     * the sweep that runs on the way in re-post the error still on screen from
+     * the previous attempt, as though it were this one's answer.
+     */
+    ZO.reask = function () {
+      ZO.lastError = '';
     };
 
     /**
@@ -352,6 +428,8 @@ export const driveSendOtp = (dial: string, digits: string): string => `
     if (!input || !button) { return false; }
     ZO.write(input, DIGITS);
     button.click();
+    ZO.reask();
+    ZO.sent('phone');
     return true;
   }
 
@@ -423,6 +501,10 @@ export const driveSubmitOtp = (code: string): string => `
         ZO.write(boxes[i], digit, digit);
       }
       button.click();
+      // No ZO.sent here: a submit is not a send, and reporting one would
+      // restart the resend countdown on the screen that is waiting for a
+      // verdict. What it does need is the verdict, however often it repeats.
+      ZO.reask();
       return true;
     },
     function () { ZO.fail('otp', 'otp boxes not found'); }
@@ -451,6 +533,8 @@ export const driveResend = (): string => `
       var button = box.querySelector('.resend-btn');
       if (!button) { return false; }
       button.click();
+      ZO.reask();
+      ZO.sent('otp');
       return true;
     },
     function () { ZO.fail('otp', 'resend not available yet'); }

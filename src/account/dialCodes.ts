@@ -293,3 +293,181 @@ export const filterCountries = (
       country.dial.indexOf(bare) === 0,
   );
 };
+
+/* ---------------------------------------------------------------- validation
+
+   What "the selected country's dialling rules" can honestly mean here.
+
+   A full national numbering plan per country is libphonenumber's job, and it is
+   1.2 MB of metadata that would be by far the largest thing in this bundle for
+   a screen with one field on it. What is both small and true is the *length* of
+   a mobile national number, which is what actually rejects the two mistakes a
+   customer makes -- a digit short, or a digit over.
+
+   So there are two tiers, and the second is deliberately generous:
+
+     - a table below, for the markets whose mobile length is fixed and settled.
+       Zigly ships to India, and India is the default, so it is first;
+     - E.164 for everything else. The standard caps a number at 15 digits
+       including the country code, which is the one rule that holds everywhere.
+       A country absent from the table is not rejected on a guess -- it is
+       checked against the only rule that is certainly its own.
+
+   Nothing here decides whether a number is *reachable*. That is SimplyOTP's to
+   answer, in its own words, and ../webview/otpDriver.ts forwards its verdict
+   verbatim. This only stops a request that could not possibly succeed.
+*/
+
+/** The most digits E.164 allows in a whole number, country code included. */
+const E164_MAX = 15;
+/** The fewest a national number can plausibly be. Below this it is a typo. */
+const NATIONAL_MIN = 4;
+
+/**
+ * Mobile national-number lengths, as `iso2|lengths`.
+ *
+ * Lengths are separated by commas where a country has more than one. Packed as
+ * a string for the reason the country table above is: a missing comma in a
+ * literal truncates the list silently, and this one is scanned by eye.
+ */
+const LENGTH_TABLE = [
+  'IN|10',
+  'AE|9',
+  'AR|10',
+  'AT|10,11',
+  'AU|9',
+  'BD|10',
+  'BE|9',
+  'BH|8',
+  'BR|10,11',
+  'CA|10',
+  'CH|9',
+  'CL|9',
+  'CN|11',
+  'CO|10',
+  'DE|10,11',
+  'DK|8',
+  'EG|10',
+  'ES|9',
+  'FI|9,10',
+  'FR|9',
+  'GB|10',
+  'GR|10',
+  'HK|8',
+  'ID|9,10,11,12',
+  'IE|9',
+  'IL|9',
+  'IT|9,10',
+  'JP|10',
+  'KE|9',
+  'KR|9,10',
+  'KW|8',
+  'LK|9',
+  'MA|9',
+  'MX|10',
+  'MY|9,10',
+  'NG|10',
+  'NL|9',
+  'NO|8',
+  'NP|10',
+  'NZ|8,9,10',
+  'OM|8',
+  'PE|9',
+  'PH|10',
+  'PK|10',
+  'PL|9',
+  'PT|9',
+  'QA|8',
+  'RU|10',
+  'SA|9',
+  'SE|9',
+  'SG|8',
+  'TH|9',
+  'TR|10',
+  'TW|9',
+  'UA|9',
+  'US|10',
+  'VN|9',
+  'ZA|9',
+];
+
+const LENGTHS: Record<string, number[]> = (() => {
+  const out: Record<string, number[]> = {};
+  LENGTH_TABLE.forEach(row => {
+    const parts = row.split('|');
+    out[parts[0]] = parts[1].split(',').map(one => Number(one));
+  });
+  return out;
+})();
+
+/**
+ * The leading digits a mobile number may start with, where the plan fixes them.
+ *
+ * India only, and on purpose. It is the default country, its mobile series is
+ * settled at 6-9, and a landline typed into this field is the mistake the
+ * length check alone cannot catch -- an eight-digit Delhi landline with its STD
+ * code is ten digits too. Every other country is left to the length rule: a
+ * leading-digit table that is even slightly out of date rejects real customers,
+ * which is a worse failure than letting the provider answer.
+ */
+const LEADING: Record<string, string[]> = {IN: ['6', '7', '8', '9']};
+
+/** Digits only, in order. A character loop, per the note at the top. */
+export const digitsOnly = (value: string): string => {
+  let out = '';
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code >= 48 && code <= 57) {
+      out += value.charAt(i);
+    }
+  }
+  return out;
+};
+
+/**
+ * The national-number lengths this country accepts.
+ *
+ * Null where the table has no entry, which is the caller's cue to fall back to
+ * E.164 rather than to invent a length.
+ */
+export const phoneLengths = (country: DialCountry): number[] | null =>
+  LENGTHS[country.iso2] ?? null;
+
+/**
+ * Why this number cannot be sent to, or null when there is nothing to say.
+ *
+ * The message is the one the screen shows. It names the length when the country
+ * has exactly one, because "enter a valid mobile number" in front of a
+ * nine-digit Indian number tells the customer nothing they did not know.
+ */
+export const validatePhone = (
+  country: DialCountry,
+  value: string,
+): string | null => {
+  const digits = digitsOnly(value);
+  if (digits.length === 0) {
+    return 'Enter your mobile number';
+  }
+
+  const lengths = phoneLengths(country);
+  if (lengths !== null) {
+    if (lengths.indexOf(digits.length) === -1) {
+      return lengths.length === 1
+        ? `Enter a valid ${lengths[0]}-digit mobile number`
+        : 'Enter a valid mobile number';
+    }
+  } else {
+    // E.164, which is the only rule that is certainly this country's own.
+    const room = E164_MAX - country.dial.length;
+    if (digits.length < NATIONAL_MIN || digits.length > room) {
+      return 'Enter a valid mobile number';
+    }
+  }
+
+  const starts = LEADING[country.iso2];
+  if (starts && starts.indexOf(digits.charAt(0)) === -1) {
+    return 'Enter a valid mobile number';
+  }
+
+  return null;
+};

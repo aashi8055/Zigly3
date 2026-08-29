@@ -44,6 +44,24 @@ interface Props {
   onResend: () => void;
   /** Shown under the boxes. Null draws nothing. */
   error?: string | null;
+  /**
+   * Bumped by the caller when a resend actually went out.
+   *
+   * The countdown restarts on THIS and not on the press, which is the
+   * difference between a timer that means something and one that is decoration.
+   * The press only asks: the widget behind this screen may refuse -- its own
+   * cooldown, its own captcha -- and a clock that reset itself anyway would
+   * tell the customer to wait thirty seconds for a message nobody sent.
+   */
+  resendToken?: number;
+  /**
+   * A submit or a resend is out and has not been answered.
+   *
+   * Presses are ignored while it is true. Nothing is drawn for it beyond the
+   * press state the buttons already have: the reference screen carries no
+   * spinner, and the brief says not to add one.
+   */
+  busy?: boolean;
 }
 
 /** Digits only, in order. A character loop, per the project's no-pattern rule. */
@@ -66,11 +84,11 @@ const OtpScreen = ({
   onEditPhone,
   onResend,
   error = null,
+  resendToken = 0,
+  busy = false,
 }: Props) => {
   const [digits, setDigits] = useState<string[]>(EMPTY);
   const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
-  /** Bumped by Resend, which is how the countdown below starts over. */
-  const [run, setRun] = useState(0);
   // The instance type, not the component type: react-native 0.87's TextInput is
   // a function component, so `TextInput` names its props rather than its handle.
   const boxes = useRef<Array<React.ComponentRef<typeof TextInput> | null>>([]);
@@ -83,11 +101,12 @@ const OtpScreen = ({
    * state change to schedule the next second, which is a clock that can drift or
    * stall under load. This one ticks on its own and stops itself at zero.
    *
-   * Keyed on `run` so pressing Resend starts a fresh interval instead of
-   * inheriting the remainder of the old one. Cleared on unmount, so it cannot
-   * tick into a dead tree.
+   * Keyed on `resendToken` so a resend the caller confirmed starts a fresh
+   * interval instead of inheriting the remainder of the old one. Cleared on
+   * unmount, so it cannot tick into a dead tree.
    */
   useEffect(() => {
+    setSecondsLeft(RESEND_SECONDS);
     const timer = setInterval(() => {
       setSecondsLeft(current => {
         if (current <= 1) {
@@ -98,7 +117,7 @@ const OtpScreen = ({
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [run]);
+  }, [resendToken]);
 
   const code = digits.join('');
   const complete = code.length === OTP_LENGTH;
@@ -139,18 +158,40 @@ const OtpScreen = ({
   };
 
   const resend = () => {
+    if (busy) {
+      return;
+    }
+    // Asked, not restarted. The clock is the caller's to restart, by bumping
+    // resendToken once the widget has actually sent again -- see the prop.
     onResend();
-    // The visual timer restarts here. Whether the request succeeded is the
-    // caller's to know; this is the countdown, not the confirmation.
-    setSecondsLeft(RESEND_SECONDS);
-    setRun(current => current + 1);
+  };
+
+  const submit = () => {
+    if (busy) {
+      return;
+    }
+    onSubmit(code);
   };
 
   return (
     <View style={styles.root}>
       <View style={styles.spacerAbove} />
 
-      <Text style={styles.description}>
+      {/*
+        One line, always. The brief asks for it in so many words, and the two
+        pieces are one sentence: broken over two lines the number reads as a
+        heading with a caption under it rather than as the end of the sentence
+        it finishes. `adjustsFontSizeToFit` is what keeps the promise on a
+        narrow phone or at a large system font size -- the alternative to
+        shrinking is truncating, and a number with its last digits replaced by
+        an ellipsis is worse than a number a point smaller.
+      */}
+      <Text
+        style={styles.description}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+      >
         You will receive OTP on <Text style={styles.number}>{phone}</Text>
       </Text>
 
@@ -178,6 +219,10 @@ const OtpScreen = ({
               }
             }}
             keyboardType="number-pad"
+            // The first box takes the caret as the screen arrives, so the
+            // keyboard is already up and the customer types the code they are
+            // reading rather than tapping a box first.
+            autoFocus={index === 0}
             // Long enough to accept a pasted or autofilled code in one box,
             // which `change` above then spreads across the row.
             maxLength={OTP_LENGTH}
@@ -195,13 +240,14 @@ const OtpScreen = ({
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       <Pressable
-        onPress={() => onSubmit(code)}
+        onPress={submit}
         accessibilityRole="button"
         accessibilityLabel="Submit"
+        accessibilityState={{disabled: busy}}
         style={({pressed}) => [
           styles.submit,
           complete && styles.submitReady,
-          pressed && styles.pressed,
+          (pressed || busy) && styles.pressed,
         ]}
       >
         <Text style={styles.submitText}>Submit</Text>
@@ -217,7 +263,8 @@ const OtpScreen = ({
             hitSlop={8}
             accessibilityRole="button"
             accessibilityLabel="Resend OTP"
-            style={({pressed}) => pressed && styles.pressed}
+            accessibilityState={{disabled: busy}}
+            style={({pressed}) => (pressed || busy) && styles.pressed}
           >
             <Text style={styles.resendAction}>Resend OTP</Text>
           </Pressable>

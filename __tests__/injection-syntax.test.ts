@@ -35,6 +35,13 @@ import {
   LOGOUT_SCRIPT,
 } from '../src/webview/accountBridge';
 import {LOGIN_RESTYLE} from '../src/webview/loginRestyle';
+import {
+  OTP_DRIVER,
+  driveEditPhone,
+  driveResend,
+  driveSendOtp,
+  driveSubmitOtp,
+} from '../src/webview/otpDriver';
 import {PASSWORD_RESTYLE} from '../src/webview/passwordRestyle';
 import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../src/webview/prefetch';
 import {
@@ -122,6 +129,20 @@ describe('every separately injected payload is valid too', () => {
     ['COUNTRIES_PROBE', COUNTRIES_PROBE],
     ['LOGOUT_SCRIPT', LOGOUT_SCRIPT],
     ['LOGIN_RESTYLE', LOGIN_RESTYLE],
+    ['OTP_DRIVER', OTP_DRIVER],
+    // The two that actually go into the login WebView are these joined --
+    // see LOGIN_PAYLOAD in ../src/screens/ZiglyWebViewScreen. Checked as one
+    // string, because that is what the page is handed: two payloads that each
+    // parse can still fail together if either stopped ending in a statement.
+    ['LOGIN_PAYLOAD', LOGIN_RESTYLE + '\n' + OTP_DRIVER],
+    // The drives, with the arguments the screens really pass. Each is built
+    // from a country code, a number or a code, so each is a place a quote
+    // could get out.
+    ['driveSendOtp', driveSendOtp('91', '9004976917')],
+    ['driveSendOtp(quotes)', driveSendOtp('1', 'a\'b"c')],
+    ['driveSubmitOtp', driveSubmitOtp('483920')],
+    ['driveResend', driveResend()],
+    ['driveEditPhone', driveEditPhone()],
     ['PASSWORD_RESTYLE', PASSWORD_RESTYLE],
     ['PREFETCH_SCRIPT', PREFETCH_SCRIPT],
     ['PAGE_PREFETCH_SCRIPT', PAGE_PREFETCH_SCRIPT],

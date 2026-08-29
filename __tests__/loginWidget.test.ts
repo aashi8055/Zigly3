@@ -413,17 +413,32 @@ describe('the marketing checkbox', () => {
   });
 });
 
-describe('the Email field the app does not ask for', () => {
-  it('is one constant, and the field is hidden rather than filled', () => {
-    // The account is created against the phone number the OTP proved. What
-    // this must never do is invent an address to put in a field it hid.
-    expect(SIGNUP_EMAIL.hide).toBe(true);
+describe('the Email field, and which step actually asks for one', () => {
+  it('is asked for on the signup step, and never filled in by the app', () => {
+    // It used to be hidden, on the reasoning that the OTP had already proved
+    // the phone number. The brief says otherwise -- the signup form collects
+    // First Name, Last Name and Email, and the email is validated and refused
+    // if another account holds it -- so the row shows, and SIGNUP_EMAIL.hide
+    // is the constant that says so.
+    //
+    // What has not changed is the part that matters: an app that invents an
+    // address for a customer is worse than one that asks for theirs. So there
+    // is still no write of any kind in the script half.
+    expect(SIGNUP_EMAIL.hide).toBe(false);
     expect(scriptOnly()).not.toContain('.value =');
     expect(scriptOnly()).not.toContain('@');
   });
 
-  it('hides the row, its label and its message with one class', () => {
+  it('leaves the signup row alone while the flag is false', () => {
+    // The function stays -- flipping the flag is the whole of the way back --
+    // and it is the flag, not the caller, that decides whether it does
+    // anything. A guard at the top is what makes that one edit.
     expect(LOGIN_RESTYLE).toContain('function hideSignupEmail(');
+    expect(LOGIN_RESTYLE).toContain('if (!HIDE_EMAIL) { return; }');
+    expect(LOGIN_RESTYLE).toContain('var HIDE_EMAIL = false;');
+  });
+
+  it('hides a row, its label and its message with one class', () => {
     expect(LOGIN_RESTYLE).toContain(
       "'.input-label.email, .error-email-message'",
     );
@@ -432,32 +447,45 @@ describe('the Email field the app does not ask for', () => {
     expect(hide[0].body).toContain('display: none !important');
   });
 
-  it('is re-applied on every pass, because the step is rebuilt', () => {
-    // The signup step arrives long after the poll gives up, and the widget
-    // rebuilds it on its own validation. classList.add is the no-op on repeat.
-    const sync = LOGIN_RESTYLE.slice(LOGIN_RESTYLE.indexOf('function sync()'));
-    expect(sync.slice(0, 200)).toContain('hideSignupEmail();');
-    expect(LOGIN_RESTYLE).toContain('classList.add(HIDDEN)');
+  it('carries that rule whatever the signup flag says', () => {
+    // The bug this pins: the rule used to be written only when
+    // SIGNUP_EMAIL.hide was true, as though the class existed for the signup
+    // row alone. hideLoginEmail uses the same class on step 1, so with the flag
+    // off the script went on adding a class that no longer had a rule -- the
+    // input stayed hidden by its own selector and its bordered wrapper did not,
+    // which is the empty box that appeared under the number field.
+    //
+    // Asserted against the payload text rather than against the parsed rules,
+    // because what went wrong was a rule that was not emitted at all.
+    expect(SIGNUP_EMAIL.hide).toBe(false);
+    expect(LOGIN_RESTYLE).toContain('html.zigly-otp .' + HIDDEN_FIELD_CLASS);
   });
 
-  it('can only reach the signup step, never the phone step', () => {
-    // Step 1 is a phone number and nothing else on this store, and hiding its
-    // one input would be a login screen with no way to log in. The hide is
-    // scoped to .update-user-box and walks up from the input it found there.
+  it('takes the whole row out on the phone step, not just the input', () => {
+    // Step 1 on this store is a phone number and nothing else, so the email
+    // input the widget renders there is furniture. Hiding the input alone is
+    // what left its wrapper behind as an empty bordered box.
     const fn = LOGIN_RESTYLE.slice(
-      LOGIN_RESTYLE.indexOf('function hideSignupEmail('),
+      LOGIN_RESTYLE.indexOf('function hideLoginEmail('),
       LOGIN_RESTYLE.indexOf('/** Everything that has to be re-applied'),
     );
-    expect(fn).toContain("document.querySelector('.update-user-box')");
-    expect(fn).not.toContain('.login-box');
+    expect(fn).toContain("document.querySelector('.login-box')");
+    expect(fn).toContain('classList.add(HIDDEN)');
     // And it stops climbing before any wrapper that holds another field, so a
     // template that shares one cannot lose the phone with the email.
     expect(fn).toContain('!holdsOther(parent, input)');
   });
 
-  it('keeps the label the flag would need on the way back', () => {
-    // SIGNUP_EMAIL.hide is the only edit that brings the row back, so the
-    // label it comes back with stays in the table.
+  it('is re-applied on every pass, because the step is rebuilt', () => {
+    // The steps arrive long after the poll gives up, and the widget rebuilds
+    // them on its own validation. classList.add is the no-op on repeat.
+    const sync = LOGIN_RESTYLE.slice(LOGIN_RESTYLE.indexOf('function sync()'));
+    expect(sync.slice(0, 200)).toContain('hideSignupEmail();');
+    expect(sync.slice(0, 200)).toContain('hideLoginEmail();');
+    expect(LOGIN_RESTYLE).toContain('classList.add(HIDDEN)');
+  });
+
+  it('keeps the signup row labelled, since it is the row that shows', () => {
     const email = LOGIN_LABELS.find(l => l.selector === '.input-label.email');
     expect(email).toBeDefined();
     expect((email as {text: string}).text).toBe('Email Id');

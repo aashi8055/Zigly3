@@ -236,29 +236,53 @@ describe('collapsing the search band', () => {
   const src = () =>
     require('fs').readFileSync('src/components/NativeHeader.tsx', 'utf8');
 
-  it('gives its height back in one step, never animated', () => {
+  it('still gives its height back in one step, never interpolated', () => {
     /*
      * This one has a visible failure mode, so it is pinned.
      *
      * Everything below the header is the WebView, so collapsing the band grows
-     * the page view by exactly the band's height, at the bottom. Animating that
-     * height over 180ms with useNativeDriver:false is around eleven layout
-     * passes -- eleven resizes of an Android WebView, mid-scroll -- and its
-     * renderer cannot keep up: the 64px it has just been given stays
-     * un-composited and paints as the app's ground, a blank cream strip above
-     * the bottom bar for as long as the animation runs.
+     * the page view by exactly the band's height, at the bottom. The original
+     * bug was animating that height itself over 180ms with
+     * useNativeDriver:false -- around eleven layout passes, eleven resizes of
+     * an Android WebView mid-scroll, whose renderer cannot keep up: the 64px
+     * it has just been given stays un-composited and paints as the app's
+     * ground, a blank cream strip above the bottom bar for as long as the
+     * animation runs.
+     *
+     * bandHeight now exists, but it is still only ever one of exactly two
+     * numbers (0 or SEARCH_BAND_H), set once per toggle by plain React state
+     * -- never an Animated.Value, and never on the outer `View` that owns the
+     * band's real layout height. Only the Animated.View one level in, wrapping
+     * content that costs nothing to animate, uses Animated at all.
      */
     const s = src();
-    expect(s).toContain('{ height: searchCollapsed ? 0 : SEARCH_BAND_H }');
-    expect(s).not.toContain('Animated.timing');
-    expect(s).not.toContain('bandHeight');
+    expect(s).toContain('setBandHeight(0)');
+    expect(s).toContain('setBandHeight(SEARCH_BAND_H)');
+    expect(s).toContain('style={[styles.searchBand, { height: bandHeight }]}');
+    expect(s).not.toContain('height: bandOpacity');
+    expect(s).not.toContain('height: bandLift');
   });
 
-  it('still takes its space back, rather than sliding out of sight', () => {
-    // A translate would leave the page where it was, with a gap where the band
-    // had been -- which is the thing the height was chosen for originally.
+  it('animates only compositor properties, never on the JS thread', () => {
+    // opacity and transform cost the WebView nothing under
+    // useNativeDriver:true -- they run off the bridge entirely. Reintroducing
+    // useNativeDriver:false here is exactly how the original bug came back.
     const s = src();
-    expect(s).not.toContain('translateY');
+    const timings = s.match(/Animated\.timing\([^)]*\{[\s\S]*?\}\)/g) || [];
+    expect(timings.length).toBeGreaterThan(0);
+    for (const call of timings) {
+      expect(call).toContain('useNativeDriver: true');
+    }
+    expect(s).not.toContain('useNativeDriver: false');
+  });
+
+  it('still takes its space back, rather than leaving a gap', () => {
+    // A translate used INSTEAD OF the height change would leave the page
+    // where it was, with a gap where the band had been -- which is the thing
+    // the height was chosen for originally. bandLift only nudges the content
+    // a few px during the fade; the band's own height still collapses to 0
+    // once that fade finishes (see the test above), so no gap is left behind.
+    const s = src();
     expect(s).toContain("pointerEvents={searchCollapsed ? 'none' : 'auto'}");
   });
 

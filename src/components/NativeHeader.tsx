@@ -18,8 +18,10 @@
  * the exceptions -- both are real paths, because neither shape can be built
  * honestly out of stacked Views; see ./glyphs.
  */
-import React, { memo, useEffect, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   Image,
   Pressable,
   StyleSheet,
@@ -194,6 +196,83 @@ const NativeHeader = ({
   searchPlaceholders,
   searchTypeMs = TYPE_MS,
 }: Props) => {
+  /**
+   * The band's own fade-and-lift, layered on top of the instant height
+   * change below rather than replacing it.
+   *
+   * The height snap has to stay instant -- see the comment on it -- so this
+   * never animates height. What it animates is the band's content: opacity
+   * and a small translateY, both compositor properties under
+   * useNativeDriver, so they cost the WebView nothing to run alongside.
+   * Sequenced around the snap rather than simultaneous with it: collapsing
+   * fades the content out first and only then closes the band to 0, so
+   * nothing visibly clips mid-fade; opening reverses that, snapping the band
+   * back to full height (content still invisible) and then fading it in. Each
+   * still costs exactly the one relayout the original fix was written to
+   * bound -- it is only ever scheduled once per toggle, after or before the
+   * animation, never interpolated across it.
+   */
+  const bandOpacity = useRef(new Animated.Value(searchCollapsed ? 0 : 1)).current;
+  const bandLift = useRef(new Animated.Value(searchCollapsed ? -10 : 0)).current;
+  const [bandHeight, setBandHeight] = useState(
+    searchCollapsed ? 0 : SEARCH_BAND_H,
+  );
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    if (!mounted.current) {
+      // No transition on first paint -- the values above already match
+      // whatever searchCollapsed is at mount.
+      mounted.current = true;
+      return;
+    }
+
+    if (searchCollapsed) {
+      Animated.timing(bandOpacity, {
+        toValue: 0,
+        duration: BAND_FADE_MS,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }).start();
+      Animated.timing(bandLift, {
+        toValue: -10,
+        duration: BAND_FADE_MS,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }).start();
+      /*
+       * The layout still has to give its space back, but on a plain timer
+       * rather than the animation's own completion callback: the callback
+       * fires when the platform's animation driver reports "finished", which
+       * a fast re-toggle (scroll up, then straight back down) can cancel or
+       * delay in ways this file has no control over. A timer matched to the
+       * same duration is what the app actually wants -- the fade has had its
+       * BAND_FADE_MS -- and it is the one thing here a re-toggle can cleanly
+       * cancel, via the cleanup below, rather than leaving a stale callback
+       * to fire after a later toggle already decided something else.
+       */
+      const timer = setTimeout(() => setBandHeight(0), BAND_FADE_MS);
+      return () => clearTimeout(timer);
+    }
+
+    setBandHeight(SEARCH_BAND_H);
+    Animated.timing(bandOpacity, {
+      toValue: 1,
+      duration: BAND_FADE_MS,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+    Animated.timing(bandLift, {
+      toValue: 0,
+      duration: BAND_FADE_MS,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+    return undefined;
+    // bandOpacity / bandLift are refs to stable Animated.Value instances.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchCollapsed]);
+
   return (
     <View style={styles.root}>
       <View style={styles.bar}>
@@ -259,33 +338,27 @@ const NativeHeader = ({
 
       {showSearch ? (
         /*
-         * Height, and set in ONE step -- not animated.
-         *
-         * The band has to give its space back rather than slide out of sight,
-         * or the page would not move up behind it. That means collapsing it is
-         * a layout change, and everything below the header is the WebView: the
-         * page view grows by exactly this band's height, at the bottom.
-         *
-         * It used to animate that height over 180ms with useNativeDriver:false,
-         * which is around eleven layout passes -- eleven resizes of an Android
-         * WebView, mid-scroll. Its renderer cannot keep up with that, so the
-         * 64px it had just been given stayed un-composited and painted as the
-         * container's own ground colour: a blank strip above the bottom bar,
-         * the same height as the band, for as long as the animation ran.
-         *
-         * One step means one resize and at most one frame of it. The collapse
-         * is a scroll-driven change of state rather than a gesture the eye is
-         * following, so it does not read as abrupt -- and 64px of blank above
-         * the navigation certainly did.
+         * Height still moves in ONE step -- not animated -- for the reason
+         * written up on bandHeight above: interpolating it was eleven Android
+         * WebView resizes mid-scroll and a blank strip for the length of the
+         * animation. What animates instead is bandOpacity / bandLift on the
+         * content below, which are compositor-only and never touch layout, so
+         * the band still reads as leaving with the scroll rather than
+         * vanishing and reappearing between two frames.
          */
         <View
-          style={[
-            styles.searchBand,
-            { height: searchCollapsed ? 0 : SEARCH_BAND_H },
-          ]}
+          style={[styles.searchBand, { height: bandHeight }]}
           pointerEvents={searchCollapsed ? 'none' : 'auto'}
         >
-          <View style={styles.searchBandInner}>
+          <Animated.View
+            style={[
+              styles.searchBandInner,
+              {
+                opacity: bandOpacity,
+                transform: [{ translateY: bandLift }],
+              },
+            ]}
+          >
             {/*
               A button, not a field. Typing here used to submit straight to the
               site's search page, so nothing happened until enter and there was
@@ -305,7 +378,7 @@ const NativeHeader = ({
                 running={!searchCollapsed && searchPlaceholders.length > 0}
               />
             </Pressable>
-          </View>
+          </Animated.View>
         </View>
       ) : null}
     </View>
@@ -315,6 +388,8 @@ const NativeHeader = ({
 const BAR_H = 52;
 /** Search band height: field plus its padding. */
 const SEARCH_BAND_H = 64;
+/** How long the band's own fade-and-lift runs; see the effect above. */
+const BAND_FADE_MS = 160;
 /**
  * The wordmark, at the size the bar can actually hold.
  *

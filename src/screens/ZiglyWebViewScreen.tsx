@@ -172,6 +172,20 @@ import EditProfileScreen from '../components/EditProfileScreen';
 import OrdersScreen from '../components/OrdersScreen';
 import AddressScreen from '../components/AddressScreen';
 import AddressFormScreen from '../components/AddressFormScreen';
+import LoginScreen from '../components/LoginScreen';
+import OtpScreen from '../components/OtpScreen';
+import {
+  OTP_DRIVER,
+  driveEditPhone,
+  driveResend,
+  driveSendOtp,
+  driveSubmitOtp,
+  otpErrorText,
+  readPhase,
+} from '../webview/otpDriver';
+import type {LoginPhase, OtpStep} from '../webview/otpDriver';
+import {DEFAULT_COUNTRY} from '../account/dialCodes';
+import type {DialCountry} from '../account/dialCodes';
 import {
   ACCOUNT_PROBE,
   ADDRESSES_PROBE,
@@ -204,10 +218,12 @@ import type {
 import {
   EMPTY_ACCOUNT_STACK,
   closeAccount,
+  isLoginFlow,
   openAccount,
   popScreen,
   pushScreen,
   resolveAuth,
+  sameStack,
   topScreen,
 } from '../navigation/accountStack';
 import type {AccountStack} from '../navigation/accountStack';
@@ -337,6 +353,52 @@ const SIGN_OUT_MESSAGE: Record<SignOutReason, string> = {
   // Read requestAccountDeletion before changing this one: nothing is deleted,
   // and this line is the app telling the customer otherwise.
   delete: 'Deleted user data',
+};
+
+/**
+ * What goes into the login WebView: the restyle, then the driver.
+ *
+ * Two payloads, one string, because `injectedJavaScript` takes one. Order is
+ * not load-bearing -- both are guarded and idempotent -- but it reads the way
+ * the screen works: dress the widget, then be able to operate it.
+ *
+ * Kept out of ../webview/otpDriver.ts on purpose. That module's whole claim is
+ * that it is the only thing in this app that drives the widget, and the restyle
+ * is the only thing that styles it; a file that exported the two joined
+ * together would be a third thing that does both.
+ */
+const LOGIN_PAYLOAD = `${LOGIN_RESTYLE}
+${OTP_DRIVER}`;
+
+/**
+ * How long a send may go unanswered before the screen stops waiting.
+ *
+ * The driver reports a control it cannot find within about three seconds. This
+ * is the other failure: the button was pressed, and the provider never came
+ * back -- a captcha that hung, a request that went nowhere. Generous, because
+ * an SMS gateway on a bad connection is genuinely slow and cutting it short
+ * would tell a customer their code failed while it was arriving. What it buys
+ * is that "Receive OTP" always becomes pressable again.
+ */
+const OTP_SEND_TIMEOUT_MS = 25000;
+
+/**
+ * Where each step of the widget puts the customer.
+ *
+ * Written as whole stacks rather than as pushes and pops. The login flow has
+ * exactly three states and the widget is the authority on which one it is in,
+ * so the app's job is to agree with it -- and "replace the stack" cannot drift
+ * out of step with the page the way a sequence of pushes can when a report is
+ * missed or arrives twice.
+ *
+ * 'success' and 'missing' are absent because neither is a screen in this
+ * section: one closes it, and the other hands the WebView to the customer. See
+ * applyLoginPhase.
+ */
+const STACK_FOR_PHASE: Record<'phone' | 'otp' | 'details', AccountStack> = {
+  phone: ['login'],
+  otp: ['login', 'otp'],
+  details: ['login', 'otp', 'signup'],
 };
 
 const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
@@ -569,6 +631,39 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const authRef = useRef<AuthState>('unknown');
   const accountScreensRef = useRef<AccountStack>(EMPTY_ACCOUNT_STACK);
   const loginRef = useRef<Web>(null);
+
+  /*
+   * The login flow.
+   *
+   * Two native screens -- ../components/LoginScreen and ../components/OtpScreen
+   * -- drawn over the WebView that holds Zigly's own OTP widget. The widget is
+   * still what sends and verifies, with its captcha and its fraud check; the
+   * customer simply never sees it on those two steps. ../webview/otpDriver.ts
+   * is the whole of the bridge, and the state below is this side of it.
+   */
+  /** What the customer entered, so Edit phone number comes back to it. */
+  const [loginCountry, setLoginCountry] = useState<DialCountry>(DEFAULT_COUNTRY);
+  const [loginPhone, setLoginPhone] = useState('');
+  /** Shown on whichever of the two screens is up. */
+  const [loginError, setLoginError] = useState<string | null>(null);
+  /** A drive is out and unanswered: presses are ignored until it lands. */
+  const [loginBusy, setLoginBusy] = useState(false);
+  /** Bumped when a resend actually went out; restarts the OTP countdown. */
+  const [resendToken, setResendToken] = useState(0);
+  /**
+   * The widget was not in the page at all.
+   *
+   * Its documented fallback: the restyle leaves the page as the site serves it
+   * (see ../webview/loginRestyle.ts), and this reveals that page instead of
+   * drawing native screens over a widget that is not there for them to drive.
+   * A login form the app cannot operate is still a login form; two invisible
+   * fields and a button that reports "control not found" is nothing at all.
+   */
+  const [widgetMissing, setWidgetMissing] = useState(false);
+  /** The widget's own current step, read from native callbacks. */
+  const loginPhaseRef = useRef<LoginPhase>('unknown');
+  /** Fires when a send goes unanswered. See OTP_SEND_TIMEOUT_MS. */
+  const sendWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * The Change Password screen's WebView. Its own ref, and its own navigation
    * handler below, because its URL is itself an account URL -- see
@@ -1302,6 +1397,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const openAccountSection = useCallback(() => {
     setAccountNotice(null);
+    // A fresh login flow every time the section opens. The widget's WebView is
+    // unmounted with the section, so it starts clean; leaving last visit's
+    // error behind -- or a Receive OTP button still disabled from a send that
+    // was abandoned by closing the section -- would be state outliving its
+    // screen.
+    setLoginError(null);
+    setLoginBusy(false);
+    setWidgetMissing(false);
+    loginPhaseRef.current = 'unknown';
     // Always to the front. Page layers are drawn over the section, so a section
     // opened from a link inside a page -- the drawer's Login/Register, say --
     // would otherwise open underneath the page it was opened from.
@@ -1314,14 +1418,299 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     setAccountScreens(closeAccount());
   }, []);
 
-  /** One step back inside the section. Empty means it has closed. */
+  /**
+   * One step back inside the section. Empty means it has closed.
+   *
+   * The login flow is the exception, and it collapses rather than steps. Back
+   * from the OTP screen means "let me change my number", which is the phone
+   * step -- and back from the signup form means the same, because the one thing
+   * it cannot mean is the OTP screen: that code has already been verified, and
+   * offering to verify it again is offering to fail. Both land on
+   * ../components/LoginScreen with the number still in the field, and the
+   * effect below takes the widget back with them.
+   */
   const stepBackAccount = useCallback((): boolean => {
-    if (accountScreensRef.current.length === 0) {
+    const screens = accountScreensRef.current;
+    if (screens.length === 0) {
       return false;
+    }
+    const top = topScreen(screens);
+    if (top === 'otp' || top === 'signup') {
+      setAccountScreens(['login']);
+      return true;
     }
     setAccountScreens(prev => popScreen(prev));
     return true;
   }, []);
+
+  // ------------------------------------------------------------- login flow
+  /** Stop waiting on a drive. Called wherever an answer of any kind lands. */
+  const clearSendWatchdog = useCallback(() => {
+    if (sendWatchdog.current !== null) {
+      clearTimeout(sendWatchdog.current);
+      sendWatchdog.current = null;
+    }
+  }, []);
+
+  /**
+   * Wait for an answer, and give up if none comes.
+   *
+   * Every drive arms one. See OTP_SEND_TIMEOUT_MS for what it is really
+   * guarding against -- not a slow gateway, but a button that never becomes
+   * pressable again.
+   */
+  const armSendWatchdog = useCallback(
+    (say: string | null) => {
+      clearSendWatchdog();
+      sendWatchdog.current = setTimeout(() => {
+        sendWatchdog.current = null;
+        setLoginBusy(false);
+        if (say !== null) {
+          setLoginError(say);
+        }
+      }, OTP_SEND_TIMEOUT_MS);
+    },
+    [clearSendWatchdog],
+  );
+
+  /**
+   * Move the app to wherever the widget says it is.
+   *
+   * The widget is the authority on which step it is on, so this never argues
+   * with it -- and it never acts on a step while the section is showing
+   * something else, because the widget reports its step on every re-render and
+   * a report that landed while the customer was on Orders would otherwise throw
+   * them into a login screen they did not ask for.
+   */
+  const applyLoginPhase = useCallback(
+    (phase: LoginPhase) => {
+      loginPhaseRef.current = phase;
+
+      if (phase === 'unknown') {
+        return;
+      }
+
+      if (phase === 'missing') {
+        // Hand the page over. See widgetMissing.
+        warn('login widget not found - showing the site form');
+        clearSendWatchdog();
+        setLoginBusy(false);
+        setWidgetMissing(true);
+        return;
+      }
+
+      if (phase === 'success') {
+        clearSendWatchdog();
+        setLoginBusy(false);
+        // Scenario A and the end of scenario B are the same ending: a session
+        // exists, so the customer goes to the dashboard rather than to an
+        // account screen they never asked for. handleLoginNav says the same
+        // thing when the widget navigates instead of rendering its success
+        // panel, and both are safe to run twice.
+        applyAuth('signedIn');
+        closeAccountSection();
+        probeAccount();
+        return;
+      }
+
+      const want = STACK_FOR_PHASE[phase];
+      setAccountScreens(prev => {
+        // Not in the login flow: this is a report about a WebView the customer
+        // is not looking at, and it moves nothing.
+        if (!isLoginFlow(topScreen(prev))) {
+          return prev;
+        }
+        return sameStack(prev, want) ? prev : want;
+      });
+
+      if (phase === 'otp' || phase === 'details') {
+        // The step moved, so whatever was being waited on has happened.
+        clearSendWatchdog();
+        setLoginBusy(false);
+        setLoginError(null);
+      }
+    },
+    [applyAuth, clearSendWatchdog, closeAccountSection, probeAccount],
+  );
+
+  /**
+   * Receive OTP.
+   *
+   * ../components/LoginScreen has already checked the number against its
+   * country's own rules, so this is a send and not a maybe. What it does NOT do
+   * is navigate: the OTP screen appears when the widget reports that it has
+   * moved to its verify step, which is the closest thing to proof that a code
+   * went out. Navigating on the press would be a code entry box for a message
+   * nobody sent.
+   */
+  const sendOtp = useCallback(
+    (country: DialCountry, phone: string) => {
+      setLoginCountry(country);
+      setLoginPhone(phone);
+      setLoginError(null);
+      setLoginBusy(true);
+      armSendWatchdog(
+        'No answer from Zigly. Check your connection and try again.',
+      );
+      injectInto('login', driveSendOtp(country.dial, phone));
+    },
+    [armSendWatchdog, injectInto],
+  );
+
+  /**
+   * Submit the code.
+   *
+   * The widget verifies it, and its answer is what moves the step -- to its
+   * signup form for a number the shop has not seen, or straight to a session
+   * for one it has. A wrong code moves nothing and the widget says so in its
+   * own words, which arrive as an `otp-error`.
+   *
+   * The watchdog says nothing when it fires here. On the phone step a silent
+   * failure needs explaining, because the customer is waiting for a message
+   * that is not coming; here they are looking at the boxes they just filled in,
+   * and the honest report is that the app does not know what happened.
+   */
+  const submitOtp = useCallback(
+    (code: string) => {
+      setLoginError(null);
+      setLoginBusy(true);
+      armSendWatchdog(null);
+      injectInto('login', driveSubmitOtp(code));
+    },
+    [armSendWatchdog, injectInto],
+  );
+
+  /**
+   * Resend.
+   *
+   * Presses the widget's own resend button, so its cooldown and its captcha
+   * gate the request rather than this app's opinion of when one is allowed. The
+   * countdown restarts on the reply and not here -- see the 'otp-sent' case in
+   * handleLoginMessage.
+   */
+  const resendOtp = useCallback(() => {
+    setLoginError(null);
+    setLoginBusy(true);
+    armSendWatchdog(null);
+    injectInto('login', driveResend());
+  }, [armSendWatchdog, injectInto]);
+
+  /** Edit phone number. The widget is taken back by the effect below. */
+  const editPhone = useCallback(() => {
+    setLoginError(null);
+    setAccountScreens(['login']);
+  }, []);
+
+  /**
+   * Take the widget back when the app goes back.
+   *
+   * Both ways back from the OTP screen -- the link on it and the back arrow
+   * above it -- put the app on the phone step, and a widget left on its verify
+   * step would then answer the next Receive OTP against the code it was still
+   * waiting for. One effect rather than a call in each handler, because
+   * Android's hardware Back is a third way in and it does not go through
+   * either of them.
+   */
+  useEffect(() => {
+    if (topScreen(accountScreensRef.current) !== 'login') {
+      return;
+    }
+    // Whatever the step that was just left had out, it is not being waited for
+    // any more. Without this, going back while a submit was in flight would
+    // hand the phone step a Receive OTP button that stays unpressable until a
+    // watchdog fires twenty-five seconds later.
+    clearSendWatchdog();
+    setLoginBusy(false);
+
+    const phase = loginPhaseRef.current;
+    if (phase === 'otp' || phase === 'details') {
+      injectInto('login', driveEditPhone());
+    }
+  }, [accountScreens, clearSendWatchdog, injectInto]);
+
+  /** Nothing may be left ticking into a screen that has gone. */
+  useEffect(() => clearSendWatchdog, [clearSendWatchdog]);
+
+  /**
+   * Everything the login WebView posts.
+   *
+   * Out of the JSX because it is the one callback on that view with rules of
+   * its own, and because the tags below are the entire contract with
+   * ../webview/otpDriver.ts.
+   */
+  const handleLoginMessage = useCallback(
+    (raw: string) => {
+      let data: Record<string, unknown> | null = null;
+      try {
+        data = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        // The page posts for its own reasons too.
+        return;
+      }
+      if (!data || typeof data.tag !== 'string') {
+        return;
+      }
+
+      if (data.tag === 'otp-phase') {
+        applyLoginPhase(readPhase(data.phase));
+        return;
+      }
+
+      if (data.tag === 'otp-sent') {
+        // The widget's own button was found and pressed.
+        //
+        // Which of the two steps pressed it decides whether that is an answer.
+        // A resend has no step change to wait for, so this is the whole of the
+        // reply: the countdown restarts and the link is live again.
+        //
+        // The phone step keeps waiting, and that is the point. A press landing
+        // is not a code arriving, and freeing Receive OTP here would put a
+        // pressable button under a customer's thumb for the whole second the
+        // provider takes to answer -- which is a second SMS, charged, for a
+        // tap they had no reason not to make. The phase moving to 'otp' is
+        // what says the send worked, and the watchdog is what says it did not.
+        if (data.step === 'otp') {
+          clearSendWatchdog();
+          setLoginBusy(false);
+          setResendToken(current => current + 1);
+        }
+        return;
+      }
+
+      if (data.tag === 'otp-error') {
+        clearSendWatchdog();
+        setLoginBusy(false);
+        const step: OtpStep = data.step === 'otp' ? 'otp' : 'phone';
+        const message = typeof data.message === 'string' ? data.message : '';
+        const why = typeof data.why === 'string' ? data.why : '';
+        if (why) {
+          warn('otp drive failed:', step, why);
+        }
+        setLoginError(otpErrorText(step, message, why));
+        return;
+      }
+
+      if (data.tag === 'login') {
+        // The restyle's own report, and the only place 'missing' is ever said:
+        // ../webview/otpDriver.ts reads the widget's steps off the widget, so
+        // it has nothing to read when there is no widget. 'missing' means it
+        // was not found and the page was left exactly as the site serves it --
+        // which is a page the customer can still log in on, so it is shown to
+        // them rather than covered by native screens that would have nothing to
+        // drive. See widgetMissing.
+        log('login screen:', data.state, data.detail);
+        if (data.state === 'missing') {
+          applyLoginPhase('missing');
+        } else if (data.state === 'ready') {
+          // Found after all -- a reload, or a widget that arrived late. The
+          // native screens come back, because now there is something behind
+          // them.
+          setWidgetMissing(false);
+        }
+      }
+    },
+    [applyLoginPhase, clearSendWatchdog],
+  );
 
   const openAccountRow = useCallback(
     (row: AccountRow) => {
@@ -2198,6 +2587,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const onAccountScreen =
     accountTop !== null && showing === null && !overlayOpen;
   const onOrdersScreen = onAccountScreen && accountTop === 'orders';
+  /**
+   * The login flow is open, so the widget's WebView has to be mounted.
+   *
+   * Read off the section's own stack rather than off `onAccountScreen`: a page
+   * layer drawn over the section must not unmount the page the OTP is being
+   * verified in.
+   */
+  const loginFlowOpen = isLoginFlow(accountTop);
 
   /**
    * The customer as the screens should show them.
@@ -2272,8 +2669,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * ways out. Listing pages, because the Sort / Filter bar takes this slot
    * there and the reference app shows that bar *instead of* the tabs. Product
    * pages, for the same reason -- ProductActionBar takes the slot there. And
-   * the login screen, which is a single-purpose screen in the reference app
-   * too.
+   * every screen of the login flow, each of which is single-purpose in the
+   * reference app too: a customer entering a code should not be offered four
+   * ways to abandon it.
    */
   const showNav =
     !searchOpen &&
@@ -2281,7 +2679,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // reference app: nothing under it should be offering a second way out.
     !menuOpen &&
     !inCheckout &&
-    !(onAccountScreen && accountTop === 'login') &&
+    !(onAccountScreen && isLoginFlow(accountTop)) &&
     !onListing &&
     !onProductPage;
 
@@ -2678,24 +3076,43 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         ) : null}
 
         {/*
-          The login screen: Zigly's own OTP widget, restyled into an app screen.
-          Native chrome above and below it, the site's flow inside it -- see
-          ../webview/loginRestyle.ts for why this is not a native form.
+          The login flow's engine: Zigly's own OTP widget.
 
-          Mounted only while it is the screen, so the widget starts clean on
-          every visit; a half-finished OTP left over from last time would be a
-          worse first impression than a fresh field.
+          Mounted for the whole of the flow and unmounted with it, so the widget
+          starts clean on every visit -- a half-finished OTP left over from last
+          time would be a worse first impression than a fresh field -- and so
+          the phone step, the code step and the signup form are one continuous
+          session in one page rather than three page loads.
+
+          SEEN only on the signup step, and in the documented fallback where the
+          widget is not in the page at all. On the two steps before it, the
+          native screens below are drawn straight over this layer: opaque, and
+          rendered after it, so the WebView is covered rather than hidden. That
+          is deliberate. Taking an Android WebView through display:none and back
+          is the classic way to get one that returns blank, and translating it
+          off screen would move a live view for no reason -- while the thing
+          underneath is finished, laid out and already carrying the session that
+          the signup step then appears out of, with nothing to load and nothing
+          to repaint.
+
+          Why the widget at all, when the two screens over it are native: login
+          here is SimplyOTP, whose live config carries recaptcha_enabled and
+          fraud_detection. A captcha token only exists inside a real page
+          running their script, so the request that actually sends an SMS cannot
+          be made from native code. See ../webview/otpDriver.ts, which is the
+          whole of the bridge, and ../webview/loginRestyle.ts for the styling.
         */}
-        {accountTop === 'login' ? (
+        {loginFlowOpen ? (
           <View style={styles.pageLayer}>
             <WebView<object>
               {...baseWebViewProps}
               ref={loginRef}
               source={{uri: LOGIN_URL}}
               style={styles.web}
-              // The bespoke restyle only -- the mobile stylesheet is for shop
-              // pages, and this screen is one modal widget on a blank ground.
-              injectedJavaScript={LOGIN_RESTYLE}
+              // The bespoke restyle and the driver -- the mobile stylesheet is
+              // for shop pages, and this screen is one modal widget on a blank
+              // ground.
+              injectedJavaScript={LOGIN_PAYLOAD}
               // Same reason it is used everywhere else: it hides the site's own
               // header as early as Android will allow, so it never flashes
               // above ours while the widget is still being built.
@@ -2704,29 +3121,62 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               onNavigationStateChange={handleLoginNav}
               onLoadEnd={() => {
                 // Again after the load: the widget is built by a script that
-                // runs later than this, and the restyle is idempotent.
-                injectInto('login', LOGIN_RESTYLE);
+                // runs later than this, and both payloads are idempotent.
+                injectInto('login', LOGIN_PAYLOAD);
               }}
               onError={({nativeEvent}) => {
                 warn('login page error:', nativeEvent.description);
               }}
-              onMessage={({nativeEvent}) => {
-                try {
-                  const data = JSON.parse(nativeEvent.data);
-                  if (data && data.tag === 'login') {
-                    // 'missing' means the widget was not found and the page was
-                    // left exactly as the site serves it. Worth knowing from a
-                    // log rather than from a screenshot.
-                    log('login screen:', data.state, data.detail);
-                  }
-                } catch {
-                  // The page posts for its own reasons too.
-                }
-              }}
+              onMessage={({nativeEvent}) =>
+                handleLoginMessage(nativeEvent.data)
+              }
               onRenderProcessGone={() => {
                 warn('login render process gone — reloading');
                 loginRef.current?.reload();
               }}
+            />
+          </View>
+        ) : null}
+
+        {/*
+          Login With OTP, drawn natively over the widget.
+
+          It keeps its own draft of the country and the number while it is up --
+          which is what lets the country picker change one and leave the other
+          alone -- and it is unmounted the moment the flow moves on. So the
+          initial values below are read exactly once per visit to this step, and
+          coming back from the OTP screen is a fresh mount on the number that
+          was sent to. Deliberately NOT keyed on that number: the key would
+          change on the press of Receive OTP, which would rebuild the field, and
+          drop the keyboard, while the customer was still looking at it.
+        */}
+        {accountTop === 'login' && !widgetMissing ? (
+          <View style={styles.pageLayer}>
+            <LoginScreen
+              initialCountry={loginCountry}
+              initialPhone={loginPhone}
+              error={loginError}
+              busy={loginBusy}
+              onSubmit={sendOtp}
+            />
+          </View>
+        ) : null}
+
+        {/*
+          The code step. The number is shown exactly as the message was
+          addressed -- dialling code and digits, no space -- because that is
+          what the customer has to recognise on their phone.
+        */}
+        {accountTop === 'otp' && !widgetMissing ? (
+          <View style={styles.pageLayer}>
+            <OtpScreen
+              phone={`+${loginCountry.dial}${loginPhone}`}
+              error={loginError}
+              busy={loginBusy}
+              resendToken={resendToken}
+              onSubmit={submitOtp}
+              onEditPhone={editPhone}
+              onResend={resendOtp}
             />
           </View>
         ) : null}

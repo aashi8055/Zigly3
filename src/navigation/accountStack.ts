@@ -17,8 +17,16 @@ import type { AuthState } from '../account/accountData';
 export type AccountScreen =
   /** The signed-in account screen: profile, then the rows. */
   | 'account'
-  /** The site's own OTP widget, restyled. See ../webview/loginRestyle.ts. */
+  /** Login With OTP: the phone step, drawn natively. ../components/LoginScreen. */
   | 'login'
+  /** The code step, drawn natively. ../components/OtpScreen. */
+  | 'otp'
+  /**
+   * The signup step: first name, last name, email, and the phone the OTP just
+   * proved. SimplyOTP's own form, restyled -- see ../webview/loginRestyle.ts
+   * for why this one step is the widget's and the two before it are not.
+   */
+  | 'signup'
   | 'orders'
   | 'address'
   | 'addressForm'
@@ -30,6 +38,37 @@ export type AccountScreen =
 export type AccountStack = AccountScreen[];
 
 export const EMPTY_ACCOUNT_STACK: AccountStack = [];
+
+/**
+ * The three screens that are all one act: signing in.
+ *
+ * They are named as a set because `resolveAuth` below has to treat them as one.
+ * A customer part-way through an OTP is still signed out, and every account
+ * probe that lands while they are typing says so -- so a rule that answered
+ * "signed out" by collapsing to the login screen would throw away the code they
+ * were entering, on a timer, for as long as they took to enter it.
+ */
+export const LOGIN_FLOW: AccountScreen[] = ['login', 'otp', 'signup'];
+
+/** Whether a screen is part of that act. */
+export const isLoginFlow = (screen: AccountScreen | null): boolean =>
+  screen !== null && LOGIN_FLOW.indexOf(screen) !== -1;
+
+/** Whether the section is showing nothing but that act. */
+const onlyLoginFlow = (stack: AccountStack): boolean =>
+  stack.length > 0 && stack.every(screen => isLoginFlow(screen));
+
+/**
+ * Whether two stacks name the same screens in the same order.
+ *
+ * The login flow is driven by what the widget behind it reports, and the widget
+ * reports its step on every re-render -- so the same answer arrives many times.
+ * Rebuilding the stack from a repeated answer would hand React a new array each
+ * time and re-render the section for nothing. This is how the caller tells a
+ * real move from a restatement.
+ */
+export const sameStack = (a: AccountStack, b: AccountStack): boolean =>
+  a.length === b.length && a.every((screen, i) => screen === b[i]);
 
 /** The screen the user is looking at, or null when the section is closed. */
 export const topScreen = (stack: AccountStack): AccountScreen | null =>
@@ -64,9 +103,11 @@ export const resolveAuth = (
     return stack;
   }
   if (auth === 'signedOut') {
-    return stack.length === 1 && stack[0] === 'login' ? stack : ['login'];
+    // Anywhere inside the login flow is left exactly where it is; see
+    // LOGIN_FLOW above for why that is the whole point of this branch.
+    return onlyLoginFlow(stack) ? stack : ['login'];
   }
-  if (auth === 'signedIn' && stack[stack.length - 1] === 'login') {
+  if (auth === 'signedIn' && isLoginFlow(stack[stack.length - 1])) {
     return ['account'];
   }
   return stack;
