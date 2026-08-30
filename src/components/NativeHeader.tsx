@@ -62,11 +62,30 @@ interface Props {
   showWishlist: boolean;
   showCartIcon: boolean;
   /**
-   * True once the page has been scrolled away from the top. The bar itself
-   * stays pinned; only the search band collapses, matching the brief that the
-   * hamburger, logo and cart remain static while search scrolls away.
+   * True once the band has been carried all the way off by the scroll. The bar
+   * itself stays pinned; only the search band travels, matching the brief that
+   * the hamburger, logo and cart remain static while search scrolls away.
+   *
+   * This is the *settled* state, not the moving one -- it is what gives the
+   * band's layout height back, and what stops the typewriter. The travel
+   * itself is `searchOffset` below.
    */
   searchCollapsed: boolean;
+  /**
+   * How far the band has been carried off, in px, 0..SEARCH_BAND_H.
+   *
+   * The band is not sticky: it belongs to the page's content and leaves with
+   * it. That means its position has to follow the finger continuously rather
+   * than flip between two states -- which is what this carries. The parent
+   * derives it from the WebView's own scroll (down moves it off, up brings it
+   * back from the top, both proportional to the distance travelled), so the
+   * band is wherever the scroll has put it on any given frame.
+   *
+   * An Animated.Value, and only ever read through transform/opacity, so every
+   * frame of that travel is composited off the JS thread -- see the effect
+   * below for why nothing here is allowed to animate layout.
+   */
+  searchOffset?: Animated.Value;
   /**
    * Inner pages swap the hamburger for a back arrow, as the reference app does.
    * The menu stays reachable from the home dashboard.
@@ -190,6 +209,7 @@ const NativeHeader = ({
   cartCount,
   showSearch,
   searchCollapsed,
+  searchOffset,
   showBack,
   showWishlist,
   showCartIcon,
@@ -197,23 +217,54 @@ const NativeHeader = ({
   searchTypeMs = TYPE_MS,
 }: Props) => {
   /**
-   * The band's own fade-and-lift, layered on top of the instant height
-   * change below rather than replacing it.
+   * The band's travel, driven by the scroll rather than by a toggle.
    *
-   * The height snap has to stay instant -- see the comment on it -- so this
-   * never animates height. What it animates is the band's content: opacity
-   * and a small translateY, both compositor properties under
-   * useNativeDriver, so they cost the WebView nothing to run alongside.
-   * Sequenced around the snap rather than simultaneous with it: collapsing
-   * fades the content out first and only then closes the band to 0, so
-   * nothing visibly clips mid-fade; opening reverses that, snapping the band
-   * back to full height (content still invisible) and then fading it in. Each
-   * still costs exactly the one relayout the original fix was written to
-   * bound -- it is only ever scheduled once per toggle, after or before the
-   * animation, never interpolated across it.
+   * The band is part of the page's content, not furniture pinned over it: it
+   * has to leave with the content on the way down and come back from the top
+   * on the way up, at whatever rate the finger moves. So the thing that
+   * positions it is the parent's scroll-derived offset, read straight through
+   * a transform -- not a timing whose duration is fixed in advance and which
+   * would therefore be either ahead of or behind the content it belongs to.
+   *
+   * `fallback` is what stands in when no offset is supplied (the drawer, the
+   * tests, any caller that only knows the boolean). It is driven by the
+   * effect below, so those callers still get a smooth transition rather than
+   * a jump; when an offset IS supplied it is what the band follows, and the
+   * fallback is left alone.
+   *
+   * Either way what moves is opacity and translateY only. Both are compositor
+   * properties under useNativeDriver, so they cost the WebView underneath
+   * nothing to run alongside -- which is the whole reason the band's real
+   * layout height is never what animates; see bandHeight below.
    */
-  const bandOpacity = useRef(new Animated.Value(searchCollapsed ? 0 : 1)).current;
-  const bandLift = useRef(new Animated.Value(searchCollapsed ? -10 : 0)).current;
+  const fallback = useRef(
+    new Animated.Value(searchCollapsed ? SEARCH_BAND_H : 0),
+  ).current;
+  const travel = searchOffset ?? fallback;
+
+  /**
+   * Off by its own height is fully gone; anything less is partly showing.
+   *
+   * clamp:true matters -- an overscroll at the top would otherwise drive the
+   * offset negative and push the band down past where it belongs, leaving a
+   * gap under the bar.
+   */
+  const bandLift = travel.interpolate({
+    inputRange: [0, SEARCH_BAND_H],
+    outputRange: [0, -SEARCH_BAND_H],
+    extrapolate: 'clamp',
+  });
+  /*
+   * Fades over the first half of the travel, so the field is out of sight
+   * before the band's top edge reaches the bar and it never reads as sliding
+   * *under* the furniture above it.
+   */
+  const bandOpacity = travel.interpolate({
+    inputRange: [0, SEARCH_BAND_H / 2],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
   const [bandHeight, setBandHeight] = useState(
     searchCollapsed ? 0 : SEARCH_BAND_H,
   );
@@ -228,50 +279,55 @@ const NativeHeader = ({
     }
 
     if (searchCollapsed) {
-      Animated.timing(bandOpacity, {
-        toValue: 0,
-        duration: BAND_FADE_MS,
-        easing: Easing.in(Easing.quad),
-        useNativeDriver: true,
-      }).start();
-      Animated.timing(bandLift, {
-        toValue: -10,
-        duration: BAND_FADE_MS,
-        easing: Easing.in(Easing.quad),
-        useNativeDriver: true,
-      }).start();
+      /*
+       * Only the fallback is animated here, and only when the parent is not
+       * already positioning the band: with an offset supplied, the scroll has
+       * by definition already carried the band off by the time this runs, and
+       * a timing on top of it would fight what the finger just did.
+       */
+      if (!searchOffset) {
+        Animated.timing(fallback, {
+          toValue: SEARCH_BAND_H,
+          duration: BAND_FADE_MS,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }).start();
+      }
       /*
        * The layout still has to give its space back, but on a plain timer
        * rather than the animation's own completion callback: the callback
        * fires when the platform's animation driver reports "finished", which
        * a fast re-toggle (scroll up, then straight back down) can cancel or
        * delay in ways this file has no control over. A timer matched to the
-       * same duration is what the app actually wants -- the fade has had its
-       * BAND_FADE_MS -- and it is the one thing here a re-toggle can cleanly
-       * cancel, via the cleanup below, rather than leaving a stale callback
-       * to fire after a later toggle already decided something else.
+       * same duration is what the app actually wants -- the travel has had
+       * its BAND_FADE_MS -- and it is the one thing here a re-toggle can
+       * cleanly cancel, via the cleanup below, rather than leaving a stale
+       * callback to fire after a later toggle already decided something else.
        */
       const timer = setTimeout(() => setBandHeight(0), BAND_FADE_MS);
       return () => clearTimeout(timer);
     }
 
+    /*
+     * Opening is the other order: the band's height comes back first, still
+     * translated off by the offset above, and the scroll then walks it down
+     * into place. Restoring height only after the travel finished would mean
+     * revealing into a band that has no room yet, and the first frames of the
+     * reveal would be clipped to nothing.
+     */
     setBandHeight(SEARCH_BAND_H);
-    Animated.timing(bandOpacity, {
-      toValue: 1,
-      duration: BAND_FADE_MS,
-      easing: Easing.out(Easing.quad),
-      useNativeDriver: true,
-    }).start();
-    Animated.timing(bandLift, {
-      toValue: 0,
-      duration: BAND_FADE_MS,
-      easing: Easing.out(Easing.quad),
-      useNativeDriver: true,
-    }).start();
+    if (!searchOffset) {
+      Animated.timing(fallback, {
+        toValue: 0,
+        duration: BAND_FADE_MS,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start();
+    }
     return undefined;
-    // bandOpacity / bandLift are refs to stable Animated.Value instances.
+    // fallback is a ref to a stable Animated.Value instance.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchCollapsed]);
+  }, [searchCollapsed, searchOffset]);
 
   return (
     <View style={styles.root}>
@@ -341,10 +397,15 @@ const NativeHeader = ({
          * Height still moves in ONE step -- not animated -- for the reason
          * written up on bandHeight above: interpolating it was eleven Android
          * WebView resizes mid-scroll and a blank strip for the length of the
-         * animation. What animates instead is bandOpacity / bandLift on the
-         * content below, which are compositor-only and never touch layout, so
-         * the band still reads as leaving with the scroll rather than
-         * vanishing and reappearing between two frames.
+         * animation.
+         *
+         * What follows the scroll instead is bandOpacity / bandLift on the
+         * content below. Both are compositor-only and never touch layout, so
+         * the band can track the finger frame for frame -- leaving with the
+         * content on the way down, coming back from the top on the way up --
+         * while the one relayout this was written to bound still happens
+         * exactly once per settled toggle, at either end of the travel and
+         * never during it.
          */
         <View
           style={[styles.searchBand, { height: bandHeight }]}

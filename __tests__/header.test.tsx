@@ -9,9 +9,10 @@
  */
 import React from 'react';
 import ReactTestRenderer, {type ReactTestInstance} from 'react-test-renderer';
-import {Text} from 'react-native';
+import {Animated, StyleSheet, Text} from 'react-native';
 import NativeHeader from '../src/components/NativeHeader';
 import {ERASE_MS, HOLD_MS, TYPE_MS} from '../src/search/placeholders';
+import {SEARCH_BAND_H} from '../src/search/bandTravel';
 
 const noop = () => {};
 
@@ -47,7 +48,9 @@ const barLabel = (root: ReactTestInstance): string | null => {
   return typeof node.props.children === 'string' ? node.props.children : '';
 };
 
-const render = (props: Partial<typeof baseProps> = {}) => {
+const render = (
+  props: Partial<typeof baseProps> & {searchOffset?: Animated.Value} = {},
+) => {
   let tree!: ReactTestRenderer.ReactTestRenderer;
   ReactTestRenderer.act(() => {
     tree = ReactTestRenderer.create(<NativeHeader {...baseProps} {...props} />);
@@ -291,6 +294,123 @@ describe('collapsing the search band', () => {
     // would start again from the first letter every time the page scrolled.
     const tree = render({searchCollapsed: true});
     expect(barLabel(tree.root)).not.toBeNull();
+  });
+});
+
+describe('the band travels with the scroll rather than toggling', () => {
+  const src = () =>
+    require('fs').readFileSync('src/components/NativeHeader.tsx', 'utf8');
+
+  /** The band's inner animated view -- the one carrying the travel. */
+  const bandStyle = (root: ReactTestInstance) => {
+    const inner = root
+      .findAllByType(Animated.View)
+      .find(v => {
+        const flat = StyleSheet.flatten(v.props.style) || {};
+        return flat.paddingHorizontal === 14 && flat.paddingVertical === 10;
+      });
+    return inner ? StyleSheet.flatten(inner.props.style) : null;
+  };
+
+  /** What an interpolated Animated.Value currently resolves to. */
+  const valueOf = (node: unknown): number =>
+    (node as {__getValue: () => number}).__getValue();
+
+  it('follows the offset continuously, not in two steps', () => {
+    /*
+     * The point of the whole change. A band that is either fully there or
+     * fully gone reads as snapping into place; this one has to be at every
+     * position in between, at whatever fraction of the travel the scroll has
+     * reached.
+     */
+    const offset = new Animated.Value(0);
+    const tree = render({searchOffset: offset});
+
+    const seen: number[] = [];
+    for (const y of [0, 16, 32, 48, 64]) {
+      ReactTestRenderer.act(() => offset.setValue(y));
+      const style = bandStyle(tree.root);
+      seen.push(valueOf(style!.transform[0].translateY));
+    }
+
+    // Distinct, monotonic, and spanning the band's full height -- i.e. it is
+    // being carried, not switched.
+    expect(seen).toEqual([0, -16, -32, -48, -64]);
+  });
+
+  it('clamps at both ends, so overscroll cannot push it out of place', () => {
+    // Past the band's height there is nothing further to give; above the top
+    // of the page a negative offset would otherwise push the band DOWN, away
+    // from the bar, leaving a gap under it.
+    const offset = new Animated.Value(0);
+    const tree = render({searchOffset: offset});
+
+    ReactTestRenderer.act(() => offset.setValue(500));
+    expect(valueOf(bandStyle(tree.root)!.transform[0].translateY)).toBe(-64);
+
+    ReactTestRenderer.act(() => offset.setValue(-500));
+    expect(valueOf(bandStyle(tree.root)!.transform[0].translateY)).toBe(0);
+  });
+
+  it('is out of sight before it reaches the bar above it', () => {
+    // Faded over the first half of the travel, so the field never reads as
+    // sliding underneath the hamburger and the logo.
+    const offset = new Animated.Value(0);
+    const tree = render({searchOffset: offset});
+
+    ReactTestRenderer.act(() => offset.setValue(0));
+    expect(valueOf(bandStyle(tree.root)!.opacity)).toBe(1);
+
+    ReactTestRenderer.act(() => offset.setValue(32));
+    expect(valueOf(bandStyle(tree.root)!.opacity)).toBe(0);
+  });
+
+  it('does not run a timing against an offset the scroll is driving', () => {
+    /*
+     * A timing on top of a scroll-driven value is the abrupt behaviour this
+     * change removes: the finger puts the band somewhere and an animation
+     * immediately starts pulling it somewhere else. The timings are for the
+     * fallback only -- callers that pass no offset at all.
+     */
+    const s = src();
+    expect(s).toContain('if (!searchOffset)');
+    // And the value the timings drive is never the supplied offset.
+    expect(s).not.toMatch(/Animated\.timing\(\s*travel/);
+    expect(s).not.toMatch(/Animated\.timing\(\s*searchOffset/);
+  });
+
+  it('still snaps its layout height, never interpolating it', () => {
+    // The travel is a transform. Height is still the one-step change the
+    // WebView-resize fix requires -- see the suite above.
+    const s = src();
+    expect(s).toContain('style={[styles.searchBand, { height: bandHeight }]}');
+    const heightSets = s.match(/setBandHeight\([^)]*\)/g) || [];
+    // Both ends of the snap, or the loop below would pass on an empty list.
+    expect(heightSets.length).toBeGreaterThanOrEqual(2);
+    for (const call of heightSets) {
+      expect(call).toMatch(/setBandHeight\((0|SEARCH_BAND_H)\)/);
+    }
+  });
+
+  it('travels exactly the height the header lays the band out at', () => {
+    /*
+     * The two are deliberately not imported from one another -- the header
+     * owns the band's layout, ../src/search/bandTravel owns the distance the
+     * scroll has to cover. If they drift, the band either stops short of the
+     * top edge or is asked to keep going after it has already gone.
+     */
+    const s = src();
+    const declared = s.match(/const SEARCH_BAND_H = (\d+);/);
+    expect(declared).not.toBeNull();
+    expect(Number(declared![1])).toBe(SEARCH_BAND_H);
+  });
+
+  it('still transitions smoothly for callers that pass no offset', () => {
+    // The drawer collapses the band without any scroll behind it. Those
+    // callers keep the timed fallback, so it eases rather than jumping.
+    const s = src();
+    expect(s).toContain('const travel = searchOffset ?? fallback;');
+    expect(s).toContain('Animated.timing(fallback');
   });
 });
 

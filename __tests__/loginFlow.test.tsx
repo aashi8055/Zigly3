@@ -41,6 +41,8 @@ import {
 import type {DialCountry} from '../src/account/dialCodes';
 import {
   LOGIN_FLOW,
+  actOnPhase,
+  believeAuth,
   isLoginFlow,
   openAccount,
   popScreen,
@@ -595,6 +597,29 @@ describe('the section knows the login flow is one act', () => {
     expect(openAccount('unknown')).toEqual(['account']);
   });
 
+  it('ignores the phone step the widget reports on its way to a session', () => {
+    // The reported bug: after Submit the OTP screen went back to login for a
+    // second before the dashboard appeared. A correct code makes the widget
+    // tear its verify step down before the page navigates -- '.verify-box'
+    // goes, '.login-box' is briefly unhidden as it resets -- and the driver
+    // honestly reports 'phone' for that frame.
+    expect(actOnPhase('phone', true)).toBe(false);
+    // Not verifying: a phone step is a phone step and is always acted on.
+    expect(actOnPhase('phone', false)).toBe(true);
+  });
+
+  it('never swallows an outcome, only that one intermediate step', () => {
+    // Every real answer acts even mid-verify, so the suppression can delay a
+    // screen but cannot lose a result -- the failure that would turn a visible
+    // flash into a login that silently goes nowhere.
+    (['otp', 'details', 'success', 'missing', 'unknown'] as const).forEach(
+      phase => {
+        expect(actOnPhase(phase, true)).toBe(true);
+        expect(actOnPhase(phase, false)).toBe(true);
+      },
+    );
+  });
+
   it('names the three screens that are all one act', () => {
     expect(LOGIN_FLOW).toEqual(['login', 'otp', 'signup']);
     expect(isLoginFlow('otp')).toBe(true);
@@ -652,6 +677,39 @@ describe('the section knows the login flow is one act', () => {
 });
 
 // ---------------------------------------------------------------------------
+
+describe('a login just watched outranks a probe that has not caught up', () => {
+  // The third fault reported against v15: log in, and the app returns to the
+  // login screen. The probe runs in the dashboard WebView, whose cookie jar
+  // does not yet have the session the login WebView just obtained, so it
+  // honestly answers 'signedOut' for a moment. See believeAuth.
+  const WINDOW = 6000;
+
+  it('disbelieves a signedOut that lands right after a login', () => {
+    // 1000ms after the login completed, well inside the window.
+    expect(believeAuth('signedOut', 10000, 11000, WINDOW)).toBe(false);
+  });
+
+  it('believes it again once the window has passed', () => {
+    // The suppression must expire on its own: a rule that never let go would
+    // be an app that could not sign anyone out.
+    expect(believeAuth('signedOut', 10000, 16000, WINDOW)).toBe(true);
+    expect(believeAuth('signedOut', 10000, 30000, WINDOW)).toBe(true);
+  });
+
+  it('never disbelieves anything when no login has been watched', () => {
+    // 0 is "no login on record", which is the ordinary case -- a cold start,
+    // or a session that has simply been there all along.
+    expect(believeAuth('signedOut', 0, 11000, WINDOW)).toBe(true);
+  });
+
+  it('only ever delays a signedOut, never any other answer', () => {
+    // signedIn is the answer this rule exists to protect, so it is always
+    // believed; 'unknown' is not an answer at all.
+    expect(believeAuth('signedIn', 10000, 11000, WINDOW)).toBe(true);
+    expect(believeAuth('unknown', 10000, 11000, WINDOW)).toBe(true);
+  });
+});
 
 describe('the bridge to the widget', () => {
   it('reads every step the widget can be on', () => {
@@ -871,6 +929,25 @@ describe('the section wires the flow the way the brief asks', () => {
     expect(text).toContain("if (data.state === 'missing')");
     expect(text).toContain('setWidgetMissing(true)');
     expect(text).toContain('setWidgetMissing(false)');
+  });
+
+  it('re-asks the site rather than trusting the fresh-login mark', () => {
+    // The rule delays one answer; it must not become the app's own opinion of
+    // the session. applyAuth schedules a fresh probe at the end of the window,
+    // so what the app finally settles on is what the site said.
+    const text = src();
+    expect(text).toContain('believeAuth(state, signedInAt.current');
+    expect(text).toContain('probeAccountRef.current(), FRESH_LOGIN_MS');
+  });
+
+  it('lets a log-out the customer pressed through immediately', () => {
+    // The other side of the rule. Signing out right after signing in is a
+    // thing people do, and that reply is the most direct evidence there is --
+    // so signOut clears the mark before it asks.
+    const text = src();
+    const at = text.indexOf('const signOut = useCallback');
+    expect(at).toBeGreaterThan(-1);
+    expect(text.slice(at, at + 900)).toContain('signedInAt.current = 0;');
   });
 
   it('stands the bottom bar down for every step of the flow', () => {

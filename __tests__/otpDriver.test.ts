@@ -26,6 +26,7 @@ import {
   driveResend,
   driveSendOtp,
   driveSubmitOtp,
+  otpErrorText,
   readPhase,
 } from '../src/webview/otpDriver';
 
@@ -112,10 +113,15 @@ describe('it drives -- which is the whole point of this file', () => {
     // list. This is the bug that made a valid Indian number fail, so the
     // ordering is asserted rather than assumed.
     expect(OTP_DRIVER).toContain('ZO.pick');
-    expect(driveSendOtp('91', '1', 'IN')).toContain('ZO.pick(box,');
     const order = driveSendOtp('91', '1', 'IN');
-    const active = order.indexOf('.input-box-content.active .user-name-input');
-    const fallback = order.indexOf('input.olInput');
+    expect(order).toContain('ZO.pick(box,');
+    // The order that matters is the one inside the selector list handed to
+    // ZO.pick, not the first mention of either string anywhere in the payload
+    // -- ZO.wakeCaptcha names 'input.olInput.user-name-input' earlier, for an
+    // unrelated reason. So the list itself is what gets measured.
+    const list = order.slice(order.indexOf('ZO.pick(box,'));
+    const active = list.indexOf('.input-box-content.active .user-name-input');
+    const fallback = list.indexOf('input.olInput,');
     expect(active).toBeGreaterThan(-1);
     expect(fallback).toBeGreaterThan(active);
   });
@@ -126,6 +132,24 @@ describe('it drives -- which is the whole point of this file', () => {
     expect(OTP_DRIVER).toContain("ZO.fire(el, 'input')");
     expect(OTP_DRIVER).toContain("ZO.fire(el, 'change')");
     expect(OTP_DRIVER).toContain('bubbles: true');
+  });
+
+  it('fills the hidden field the widget actually submits', () => {
+    // The six visible boxes are presentation only on the new popup design: the
+    // code is posted from '.otp-input-main', and the widget's own SMS autofill
+    // writes both. Filling only the boxes posts an empty otp, the server
+    // refuses it, and the widget then walks itself back to its phone step via
+    // manageOTPBox -> goBack -- which is why Submit bounced to the login
+    // screen. The write comes before the press, like every other field here.
+    const script = driveSubmitOtp('123456');
+    expect(script).toContain(".querySelector('.otp-input-main')");
+    expect(script).toContain('ZO.write(main, CODE)');
+    expect(script.indexOf('ZO.write(main, CODE)')).toBeGreaterThan(
+      script.indexOf('ZO.write(boxes[i]'),
+    );
+    expect(script.indexOf('button.click()')).toBeGreaterThan(
+      script.indexOf('ZO.write(main, CODE)'),
+    );
   });
 
   it('fills every OTP box, not only the first', () => {
@@ -160,8 +184,44 @@ describe('what it must never do', () => {
     // an OTP charged to the wrong country is worse than a visible failure.
     expect(script).toContain('function onCountry()');
     expect(script).toContain('return onCountry() && send()');
-    // And when it cannot be confirmed, it says so instead of sending anyway.
-    expect(script).toContain("ZO.fail('phone', 'country did not change')");
+    // A country that is not in the widget's list at all is still refused -- the
+    // send is never made against a country this driver could not find.
+    expect(script).toContain("ZO.fail('phone', 'country not found in the list')");
+  });
+
+  it('treats an unmarked default as the country it is showing', () => {
+    // The reported bug. The widget writes 'data-selected-country' from its own
+    // selectCountry, which does not run until a row is CLICKED -- so before any
+    // interaction the attribute is absent while the cell already displays the
+    // shop's default. Reading that as "wrong country" sent the driver off to
+    // re-pick India when India was already selected, and the send made without
+    // that click came back as an invalid request.
+    //
+    // So the widget's own list is consulted: the row it marks selected, or the
+    // only row there is on a single-country shop (this one -- the live config
+    // carries enable_countries "IN"). Read, never clicked.
+    const script = driveSendOtp('91', '9004976917', 'IN');
+    expect(script).toContain("li.selected[data-country-code]");
+    expect(script).toContain('rows.length === 1');
+    // Still a read: nothing in that fallback presses anything.
+    const start = script.indexOf('var list = document.querySelector');
+    const end = script.indexOf('function rowFor');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(script.slice(start, end)).not.toContain('.click()');
+  });
+
+  it('sends after clicking the right row even if no marker follows', () => {
+    // A template whose selectCountry stamps none of the attributes onCountry
+    // can read is not a wrong country: the row was matched on the widget's own
+    // data-country-code, so its internal selectedCountry is ours whether or not
+    // it advertised the fact. Failing here abandoned a send that would have
+    // worked, which is the other half of the reported bug.
+    const script = driveSendOtp('91', '9004976917', 'IN');
+    expect(script).toContain('function () { send(); }');
+    // The old give-up is gone; nothing reports the country as unchanged after a
+    // click that landed on the correct row.
+    expect(script).not.toContain("'country did not change'");
   });
 
   it('confirms the country the way the widget itself resolves it', () => {
@@ -181,6 +241,97 @@ describe('what it must never do', () => {
     const script = driveSendOtp('1', '2025550123', 'US');
     expect(script).toContain("rows[i].getAttribute('data-country-code')");
     expect(script).toContain('=== ISO');
+  });
+
+  it('never gates the send on a captcha it cannot actually observe', () => {
+    // A revision of this file held the press until `captchaReady()` said yes,
+    // and that function's last resort read
+    // `window.simplyOtp.otp_widgets.recaptcha_enabled` -- a global this shop
+    // does not publish and that nothing in this repo has ever observed. Whether
+    // the widget attaches a token is decided inside its own closure and is not
+    // visible from here, so a gate built on it can only ever guess. It guessed
+    // wrong and no OTP was sent at all.
+    //
+    // The rule that replaces it: the send path may OBSERVE a captcha, never
+    // wait on one. The widget decides; this file presses the button.
+    const script = driveSendOtp('91', '9004976917', 'IN');
+    expect(script).not.toContain('captchaReady');
+    expect(script).not.toContain('simplyOtp');
+    expect(OTP_DRIVER).not.toContain('simplyOtp');
+    // Once the number is written, nothing may bail out before the press: the
+    // guard above it is the honest one (no field, no button -- retry), and a
+    // second `return false` after it is how the captcha gate stopped the send.
+    const written = script.indexOf('ZO.write(input, DIGITS)');
+    const pressed = script.indexOf('button.click()');
+    expect(written).toBeGreaterThan(-1);
+    expect(pressed).toBeGreaterThan(written);
+    expect(script.slice(written, pressed)).not.toContain('return false');
+  });
+
+  it('wakes the lazy captcha on the ONE field it also writes to', () => {
+    // Some builds attach the captcha script on first focus/click of a phone
+    // input, which a driver that only assigns .value never fires. So the events
+    // are dispatched -- but on the single field chosen by ZO.pick, never in a
+    // loop over every '.user-name-input'.
+    //
+    // That is the whole distinction. The widget renders three of these and
+    // reads only the one inside '.input-box-content.active'; waking them in a
+    // loop leaves the LAST one focused rather than the one the number goes
+    // into, so the widget reads an empty box and sends '91NaN'. Waking exactly
+    // the element we then write to cannot desync the two.
+    const script = driveSendOtp('91', '9004976917', 'IN');
+    expect(script).toContain("ZO.fire(input, 'focus')");
+    expect(script).toContain("ZO.fire(input, 'click')");
+    // No loop over the sibling fields, which is the bug being locked out.
+    expect(script).not.toContain('fields[i]');
+    expect(script).not.toContain('wakeCaptcha');
+    // Woken before the value is written, so the script has the head start.
+    expect(script.indexOf("ZO.fire(input, 'focus')")).toBeLessThan(
+      script.indexOf('ZO.write(input, DIGITS)'),
+    );
+  });
+
+  it('reports the captcha state at the press, and only there', () => {
+    // A diagnostic, not a decision: it tells a send that went out untokened
+    // apart from one that was never pressed. Kept out of ZO.sweep on purpose --
+    // the useful question is what was available when the button was pressed,
+    // not what flickers past as scripts load.
+    const script = driveSendOtp('91', '1', 'IN');
+    expect(OTP_DRIVER).toContain('ZO.reportCaptcha');
+    expect(OTP_DRIVER).toContain("tag: 'otp-captcha'");
+    expect(OTP_DRIVER).not.toContain('ZO.reportCaptcha();\n    };');
+    // Observed just before the press it describes.
+    expect(script.indexOf('ZO.reportCaptcha()')).toBeLessThan(
+      script.indexOf('button.click()'),
+    );
+  });
+
+  it('observes exactly what the widget itself would use', () => {
+    // Same names, same order: grecaptcha.enterprise, else hcaptcha. Reporting
+    // on something the widget would not have used would describe a send that
+    // never happened.
+    expect(OTP_DRIVER).toContain('window.grecaptcha.enterprise');
+    expect(OTP_DRIVER).toContain('window.hcaptcha');
+  });
+
+  it('still names the control when a send genuinely cannot be made', () => {
+    // The honest failure that remains: the button was not in the page at all.
+    // No captcha wording, because the driver no longer claims to know that.
+    const script = driveSendOtp('91', '1', 'IN');
+    expect(script).toContain("ZO.fail('phone', 'send button not found')");
+    expect(script).not.toContain('captcha not ready');
+    expect(otpErrorText('phone', '', 'send button not found')).toBe(
+      'Could not send the code. Please try again.',
+    );
+  });
+
+  it('reads the toast the widget complains through', () => {
+    // sendOtpHandler shows the OTP screen unconditionally -- otpAction() then
+    // showOtpBox(), with no wait for the answer -- so a refused send does not
+    // leave the customer on the phone step to read an inline span. The reason
+    // arrives as a toast instead, and reading only the spans is what made a
+    // failed send look like silence.
+    expect(OTP_DRIVER).toContain('.toast-card.error');
   });
 
   it('writes no error message of its own', () => {
@@ -217,8 +368,14 @@ describe('what it must never do', () => {
   it('leaves the resend captcha and countdown alone', () => {
     // #hcaptcha-container-resend lives inside .resend-otp, and the countdown is
     // the widget's own: a resend pressed early is its refusal to make, not ours.
+    //
+    // What is forbidden is TOUCHING those elements -- the container and the
+    // countdown. Reading `window.hcaptcha` is the opposite: it is how the
+    // driver knows to WAIT for the captcha rather than press Send without one
+    // (see the captchaReady tests above), so the bare word is not the test.
     PAYLOADS.forEach(([, script]) => {
-      expect(script).not.toContain('hcaptcha');
+      expect(script).not.toContain('hcaptcha-container');
+      expect(script).not.toContain('#hcaptcha');
       expect(script).not.toContain('count-down-otp');
     });
   });
@@ -281,11 +438,13 @@ describe('bounded, so a missing control reports rather than spins', () => {
   it('gives up after a stated number of tries', () => {
     expect(DRIVE_TRIES).toBeGreaterThan(0);
     expect(DRIVE_POLL_MS).toBeGreaterThan(0);
-    // Long enough for a step the widget rebuilds after its own validation,
-    // short enough that a real failure is reported while the customer is still
-    // looking at the screen.
+    // Long enough for the slowest thing actually waited on -- Google's
+    // reCAPTCHA script, fetched from the network the first time the phone field
+    // is touched, which is seconds on mobile data rather than frames. Still
+    // comfortably inside the native watchdog (OTP_SEND_TIMEOUT_MS, 25s), so a
+    // send that never lands is still reported while the customer is looking.
     expect(DRIVE_TRIES * DRIVE_POLL_MS).toBeGreaterThanOrEqual(2000);
-    expect(DRIVE_TRIES * DRIVE_POLL_MS).toBeLessThanOrEqual(8000);
+    expect(DRIVE_TRIES * DRIVE_POLL_MS).toBeLessThanOrEqual(20000);
     expect(OTP_DRIVER).toContain(`tries >= ${DRIVE_TRIES}`);
     expect(OTP_DRIVER).toContain(`setTimeout(tick, ${DRIVE_POLL_MS});`);
   });

@@ -88,6 +88,72 @@ export const openAccount = (auth: AuthState): AccountStack =>
   auth === 'signedOut' ? ['login'] : ['account'];
 
 /**
+ * Whether a step the widget just reported should be acted on at all.
+ *
+ * There is exactly one case where it should not, and it is the flash between
+ * Submit and the dashboard. A correct code makes the widget tear its verify
+ * step down BEFORE the page navigates: '.verify-box' goes away, '.login-box' is
+ * briefly unhidden as the widget resets itself, and only then does the session
+ * land. The driver reads that intermediate frame honestly and reports 'phone',
+ * so the app rebuilt the login screen for a moment -- a customer who had just
+ * typed a correct code being shown "log in" on the way to being logged in.
+ *
+ * `verifying` is true from Submit until something answers it. While it is, a
+ * report of the phone step is the widget unwinding rather than a step the
+ * customer is on, and is ignored.
+ *
+ * Deliberately narrow. Only 'phone', and only while a verdict is outstanding:
+ * 'otp', 'details', 'success' and 'missing' are all real answers and always act,
+ * so this can delay a screen but never swallow an outcome. The widget remains
+ * the authority on which step it is on -- this says only which of its reports
+ * describes a screen worth showing.
+ */
+export const actOnPhase = (
+  phase: AccountPhase,
+  verifying: boolean,
+): boolean => !(verifying && phase === 'phone');
+
+/**
+ * The steps a widget report can name.
+ *
+ * Kept structural rather than importing LoginPhase from ../webview/otpDriver:
+ * this module is the navigation layer and does not otherwise know that the
+ * driver exists, and the rule above only ever asks about 'phone'.
+ */
+export type AccountPhase = string;
+
+/**
+ * Whether an auth answer should be believed, given a login just completed.
+ *
+ * The third fault reported against v15: sign in, and the app bounces straight
+ * back to the login screen. It is a race between two WebViews rather than a
+ * navigation mistake. The login completes in the LOGIN WebView -- that is where
+ * the widget verified the code and where Shopify set the session cookie -- and
+ * the app then probes /account inside the DASHBOARD WebView. Android's
+ * CookieManager does not publish the new cookie to the second WebView
+ * synchronously, so for a moment that fetch goes out with the pre-login jar,
+ * /account redirects to /account/login, and the probe reports 'signedOut' in
+ * perfect good faith. Believing it over the login just watched to succeed is
+ * what collapsed the section back to the login screen.
+ *
+ * So a 'signedOut' is disbelieved for a short window after a login, and ONLY
+ * then. Everything else is believed immediately, including every 'signedOut'
+ * once the window has passed -- a session that genuinely expires still signs
+ * the customer out, and the caller re-probes at the end of the window so the
+ * app settles on what the site says rather than on this rule.
+ *
+ * `since` is 0 when no login has been watched, which is the ordinary case and
+ * believes everything.
+ */
+export const believeAuth = (
+  state: AuthState,
+  since: number,
+  now: number,
+  window: number,
+): boolean =>
+  !(state === 'signedOut' && since !== 0 && now - since < window);
+
+/**
  * Apply an auth answer that arrived while the section was open.
  *
  * Signing out from anywhere in the section collapses it to the login screen,

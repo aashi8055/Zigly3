@@ -35,6 +35,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   Alert,
+  Animated,
   BackHandler,
   Linking,
   StyleSheet,
@@ -86,6 +87,7 @@ import {
   buildSectionPrewarmScript,
   SECTION_WARM_SCRIPT,
 } from '../webview/sectionPrewarm';
+import {isSettledOff, nextTravel} from '../search/bandTravel';
 import {log, warn} from '../utils/logger';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
 import type {CoverVariant} from '../components/PageCover';
@@ -206,6 +208,7 @@ import {
   parseCustomer,
   parseOrders,
 } from '../account/accountData';
+import {loadAuthHint, saveAuthHint} from '../account/authHint';
 import type {
   Address,
   AddressFields,
@@ -216,6 +219,8 @@ import type {
   ProfileEdits,
 } from '../account/accountData';
 import {
+  actOnPhase,
+  believeAuth,
   EMPTY_ACCOUNT_STACK,
   closeAccount,
   isLoginFlow,
@@ -395,6 +400,18 @@ const OTP_SEND_TIMEOUT_MS = 25000;
  * section: one closes it, and the other hands the WebView to the customer. See
  * applyLoginPhase.
  */
+/**
+ * How long a completed login outranks a probe that says otherwise.
+ *
+ * The window only has to cover the gap between Shopify setting the session
+ * cookie in the login WebView and Android's CookieManager making it visible to
+ * the dashboard WebView that does the probing -- a flush, not a network round
+ * trip. Six seconds is far longer than that gap and far shorter than any
+ * session, so it cannot mask a real expiry: the re-probe applyAuth schedules
+ * lands at the end of it and is believed whatever it says.
+ */
+const FRESH_LOGIN_MS = 6000;
+
 const STACK_FOR_PHASE: Record<'phone' | 'otp' | 'details', AccountStack> = {
   phone: ['login'],
   otp: ['login', 'otp'],
@@ -515,8 +532,39 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const [facetBusy, setFacetBusy] = useState(false);
   const listingSheetRef = useRef<'sort' | 'filter' | null>(null);
-  /** True once scrolled away from the top; collapses the search band. */
+  /**
+   * True once the band has been carried fully off; gives its height back.
+   *
+   * The settled end of the travel below, not the travel itself -- see
+   * handleScroll.
+   */
   const [searchCollapsed, setSearchCollapsed] = useState(false);
+  /**
+   * How far the search band has been carried off, 0..SEARCH_BAND_H.
+   *
+   * The band is not sticky. It belongs to the page's content, so it leaves
+   * with the content on the way down and is drawn back from the top on the way
+   * up, both at the rate the finger moves -- which is what this holds, and why
+   * it is an offset rather than the boolean it used to be.
+   *
+   * setValue rather than a timing: the number is already the answer on every
+   * frame, and interposing an animation between the finger and the band is
+   * exactly what made it read as jumping into place rather than following.
+   * Nothing here touches layout -- the header only ever reads it through a
+   * transform -- so a value written per scroll event costs the WebView
+   * underneath nothing.
+   */
+  const searchOffset = useRef(new Animated.Value(0)).current;
+  /**
+   * The scroll positions the travel is measured between.
+   *
+   * `lastY` is where the previous event left the page, so a delta gives the
+   * direction and distance. `travel` is the band's own offset, kept here as a
+   * plain number because an Animated.Value cannot be read back synchronously
+   * and the next frame's answer is derived from this one's.
+   */
+  const lastScrollY = useRef(0);
+  const bandTravel = useRef(0);
   /** Shown when the page reports an add; the site still owns the cart. */
   const [cartToast, setCartToast] = useState(false);
   /**
@@ -662,6 +710,46 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const [widgetMissing, setWidgetMissing] = useState(false);
   /** The widget's own current step, read from native callbacks. */
   const loginPhaseRef = useRef<LoginPhase>('unknown');
+  /**
+   * A code has been submitted and no verdict has come back yet.
+   *
+   * Set on Submit and cleared by whatever answers it -- a session, the signup
+   * step, an error, or the watchdog. While it is set, a report of the *phone*
+   * step is not acted on, and that exception is the whole reason it exists.
+   *
+   * A correct code makes the widget tear its verify step down before it
+   * navigates: '.verify-box' goes away, '.login-box' is briefly unhidden again
+   * as the widget resets itself, and only then does the page move to the
+   * account URL. The driver reads that intermediate frame honestly and reports
+   * 'phone', so the app dutifully rebuilt the login screen -- which is the
+   * flash of "log in again" seen between Submit and the dashboard.
+   *
+   * The widget is still the authority on which step it is on. This says only
+   * that a step it reports on its way OUT of a verify is not a step the
+   * customer should be shown, which is a statement about screens and not about
+   * the widget's state.
+   */
+  const verifyingRef = useRef(false);
+  /**
+   * When this app last watched a login complete. 0 when it has not.
+   *
+   * Read only by applyAuth, which explains in full what it is for: the cookie
+   * the login set is not instantly visible to the dashboard WebView that does
+   * the probing, so for a moment the site honestly answers 'signedOut' to a
+   * customer who has just signed in. A timestamp rather than a boolean because
+   * the suppression has to expire on its own -- a flag nobody cleared would be
+   * an app that could never sign anyone out again.
+   */
+  const signedInAt = useRef(0);
+  /**
+   * probeAccount, reachable from callbacks defined above it.
+   *
+   * applyAuth needs to re-ask after the fresh-login window, and is declared
+   * first because half the file depends on it. A ref rather than a reordering:
+   * moving probeAccount above applyAuth would only move the same problem, since
+   * it is injectInto that both of them sit below.
+   */
+  const probeAccountRef = useRef<() => void>(() => {});
   /** Fires when a send goes unanswered. See OTP_SEND_TIMEOUT_MS. */
   const sendWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
@@ -726,6 +814,39 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * What the last launch knew, so this one does not open on 'unknown'.
+   *
+   * The session survives a relaunch in the cookie jar, but the app's knowledge
+   * of it does not: `auth` starts at 'unknown' and only ACCOUNT_PROBE settles
+   * it, which cannot happen until the dashboard has loaded and answered. Tapping
+   * Account inside that window is what showed a signed-in customer the login
+   * form. See ../account/authHint.
+   *
+   * Applied through setAuth and NOT through applyAuth, which is the important
+   * part. applyAuth rebuilds the account stack and would move a section the
+   * customer may already have opened; this only seeds the value that decides
+   * what a LATER tap opens. It also writes nothing back, so a hint cannot
+   * refresh its own timestamp and outlive the truth.
+   *
+   * Never overrides a real answer. If the probe has already replied by the time
+   * this read lands -- entirely possible, both are async -- the hint is dropped:
+   * it is strictly the weaker source, and the whole design of this file is that
+   * the probe is the authority.
+   */
+  useEffect(() => {
+    let live = true;
+    loadAuthHint().then(hint => {
+      if (!live || hint === 'unknown') {
+        return;
+      }
+      setAuth(prev => (prev === 'unknown' ? hint : prev));
+    });
+    return () => {
+      live = false;
+    };
   }, []);
 
   // ---------------------------------------------------------------- network
@@ -929,13 +1050,32 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   );
 
   /**
+   * Put the band back at the top, whole.
+   *
+   * Both halves, together: the boolean alone would hand the band its layout
+   * height back while the offset still had it translated off, which is a 64px
+   * band of empty page colour under the bar. Every place that decides the band
+   * should be showing again goes through this.
+   *
+   * Written straight rather than animated -- these are page changes, not
+   * gestures. There is no travel to follow, and easing a band down over a page
+   * that is already at the top is the abrupt-looking thing, not the smooth one.
+   */
+  const resetSearchBand = useCallback(() => {
+    lastScrollY.current = 0;
+    bandTravel.current = 0;
+    searchOffset.setValue(0);
+    setSearchCollapsed(false);
+  }, [searchOffset]);
+
+  /**
    * The search band describes whatever is on screen, so it opens when a
-   * different page comes to the front instead of inheriting the collapsed state
+   * different page comes to the front instead of inheriting the scroll state
    * of the one that was scrolled.
    */
   useEffect(() => {
-    setSearchCollapsed(false);
-  }, [showing?.key]);
+    resetSearchBand();
+  }, [showing?.key, resetSearchBand]);
 
   // ---------------------------------------------------------------- injection
   /**
@@ -1353,6 +1493,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     injectInto('home', ACCOUNT_PROBE);
   }, [injectInto]);
 
+  probeAccountRef.current = probeAccount;
+
   const probeAddresses = useCallback(() => {
     setAddresses(null);
     injectInto('home', ADDRESSES_PROBE);
@@ -1377,8 +1519,52 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * customer, and treating it as one would sign people out on a dropped packet.
    */
   const applyAuth = useCallback((state: AuthState) => {
+    /*
+     * A 'signedOut' arriving in the seconds after a completed login is a stale
+     * read, not a sign-out.
+     *
+     * This is the third reported bug: sign in, and the app bounces back to the
+     * login screen. The sequence is a race between two WebViews. The login
+     * completes in the LOGIN WebView -- that is where the widget verified the
+     * code and where Shopify set the session cookie -- and the app immediately
+     * calls probeAccount(), which fetches /account inside the DASHBOARD
+     * WebView. On Android those two do not share a cookie jar synchronously:
+     * CookieManager flushes to disk on its own schedule, so for a moment the
+     * dashboard's fetch goes out with the pre-login jar, /account 302s to
+     * /account/login, and ZA.load reports 'signedOut' in perfect good faith.
+     * applyAuth then believed it over the login it had just watched succeed,
+     * and resolveAuth collapsed the section back to ['login'].
+     *
+     * So a completed login wins for a short window. Not for ever, and not over
+     * everything: a signOut the customer PRESSED goes through this too, and
+     * must not be second-guessed, which is why it clears the mark before it
+     * asks. What is suppressed is exactly one thing -- a probe's 'signedOut'
+     * landing on the heels of a login this app watched complete -- and after
+     * the window it is believed like any other, so a session that genuinely
+     * expires still signs the customer out.
+     */
+    if (!believeAuth(state, signedInAt.current, Date.now(), FRESH_LOGIN_MS)) {
+      warn('ignoring signedOut within the fresh-login window');
+      // Ask again once the jar has had time to settle, so the app is not left
+      // trusting a mark instead of the site.
+      setTimeout(() => probeAccountRef.current(), FRESH_LOGIN_MS);
+      return;
+    }
+    // Either a login just landed, or the question is settled and the mark has
+    // no further work to do.
+    signedInAt.current = state === 'signedIn' ? Date.now() : 0;
     setAuth(state);
     setAccountScreens(prev => resolveAuth(prev, state));
+    /*
+     * Write the answer down for the next launch.
+     *
+     * Only a definite one: 'unknown' is the absence of an answer and this
+     * function is already documented as leaving those alone. Fire-and-forget,
+     * because nothing on this screen waits for it -- see ../account/authHint.
+     */
+    if (state !== 'unknown') {
+      saveAuthHint(state);
+    }
     if (state === 'signedOut') {
       setCustomer(null);
       setOrders(null);
@@ -1406,6 +1592,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     setLoginBusy(false);
     setWidgetMissing(false);
     loginPhaseRef.current = 'unknown';
+    // No verify can be outstanding in a WebView that is about to be rebuilt.
+    verifyingRef.current = false;
     // Always to the front. Page layers are drawn over the section, so a section
     // opened from a link inside a page -- the drawer's Login/Register, say --
     // would otherwise open underneath the page it was opened from.
@@ -1464,6 +1652,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       clearSendWatchdog();
       sendWatchdog.current = setTimeout(() => {
         sendWatchdog.current = null;
+        // Nothing answered in time, so the verify is no longer in flight and
+        // the phone step must be listened to again. Leaving this set would
+        // hide a widget that had genuinely gone back to asking for a number.
+        verifyingRef.current = false;
         setLoginBusy(false);
         if (say !== null) {
           setLoginError(say);
@@ -1499,7 +1691,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
 
+      if (!actOnPhase(phase, verifyingRef.current)) {
+        // The widget resetting itself on the way to a session, not a step the
+        // customer is on. See actOnPhase and verifyingRef. The busy state is
+        // deliberately left alone: the code is still being checked, and freeing
+        // the screen here would flash an idle login form for the same moment.
+        return;
+      }
+
       if (phase === 'success') {
+        verifyingRef.current = false;
         clearSendWatchdog();
         setLoginBusy(false);
         // Scenario A and the end of scenario B are the same ending: a session
@@ -1524,7 +1725,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       });
 
       if (phase === 'otp' || phase === 'details') {
-        // The step moved, so whatever was being waited on has happened.
+        // The step moved, so whatever was being waited on has happened. The
+        // signup form is a verdict on the code as much as a session is, so it
+        // ends the verify too; 'otp' is the step a verify starts from and
+        // cannot be its answer, which is why only 'details' clears the flag.
+        if (phase === 'details') {
+          verifyingRef.current = false;
+        }
         clearSendWatchdog();
         setLoginBusy(false);
         setLoginError(null);
@@ -1574,6 +1781,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     (code: string) => {
       setLoginError(null);
       setLoginBusy(true);
+      // A verdict is now outstanding, so the widget tearing its verify step
+      // down is not a step to show. Cleared by whatever answers -- see
+      // verifyingRef.
+      verifyingRef.current = true;
       armSendWatchdog(null);
       injectInto('login', driveSubmitOtp(code));
     },
@@ -1598,6 +1809,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /** Edit phone number. The widget is taken back by the effect below. */
   const editPhone = useCallback(() => {
     setLoginError(null);
+    // Going back to the phone step on purpose, so reports of it are wanted.
+    verifyingRef.current = false;
     setAccountScreens(['login']);
   }, []);
 
@@ -1677,7 +1890,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
 
+      if (data.tag === 'otp-captcha') {
+        // Diagnostic only. The provider answers 'Invalid request' for a missing
+        // reCAPTCHA token and says nothing else, so this records whether the
+        // script the widget needs actually arrived in this WebView. It moves
+        // nothing and shows nothing; see reportCaptcha in ../webview/otpDriver.
+        log('otp captcha:', String(data.state));
+        return;
+      }
+
       if (data.tag === 'otp-error') {
+        // An answer, so the verify is over however it went. A rejected code
+        // leaves the widget on its verify step and the customer on the OTP
+        // screen reading why; what must not survive is the suppression, or a
+        // later genuine return to the phone step would be ignored.
+        verifyingRef.current = false;
         clearSendWatchdog();
         setLoginBusy(false);
         const step: OtpStep = data.step === 'otp' ? 'otp' : 'phone';
@@ -1973,6 +2200,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     (reason: SignOutReason) => {
       setAccountNotice(null);
       signOutReason.current = reason;
+      /*
+       * The fresh-login window must not outrank this.
+       *
+       * applyAuth ignores a 'signedOut' that lands just after a login, because
+       * there it is a stale cookie jar rather than an answer. A sign-out the
+       * customer asked for is the opposite: it is the most direct evidence
+       * there is, and a customer who signed in and immediately signed out again
+       * would otherwise have the reply swallowed and stay on the account
+       * screen. Cleared here, before the request goes out, so the confirmation
+       * is believed whenever it arrives.
+       */
+      signedInAt.current = 0;
       setToastMessage(SIGN_OUT_MESSAGE[reason]);
       injectInto('home', LOGOUT_SCRIPT);
     },
@@ -2378,8 +2617,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const handleNavStateChange = useCallback((nav: WebViewNavigation) => {
     canGoBackRef.current = nav.canGoBack;
 
-    // A new page starts at the top; do not carry the collapsed state across.
-    setSearchCollapsed(false);
+    // A new page starts at the top; do not carry the band's travel across.
+    resetSearchBand();
 
     const nowInCheckout = isCheckoutUrl(nav.url);
     if (nowInCheckout !== inCheckoutRef.current) {
@@ -2390,7 +2629,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       setInCheckout(nowInCheckout);
       log(nowInCheckout ? 'entered checkout flow' : 'left checkout flow');
     }
-  }, []);
+  }, [resetSearchBand]);
 
   const handleLoadEnd = useCallback(
     (event: {nativeEvent: {url: string}}) => {
@@ -2409,22 +2648,37 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   );
 
   /**
-   * Collapse the search band on scroll, restore it near the top.
+   * Carry the search band with the page, rather than toggling it.
    *
-   * Hysteresis on purpose: collapsing at 48px but only restoring below 12px
-   * stops the band flickering open and shut when a finger rests mid-scroll.
+   * The arithmetic -- direction, rate, and the cases that are not gestures at
+   * all -- lives in ../search/bandTravel, where it can be tested against a
+   * reversal mid-scroll and a page change. What is left here is the wiring:
+   * write the new offset, and let the boolean follow it.
    */
-  const handleScroll = useCallback((y: number) => {
-    setSearchCollapsed(prev => {
-      if (!prev && y > 48) {
-        return true;
+  const handleScroll = useCallback(
+    (y: number) => {
+      const previous = lastScrollY.current;
+      lastScrollY.current = y;
+
+      const next = nextTravel(bandTravel.current, previous, y);
+      if (next === bandTravel.current) {
+        return;
       }
-      if (prev && y < 12) {
-        return false;
-      }
-      return prev;
-    });
-  }, []);
+      bandTravel.current = next;
+
+      /*
+       * setValue rather than a timing: the number is already the answer for
+       * this frame, and interposing an animation between the finger and the
+       * band is exactly what made it read as jumping into place rather than
+       * following. Nothing here touches layout -- the header reads it through
+       * a transform only -- so a write per scroll event costs the WebView
+       * underneath nothing.
+       */
+      searchOffset.setValue(next);
+      setSearchCollapsed(prev => isSettledOff(prev, next));
+    },
+    [searchOffset],
+  );
 
   /** Every account reply. Returns true when the message was one of ours. */
   const handleAccountMessage = useCallback(
@@ -2773,6 +3027,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // animation carries it, so the band folds away as the panel slides in
         // rather than vanishing.
         searchCollapsed={searchCollapsed || menuOpen}
+        // The travel itself. The header reads it through a transform only, so
+        // the band follows the scroll frame for frame without a relayout.
+        searchOffset={menuOpen ? undefined : searchOffset}
         searchPlaceholders={searchPlaceholders}
         searchTypeMs={searchTypeMs}
         showBack={
@@ -2807,6 +3064,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           injectedJavaScriptBeforeContentLoaded={HOME_EARLY_SCRIPT}
           onShouldStartLoadWithRequest={handleHomeShouldStart}
           onNavigationStateChange={handleNavStateChange}
+          /*
+           * Fires per frame, which is what the band's travel needs -- the
+           * RNCWebView dispatches from onScrollChanged through React Native's
+           * own OnScrollDispatchHelper, so there is no scrollEventThrottle to
+           * set here (the prop does not exist on this component) and none is
+           * needed.
+           */
           onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
             handleScroll(e.nativeEvent.contentOffset.y)
           }
