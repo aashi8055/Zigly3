@@ -343,3 +343,169 @@ export const removeFromWishlistScript = (handle: string): string => `
 })();
 true;
 `;
+
+/**
+ * Report the number of saved products, so the native heart carries a count that
+ * is right everywhere and at once.
+ *
+ * WHY A SECOND READER AT ALL, when WISHLIST_SCRIPT above already returns the
+ * saved list: that one prices every handle -- one request per product -- and it
+ * only runs when the wishlist screen opens. The badge needs the opposite trade.
+ * It needs no prices, it needs to be current on every screen rather than on one,
+ * and it has to move on the same tap that toggled the heart. So this reads the
+ * count and nothing else, from storage, with no network at all.
+ *
+ * WHERE THE TAP HAPPENS is the thing that shapes this. Unlike the cart, whose
+ * count this app reads from the dashboard, a product may be saved from any page
+ * in any of this app's WebViews: a card on the dashboard, a card in a collection
+ * or search page, the heart on a product page. localStorage is per-origin, so
+ * every one of those views sees the same list -- but only the view the tap
+ * landed in learns about it, because their `wishlistUpdate` event does not cross
+ * documents. Hence: installed everywhere, and whichever view sees the change
+ * reports it. The count is the same number from all of them, so two views
+ * reporting is a repeat rather than a disagreement.
+ *
+ * Four signals, and between them nothing that changes the list is missed:
+ *
+ *   - `wishlistUpdate` on `document`, which their assets/wishlist.js publishes
+ *     on every toggle. This is the one that makes the badge move on the tap.
+ *   - a click in the capture phase, on anything matching their button selector.
+ *     Their delegated listener runs on the bubble at `document`, so a capture
+ *     listener fires BEFORE the toggle -- the re-read is deferred a tick for
+ *     exactly that reason. This is the belt to `wishlistUpdate`'s braces: a
+ *     theme update that stops publishing the event would otherwise leave the
+ *     badge stale with nothing to notice.
+ *   - `storage`, for the other WebViews. The event fires in every document of
+ *     the origin EXCEPT the one that wrote -- which is precisely the gap the
+ *     first two signals leave, and precisely what they cover in the writing
+ *     view. (Some WebViews do not deliver it; that is why the app also re-reads
+ *     on navigation and on returning to the foreground.)
+ *   - re-injection. Injected on every completed navigation, and rather than
+ *     installing a second copy of the above it finds the first and asks it to
+ *     re-read -- the same shape REPORT_CART_COUNT uses.
+ *
+ * A number is always sent, 0 included: unlike the cart's count, which comes from
+ * a request that can fail, this one comes from storage that has either been read
+ * or thrown. An empty list really is an empty wishlist and the badge must clear.
+ * The one unreadable case -- storage disabled -- sends nothing rather than 0.
+ *
+ * Debounced, because a toggle fires `wishlistUpdate` and the capture click
+ * together, and their syncAllButtons may publish more than once per tap.
+ */
+export const REPORT_WISHLIST_COUNT = `
+(function () {
+  // Already installed by an earlier injection: re-read, do not install again.
+  if (window.__ziglyReadWishlistCount) { window.__ziglyReadWishlistCount(); return; }
+
+  var SELECTOR = '.swym-button.swym-add-to-wishlist[data-product-handle]';
+  var last = -1;
+
+  /** Trim without a regex: escapes inside this template literal get eaten. */
+  function trim(str) {
+    var a = 0;
+    var b = str.length;
+    function ws(c) { return c === 32 || c === 9 || c === 10 || c === 13; }
+    while (a < b && ws(str.charCodeAt(a))) { a++; }
+    while (b > a && ws(str.charCodeAt(b - 1))) { b--; }
+    return str.slice(a, b);
+  }
+
+  /**
+   * How many products are saved, or null when storage cannot be read.
+   *
+   * Their accessor first, the raw key as the fallback, exactly as the reads
+   * above do it -- same order, same reason: the fallback cannot disagree with
+   * them, only be earlier. Duplicates are dropped so the badge counts products
+   * rather than entries; their own getWishlist does not promise uniqueness and
+   * a list that says "2" for one product would be a wrong badge.
+   */
+  function count() {
+    var list = null;
+    try {
+      if (window.ziglyWishlist && window.ziglyWishlist.getWishlist) {
+        var theirs = window.ziglyWishlist.getWishlist();
+        if (Object.prototype.toString.call(theirs) === '[object Array]') {
+          list = theirs;
+        }
+      }
+    } catch (e) {}
+
+    if (list === null) {
+      try {
+        list = (window.localStorage.getItem('zigly_wishlist_handles') || '').split(',');
+      } catch (e) {
+        return null;
+      }
+    }
+
+    var seen = {};
+    var n = 0;
+    for (var i = 0; i < list.length; i++) {
+      var handle = trim(typeof list[i] === 'string' ? list[i] : '');
+      // Prefixed so a handle called 'constructor' cannot inherit a truthy
+      // value off Object.prototype and be counted as already seen.
+      if (!handle || seen['h:' + handle]) { continue; }
+      seen['h:' + handle] = 1;
+      n++;
+    }
+    return n;
+  }
+
+  function read() {
+    var n = count();
+    if (n === null) { return; }
+    // Unchanged since the last report: every signal here can fire for a
+    // toggle another one already reported.
+    if (n === last) { return; }
+    last = n;
+    try {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify({tag: 'wishlist-count', n: n})
+        );
+      }
+    } catch (e) {}
+  }
+
+  var timer = null;
+  function schedule() {
+    if (timer) { clearTimeout(timer); }
+    timer = setTimeout(function () { timer = null; read(); }, 80);
+  }
+
+  window.__ziglyReadWishlistCount = schedule;
+
+  // Their own event, published by assets/wishlist.js on every toggle.
+  try { document.addEventListener('wishlistUpdate', schedule); } catch (e) {}
+
+  /*
+   * A tap on one of their hearts. Capture, so this cannot be stopped by a
+   * handler in between -- which also means it runs before their toggle, so the
+   * re-read waits for the debounce rather than reading the list as it was.
+   */
+  try {
+    document.addEventListener('click', function (event) {
+      var node = event.target;
+      while (node && node !== document) {
+        if (node.nodeType === 1 && node.matches && node.matches(SELECTOR)) {
+          schedule();
+          return;
+        }
+        node = node.parentNode;
+      }
+    }, true);
+  } catch (e) {}
+
+  // A write from one of this app's other WebViews.
+  try {
+    window.addEventListener('storage', function (event) {
+      if (!event || !event.key || event.key === 'zigly_wishlist_handles') {
+        schedule();
+      }
+    });
+  } catch (e) {}
+
+  read();
+})();
+true;
+`;

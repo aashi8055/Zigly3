@@ -127,6 +127,7 @@ describe('there is one heart, not four', () => {
     onLogoPress: () => {},
     onSearchPress: () => {},
     cartCount: 0,
+    wishlistCount: 0,
     showSearch: true,
     showWishlist: true,
     showCartIcon: true,

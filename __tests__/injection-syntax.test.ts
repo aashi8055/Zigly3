@@ -25,6 +25,7 @@ import {
   changeQtyScript,
 } from '../src/webview/cartBridge';
 import {
+  REPORT_WISHLIST_COUNT,
   WISHLIST_SCRIPT,
   removeFromWishlistScript,
 } from '../src/webview/wishlistBridge';
@@ -128,6 +129,7 @@ describe('every separately injected payload is valid too', () => {
     ['OPEN_MENU', OPEN_MENU],
     ['READ_CART_SCRIPT', READ_CART_SCRIPT],
     ['WISHLIST_SCRIPT', WISHLIST_SCRIPT],
+    ['REPORT_WISHLIST_COUNT', REPORT_WISHLIST_COUNT],
     ['ACCOUNT_PROBE', ACCOUNT_PROBE],
     ['ADDRESSES_PROBE', ADDRESSES_PROBE],
     ['COUNTRIES_PROBE', COUNTRIES_PROBE],

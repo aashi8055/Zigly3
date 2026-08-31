@@ -17,6 +17,7 @@ import ReactTestRenderer from 'react-test-renderer';
 import {ActivityIndicator, ScrollView, Text} from 'react-native';
 import WishlistScreen from '../src/components/WishlistScreen';
 import {
+  REPORT_WISHLIST_COUNT,
   WISHLIST_LIMIT,
   WISHLIST_SCRIPT,
   removeFromWishlistScript,
@@ -390,5 +391,289 @@ describe('the wishlist screen', () => {
 
   it('shows no notice when nothing has gone wrong', () => {
     expect(textOf(render(screen()))).not.toContain('Could not');
+  });
+});
+
+/**
+ * The saved-product count.
+ *
+ * The badge is one number for the whole app, and what can go wrong with it is
+ * not arithmetic -- it is *when* the list is read. So these tests drive
+ * REPORT_WISHLIST_COUNT through a hand-built DOM and check the signals that are
+ * meant to keep it current, plus the ways it could report a wrong number from a
+ * right list.
+ *
+ * The DOM is hand-built rather than jsdom's, following ./facetBridge.test.ts and
+ * ./concernCards.test.ts: jsdom is not a dependency of this project.
+ */
+describe('REPORT_WISHLIST_COUNT', () => {
+  interface Listener {
+    (event?: unknown): void;
+  }
+
+  /** A page whose storage, accessor and listeners the test drives directly. */
+  const page = (
+    stored: string | null,
+    options: {accessor?: string[] | null; storageThrows?: boolean} = {},
+  ) => {
+    const sent: {tag: string; n: number}[] = [];
+    const timers: Listener[] = [];
+    const docListeners = new Map<string, Listener[]>();
+    const winListeners = new Map<string, Listener[]>();
+
+    const add =
+      (map: Map<string, Listener[]>) => (type: string, handler: Listener) => {
+        const list = map.get(type) || [];
+        list.push(handler);
+        map.set(type, list);
+      };
+
+    const doc = {addEventListener: add(docListeners)};
+
+    const win: Record<string, unknown> = {
+      document: doc,
+      localStorage: {
+        getItem: (key: string) => {
+          if (options.storageThrows) {
+            throw new Error('storage disabled');
+          }
+          return key === 'zigly_wishlist_handles' ? stored : null;
+        },
+      },
+      addEventListener: add(winListeners),
+      ReactNativeWebView: {
+        postMessage: (raw: string) => sent.push(JSON.parse(raw)),
+      },
+    };
+    if (options.accessor !== undefined) {
+      win.ziglyWishlist = {getWishlist: () => options.accessor};
+    }
+
+    // eslint-disable-next-line no-new-func
+    new Function(
+      'window',
+      'document',
+      'setTimeout',
+      'clearTimeout',
+      REPORT_WISHLIST_COUNT,
+    )(
+      win,
+      doc,
+      (fn: Listener) => {
+        timers.push(fn);
+        return timers.length;
+      },
+      () => undefined,
+    );
+
+    return {
+      sent,
+      win,
+      doc,
+      /** Run every deferred re-read, the way the debounce eventually does. */
+      settle: () => {
+        timers.splice(0, timers.length).forEach(fn => fn());
+      },
+      fireDoc: (type: string, event?: unknown) =>
+        (docListeners.get(type) || []).forEach(fn => fn(event)),
+      fireWin: (type: string, event?: unknown) =>
+        (winListeners.get(type) || []).forEach(fn => fn(event)),
+      /** Change the list under the page, as their own toggle would. */
+      write: (next: string) => {
+        stored = next;
+      },
+      docTypes: () => Array.from(docListeners.keys()),
+      winTypes: () => Array.from(winListeners.keys()),
+      listenerCount: () =>
+        Array.from(docListeners.values()).reduce((n, l) => n + l.length, 0) +
+        Array.from(winListeners.values()).reduce((n, l) => n + l.length, 0),
+    };
+  };
+
+  /** Their control: a div carrying the handle, around an svg. */
+  const heart = () => ({
+    nodeType: 1,
+    matches: (sel: string) => sel.indexOf('swym-add-to-wishlist') !== -1,
+    parentNode: null as unknown,
+  });
+
+  const last = (sent: {tag: string; n: number}[]) => sent[sent.length - 1];
+
+  it('parses', () => {
+    // eslint-disable-next-line no-new-func
+    expect(() => new Function(REPORT_WISHLIST_COUNT)).not.toThrow();
+  });
+
+  it('carries no backtick, which would truncate the payload', () => {
+    expect(REPORT_WISHLIST_COUNT).not.toContain(String.fromCharCode(96));
+  });
+
+  it('uses no regex, whose escapes this template literal would eat', () => {
+    expect(REPORT_WISHLIST_COUNT).not.toContain('\\');
+  });
+
+  it('reports the count on install, without waiting for a signal', () => {
+    const p = page('dog-bed,cat-tree,leash');
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 3}]);
+  });
+
+  it('prefers their own accessor over the raw key', () => {
+    // The key is deliberately longer: were the accessor ignored, this would
+    // report 3 rather than 1.
+    const p = page('dog-bed,cat-tree,leash', {accessor: ['dog-bed']});
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 1}]);
+  });
+
+  it('falls back to the key when their script has not run yet', () => {
+    const p = page('dog-bed,cat-tree');
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 2}]);
+  });
+
+  it('counts products rather than entries', () => {
+    // Their list does not promise uniqueness, and a badge reading 2 for one
+    // saved product is a wrong badge.
+    const p = page('dog-bed,dog-bed,cat-tree');
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 2}]);
+  });
+
+  it('is not fooled by a handle named after an Object property', () => {
+    // An unprefixed seen-map would find Object.prototype.constructor truthy
+    // and drop the second product.
+    const p = page('constructor,toString');
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 2}]);
+  });
+
+  it('ignores blanks and whitespace around handles', () => {
+    const p = page(' dog-bed , ,cat-tree,');
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 2}]);
+  });
+
+  it('reports 0 for an empty list, so the badge clears', () => {
+    // Unlike the cart's count this comes from storage rather than a request:
+    // empty really is empty, and must not be treated as unknown.
+    const p = page('');
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 0}]);
+  });
+
+  it('says nothing at all when storage cannot be read', () => {
+    // A WebView with storage disabled is not an empty wishlist, and 0 here
+    // would wipe a correct badge.
+    const p = page(null, {storageThrows: true});
+    expect(p.sent).toEqual([]);
+  });
+
+  it('moves on their own wishlistUpdate event', () => {
+    const p = page('dog-bed');
+    p.write('dog-bed,cat-tree');
+    p.fireDoc('wishlistUpdate');
+    p.settle();
+    expect(p.sent).toEqual([
+      {tag: 'wishlist-count', n: 1},
+      {tag: 'wishlist-count', n: 2},
+    ]);
+  });
+
+  it('moves on a tap at one of their hearts, without their event', () => {
+    // The belt to wishlistUpdate's braces: a theme that stopped publishing the
+    // event would otherwise leave the badge stale with nothing to notice.
+    const p = page('dog-bed');
+    p.write('dog-bed,cat-tree');
+    p.fireDoc('click', {target: heart()});
+    p.settle();
+    expect(last(p.sent)).toEqual({tag: 'wishlist-count', n: 2});
+  });
+
+  it('re-reads after their toggle rather than before it', () => {
+    // This listener is on capture, so it runs BEFORE their bubble-phase
+    // handler has written anything. Reading in the same tick would report the
+    // list as it was and leave the badge one behind.
+    const p = page('dog-bed');
+    p.fireDoc('click', {target: heart()});
+    // Their handler runs next, between the tap and the debounce firing.
+    p.write('dog-bed,cat-tree');
+    p.settle();
+    expect(last(p.sent)).toEqual({tag: 'wishlist-count', n: 2});
+  });
+
+  it('finds their heart through the glyph that was actually tapped', () => {
+    // Their control is a div around an svg, so the event target is a child.
+    const control = heart();
+    const glyph = {nodeType: 1, matches: () => false, parentNode: control};
+    const p = page('dog-bed');
+    p.write('dog-bed,cat-tree');
+    p.fireDoc('click', {target: glyph});
+    p.settle();
+    expect(last(p.sent)).toEqual({tag: 'wishlist-count', n: 2});
+  });
+
+  it('ignores a tap that was not on one of their hearts', () => {
+    const other = {nodeType: 1, matches: () => false, parentNode: null};
+    const p = page('dog-bed');
+    p.write('dog-bed,cat-tree');
+    p.fireDoc('click', {target: other});
+    p.settle();
+    // Still only the install report: nothing asked it to re-read.
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 1}]);
+  });
+
+  it('re-reads when another WebView of this app writes the list', () => {
+    const p = page('dog-bed');
+    p.write('dog-bed,cat-tree');
+    p.fireWin('storage', {key: 'zigly_wishlist_handles'});
+    p.settle();
+    expect(last(p.sent)).toEqual({tag: 'wishlist-count', n: 2});
+  });
+
+  it('ignores a storage event for some other key', () => {
+    const p = page('dog-bed');
+    p.write('dog-bed,cat-tree');
+    p.fireWin('storage', {key: 'something_else'});
+    p.settle();
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 1}]);
+  });
+
+  it('does not repeat a count that has not changed', () => {
+    // Every signal here can fire for a toggle another one already reported.
+    const p = page('dog-bed');
+    p.fireDoc('wishlistUpdate');
+    p.settle();
+    p.fireWin('storage', {key: 'zigly_wishlist_handles'});
+    p.settle();
+    expect(p.sent).toEqual([{tag: 'wishlist-count', n: 1}]);
+  });
+
+  it('re-reads rather than installing a second copy of itself', () => {
+    // Injected on every completed navigation. A second set of listeners would
+    // report each change twice and grow with every page.
+    const p = page('dog-bed');
+    const before = p.listenerCount();
+    p.write('dog-bed,cat-tree');
+    // eslint-disable-next-line no-new-func
+    new Function(
+      'window',
+      'document',
+      'setTimeout',
+      'clearTimeout',
+      REPORT_WISHLIST_COUNT,
+    )(
+      p.win,
+      p.doc,
+      () => 0,
+      () => undefined,
+    );
+    expect(p.listenerCount()).toBe(before);
+    // The re-injection hands off to the copy that is already installed, so it
+    // is that copy's debounce the re-read comes out of.
+    p.settle();
+    expect(last(p.sent)).toEqual({tag: 'wishlist-count', n: 2});
+  });
+
+  it('listens on document for their event and on window for storage', () => {
+    // Their assets/wishlist.js publishes on document; storage only ever fires
+    // at window.
+    const p = page('dog-bed');
+    expect(p.docTypes()).toContain('wishlistUpdate');
+    expect(p.docTypes()).toContain('click');
+    expect(p.winTypes()).toContain('storage');
   });
 });

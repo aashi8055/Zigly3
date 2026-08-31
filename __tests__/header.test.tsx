@@ -11,6 +11,7 @@ import React from 'react';
 import ReactTestRenderer, {type ReactTestInstance} from 'react-test-renderer';
 import {Animated, StyleSheet, Text} from 'react-native';
 import NativeHeader from '../src/components/NativeHeader';
+import BottomNav from '../src/components/BottomNav';
 import {ERASE_MS, HOLD_MS, TYPE_MS} from '../src/search/placeholders';
 import {SEARCH_BAND_H} from '../src/webview/searchBandSection';
 
@@ -24,6 +25,7 @@ const baseProps = {
   onLogoPress: noop,
   onSearchPress: noop,
   cartCount: 0,
+  wishlistCount: 0,
   showSearch: true,
   showWishlist: false,
   showCartIcon: true,
@@ -453,5 +455,118 @@ describe('the prompt is not announced letter by letter', () => {
     expect(label).toBeDefined();
     expect(label?.props.importantForAccessibility).toBe('no');
     expect(label?.props.numberOfLines).toBe(1);
+  });
+});
+
+/**
+ * The wishlist badge, in the two places it is drawn.
+ *
+ * One number, two counters. The header drops the heart on the dashboard and on
+ * the wishlist screen itself, and the tab bar is up throughout -- so both have
+ * to carry it, and the thing worth pinning is that they carry the SAME thing:
+ * the same threshold for showing it, the same 99+ cap, the same badge. Two
+ * counters for one wishlist that disagreed would be worse than one.
+ */
+describe('the wishlist count', () => {
+  /** Every string the tree draws, joined -- the badge is one of them. */
+  const textOf = (tree: ReactTestRenderer.ReactTestRenderer): string =>
+    tree.root
+      .findAllByType(Text)
+      .map(node =>
+        typeof node.props.children === 'string' ? node.props.children : '',
+      )
+      .join(' | ');
+
+  const labelsOf = (tree: ReactTestRenderer.ReactTestRenderer): string[] =>
+    tree.root
+      .findAll(node => typeof node.props?.accessibilityLabel === 'string')
+      .map(node => String(node.props.accessibilityLabel));
+
+  const header = (count: number) =>
+    render({showWishlist: true, wishlistCount: count});
+
+  const nav = (count: number) => {
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      tree = ReactTestRenderer.create(
+        <BottomNav active="home" onSelect={noop} wishlistCount={count} />,
+      );
+    });
+    return tree;
+  };
+
+  const headerText = (count: number): string => textOf(header(count));
+  const navText = (count: number): string => textOf(nav(count));
+
+  it('is shown on the header heart', () => {
+    expect(headerText(3)).toContain('3');
+  });
+
+  it('is shown on the Wishlist tab', () => {
+    // The header hides the heart on the dashboard and on the wishlist screen;
+    // without this the count would vanish on the app's own home page.
+    expect(navText(3)).toContain('3');
+  });
+
+  it('is the same figure in both places', () => {
+    expect(headerText(7)).toContain('7');
+    expect(navText(7)).toContain('7');
+  });
+
+  it('is hidden at zero rather than drawn as a 0', () => {
+    expect(headerText(0)).not.toContain('0');
+    expect(navText(0)).not.toContain('0');
+  });
+
+  it('caps at 99+ in both places, at the same point', () => {
+    expect(headerText(99)).toContain('99');
+    expect(headerText(100)).toContain('99+');
+    expect(navText(99)).toContain('99');
+    expect(navText(100)).toContain('99+');
+  });
+
+  it('says the count to a screen reader, in both places', () => {
+    expect(labelsOf(header(4))).toContain('Wishlist, 4 items');
+    expect(labelsOf(nav(4))).toContain('Wishlist, 4 items');
+  });
+
+  it('leaves the label alone when nothing is saved', () => {
+    // The plain label is what the rest of the suite presses by.
+    expect(labelsOf(nav(0))).toContain('Wishlist');
+    expect(labelsOf(header(0))).toContain('Wishlist');
+  });
+
+  it('badges only the Wishlist tab', () => {
+    // A count on Collections or Breed-verse would be a number about nothing.
+    // Distinct, because a Pressable's label reaches its host views too.
+    const counted = [
+      ...new Set(
+        labelsOf(nav(5)).filter(label => label.indexOf('items') !== -1),
+      ),
+    ];
+    expect(counted).toEqual(['Wishlist, 5 items']);
+  });
+
+  it('draws the two badges identically', () => {
+    // Same fill, same radius, same text size: see the note beside BottomNav's
+    // `badge`. Only the offsets differ, because the glyphs differ.
+    const headerSrc = require('fs').readFileSync(
+      'src/components/NativeHeader.tsx',
+      'utf8',
+    );
+    const navSrc = require('fs').readFileSync(
+      'src/components/BottomNav.tsx',
+      'utf8',
+    );
+    for (const rule of [
+      'minWidth: 16',
+      'height: 16',
+      'borderRadius: 8',
+      'backgroundColor: COLORS.red',
+      'fontSize: 10',
+    ]) {
+      expect(headerSrc).toContain(rule);
+      expect(navSrc).toContain(rule);
+    }
   });
 });

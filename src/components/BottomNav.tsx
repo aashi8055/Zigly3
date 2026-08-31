@@ -39,6 +39,17 @@ interface Props {
   /** Which tab is lit, or null when the user is somewhere no tab describes. */
   active: TabKey | null;
   onSelect: (key: TabKey) => void;
+  /**
+   * Saved-product count, for the badge on the Wishlist tab. 0 hides it.
+   *
+   * The same number the header's heart carries, from the same state -- see
+   * wishlistCount in ../screens/ZiglyWebViewScreen. This bar is why it has to
+   * be here as well as there: the header drops the heart on the dashboard and
+   * on the wishlist screen itself, and the tab is on screen throughout. Without
+   * this the count would simply vanish on the app's own home page, which reads
+   * as a wishlist that emptied itself.
+   */
+  wishlistCount?: number;
 }
 
 const ACTIVE = COLORS.navy;
@@ -61,21 +72,37 @@ const TabIcon = ({ tab, color }: { tab: TabKey; color: string }) => {
   }
 };
 
-const BottomNav = ({ active, onSelect }: Props) => (
+const BottomNav = ({ active, onSelect, wishlistCount = 0 }: Props) => (
   <View style={styles.root}>
     {TABS.map(tab => {
       const lit = tab.key === active;
       const color = lit ? ACTIVE : IDLE;
+      const count = tab.key === 'wishlist' ? wishlistCount : 0;
       return (
         <Pressable
           key={tab.key}
           onPress={() => onSelect(tab.key)}
           accessibilityRole="tab"
           accessibilityState={{ selected: lit }}
-          accessibilityLabel={tab.label}
+          accessibilityLabel={
+            count > 0 ? `${tab.label}, ${count} items` : tab.label
+          }
           style={styles.tab}
         >
-          <TabIcon tab={tab.key} color={color} />
+          {/* The icon and its badge, so the badge is placed against the glyph
+              rather than against the whole tab -- the tab is a fifth of the
+              screen wide and a counter pinned to its corner would float in
+              open space. */}
+          <View style={styles.iconWrap}>
+            <TabIcon tab={tab.key} color={color} />
+            {count > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {count > 99 ? '99+' : String(count)}
+                </Text>
+              </View>
+            ) : null}
+          </View>
           <Text
             numberOfLines={1}
             style={[styles.label, { color }, lit && styles.labelActive]}
@@ -106,6 +133,33 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 7,
     gap: 4,
+  },
+  /* Wraps the glyph only, so the badge has something glyph-sized to sit on.
+     No size of its own: the icons state their own, and a box here would either
+     clip one or pad the row. */
+  iconWrap: { position: 'relative' },
+  /* Deliberately the header's badge, figure for figure -- see NativeHeader's
+     `badge`. Two counters for the same wishlist, one above the page and one
+     below it, that were drawn differently would read as two different numbers.
+     Only the offsets differ, and they differ because the glyph is 22 rather
+     than the header's 24-wide button. */
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -9,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: COLORS.red,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  badgeText: {
+    fontFamily: FONT_FAMILY,
+    color: COLORS.white,
+    fontSize: 10,
+    fontWeight: '700',
   },
   label: {
     fontFamily: FONT_FAMILY,

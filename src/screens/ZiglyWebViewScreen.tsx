@@ -108,6 +108,7 @@ import {
 import WishlistScreen from '../components/WishlistScreen';
 import {
   WISHLIST_SCRIPT,
+  REPORT_WISHLIST_COUNT,
   removeFromWishlistScript,
 } from '../webview/wishlistBridge';
 import {parseWishlist} from '../wishlist/wishlistItems';
@@ -474,6 +475,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
   /** Mirrors the site's own cart bubble; never tracked independently. */
   const [cartCount, setCartCount] = useState(0);
+  /**
+   * How many products are saved, for the badge on the heart.
+   *
+   * ONE piece of state for the whole app, and it is not derived from the
+   * `wishlist` list below. The list is only populated while the wishlist screen
+   * is open -- it is null before the first open and stale the moment a product
+   * is saved somewhere else -- so a badge computed from it would be blank on
+   * launch and wrong after every save from a card. This is the site's own count,
+   * reported by whichever WebView saw the change; see REPORT_WISHLIST_COUNT in
+   * ../webview/wishlistBridge for the four signals that keep it current.
+   *
+   * Everything that draws a count reads this, so there is no second number
+   * anywhere to fall out of step with it.
+   */
+  const [wishlistCount, setWishlistCount] = useState(0);
   /** Offer strings mirrored from the site's own announcement bar. */
   const [announcements, setAnnouncements] = useState<string[]>([]);
   /**
@@ -884,6 +900,27 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   /**
+   * Re-read the cart and wishlist badges. Called when the app comes back to the
+   * foreground, from the AppState handler just below.
+   *
+   * WHY ON RESUME AT ALL: nothing inside a WebView reports while the app is
+   * away, and for a signed-in customer the saved list can genuinely have
+   * changed while it was -- their assets/wishlist.js merges the server's list
+   * into the local one on the first load after a login, and the same customer
+   * may have saved something on zigly.com in a browser. Both readers are
+   * idempotent and cost a storage read and one /cart.js, so this is the cheap
+   * way to be sure a returning shopper is never shown yesterday's number.
+   *
+   * A REF, and not the function itself, for two reasons. It is used above
+   * injectInto's declaration; and the AppState subscription must not be torn
+   * down and rebuilt to pick up a new closure -- the whole point of that
+   * handler is the session it makes durable on the way out, and re-subscribing
+   * for a counter would put that at the mercy of a render. Filled in below,
+   * beside injectInto.
+   */
+  const refreshCountsRef = useRef<() => void>(() => {});
+
+  /**
    * The last safe moment to write the cookie jar down.
    *
    * Backgrounding is the only warning an Android app reliably gets before it is
@@ -905,6 +942,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   useEffect(() => {
     const subscription = AppState.addEventListener('change', next => {
+      // Back in the foreground: re-read both badges. See refreshCountsRef.
+      if (next === 'active') {
+        refreshCountsRef.current();
+        return;
+      }
       if (next !== 'background' && next !== 'inactive') {
         return;
       }
@@ -1149,6 +1191,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     }
   }, []);
 
+  /** What the foreground handler above calls; see refreshCountsRef. */
+  refreshCountsRef.current = () => {
+    injectInto('home', REPORT_WISHLIST_COUNT);
+    injectInto('home', REPORT_CART_COUNT);
+  };
+
   /**
    * What applyStyles needs to build the band, held in refs.
    *
@@ -1172,6 +1220,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       injectInto(target, REPORT_CART_COUNT);
+      /*
+       * The saved-product count, into every view rather than only the
+       * dashboard: a heart can be tapped on a collection page or a product page
+       * as easily as on a dashboard card, and the view the tap lands in is the
+       * only one their `wishlistUpdate` event reaches.
+       */
+      injectInto(target, REPORT_WISHLIST_COUNT);
       /*
        * The section ids, into the document that has actually committed.
        *
@@ -1340,8 +1395,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       return;
     }
     setStack(prev => goToDashboard(prev));
-    // The cart may have changed while away; re-read the site's own counter.
+    // Both may have changed while away; re-read the site's own counters. The
+    // wishlist reporter is installed in the inner pages too and its `storage`
+    // event should have carried a save from one of them across -- but a WebView
+    // is not obliged to deliver that event, and a badge is not worth leaving to
+    // a "should".
     injectInto('home', REPORT_CART_COUNT);
+    injectInto('home', REPORT_WISHLIST_COUNT);
   }, [injectInto]);
 
   /**
@@ -1358,6 +1418,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     }
     setStack(prev => goToDashboard(prev));
     injectInto('home', REPORT_CART_COUNT);
+    injectInto('home', REPORT_WISHLIST_COUNT);
   }, [injectInto]);
 
   /**
@@ -1375,6 +1436,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     }
     setStack(prev => closeTopPage(prev));
     injectInto('home', REPORT_CART_COUNT);
+    injectInto('home', REPORT_WISHLIST_COUNT);
     return true;
   }, [injectInto]);
 
@@ -1475,6 +1537,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     setWishlist(null);
     setShowCart(false);
     setWishlistOpen(true);
+    /*
+     * The count first. WISHLIST_SCRIPT reports `found` too, but only once a
+     * request per saved product has come back -- and the heart in the header is
+     * on screen for the whole of that wait.
+     */
+    injectInto('home', REPORT_WISHLIST_COUNT);
     injectInto('home', WISHLIST_SCRIPT);
   }, [injectInto]);
 
@@ -1502,6 +1570,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           return prev;
         }
         pendingRemovals.current.set(item.handle, {item, at});
+        /*
+         * The badge goes with the tile, in the same tick and for the same
+         * reason: the write is a press of the site's own control and the
+         * reporter's answer is a beat behind it, so a badge that waited would
+         * sit one too high while the grid already showed the removal. If the
+         * write turns out not to have happened, restoreWishlistItem puts both
+         * back together.
+         */
+        setWishlistCount(n => (n > 0 ? n - 1 : 0));
         return prev.filter(saved => saved.handle !== item.handle);
       });
       setWishlistNotice(null);
@@ -1525,6 +1602,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       next.splice(Math.min(pending.at, next.length), 0, pending.item);
       return next;
     });
+    // The tile is back, so the count it was taken off is back too.
+    setWishlistCount(n => n + 1);
     warn('wishlist removal not confirmed:', handle, why);
     setWishlistNotice(
       'Could not remove that from your wishlist. Open the product to remove it there.',
@@ -1540,8 +1619,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
   const closeCart = useCallback(() => {
     setShowCart(false);
-    // The badge may have changed while the cart was open.
+    // Either badge may have changed while the cart was open.
     injectInto('home', REPORT_CART_COUNT);
+    injectInto('home', REPORT_WISHLIST_COUNT);
   }, [injectInto]);
 
   const openCart = useCallback(() => {
@@ -3361,6 +3441,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       */}
       <NativeHeader
         cartCount={cartCount}
+        wishlistCount={wishlistCount}
         /*
          * Never. The band is a section of the page now -- see
          * ../webview/searchBandSection -- and drawing the native one as well
@@ -3572,6 +3653,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 }
               } else if (data && data.tag === 'cart-added') {
                 setCartToast(true);
+              } else if (data && data.tag === 'wishlist-count') {
+                /*
+                 * The badge. Sent by whichever WebView saw the list change, so
+                 * a heart tapped on a collection page moves the count while
+                 * the dashboard is still the page behind it.
+                 *
+                 * Taken as given, 0 included: this comes from storage rather
+                 * than a request, so an empty list is a real empty wishlist
+                 * and the badge must clear. The reporter sends nothing at all
+                 * when storage could not be read.
+                 */
+                if (typeof data.n === 'number') {
+                  setWishlistCount(data.n);
+                }
               } else if (data && data.tag === 'wishlist') {
                 // Read out of the site's own localStorage by the dashboard
                 // itself; see ../webview/wishlistBridge.
@@ -3579,6 +3674,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 log('wishlist:', read.items.length, 'of', data.found, 'saved');
                 pendingRemovals.current.clear();
                 setWishlist(read.items);
+                /*
+                 * The same read, so the badge and the grid can never disagree
+                 * with each other. `found` is how many handles were saved
+                 * before the LIMIT cap and before any product fetch failed --
+                 * which is the number the badge is for; items.length would
+                 * under-count a wishlist longer than WISHLIST_LIMIT and blink
+                 * downwards whenever one /products/{handle}.js reply was lost.
+                 */
+                if (typeof data.found === 'number') {
+                  setWishlistCount(data.found);
+                }
               } else if (data && data.tag === 'wishlist-removed') {
                 if (data.ok) {
                   // Already off screen; nothing left to do but forget it.
@@ -4195,7 +4301,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         is the whole reason it is native -- the site's own bar is inside the
         page, so every native screen hid it.
       */}
-      {showNav ? <BottomNav active={activeTab} onSelect={selectTab} /> : null}
+      {showNav ? (
+        <BottomNav
+          active={activeTab}
+          onSelect={selectTab}
+          // The same state the header's heart reads, so the two counters on
+          // screen are one number rather than two that agree by luck.
+          wishlistCount={wishlistCount}
+        />
+      ) : null}
 
       {/*
         Sort and Filter, in the tab bar's own slot -- the two are never on

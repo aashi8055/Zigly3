@@ -51,6 +51,14 @@ interface Props {
   onSearchPress: () => void;
   /** Item count read from the site's own cart bubble; 0 hides the badge. */
   cartCount: number;
+  /**
+   * Saved-product count, read from the site's own storage; 0 hides the badge.
+   *
+   * Products, not entries: a product saved once counts once, however many
+   * times its handle appears in their list. See REPORT_WISHLIST_COUNT in
+   * ../webview/wishlistBridge.
+   */
+  wishlistCount: number;
   /** Whether the search band is shown beneath the bar. */
   showSearch: boolean;
   /**
@@ -207,6 +215,7 @@ const NativeHeader = ({
   onLogoPress,
   onSearchPress,
   cartCount,
+  wishlistCount,
   showSearch,
   searchCollapsed,
   searchOffset,
@@ -361,10 +370,26 @@ const NativeHeader = ({
             onPress={onWishlistPress}
             hitSlop={12}
             accessibilityRole="button"
-            accessibilityLabel="Wishlist"
+            accessibilityLabel={
+              wishlistCount > 0
+                ? `Wishlist, ${wishlistCount} items`
+                : 'Wishlist'
+            }
             style={styles.iconButton}
           >
             <WishlistIcon />
+            {/*
+              The same badge as the cart's, from the same styles: two counters
+              on one bar that were drawn differently would read as two
+              different kinds of number.
+            */}
+            {wishlistCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {wishlistCount > 99 ? '99+' : String(wishlistCount)}
+                </Text>
+              </View>
+            ) : null}
           </Pressable>
         ) : null}
 
