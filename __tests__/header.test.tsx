@@ -12,7 +12,7 @@ import ReactTestRenderer, {type ReactTestInstance} from 'react-test-renderer';
 import {Animated, StyleSheet, Text} from 'react-native';
 import NativeHeader from '../src/components/NativeHeader';
 import {ERASE_MS, HOLD_MS, TYPE_MS} from '../src/search/placeholders';
-import {SEARCH_BAND_H} from '../src/search/bandTravel';
+import {SEARCH_BAND_H} from '../src/webview/searchBandSection';
 
 const noop = () => {};
 
@@ -352,17 +352,44 @@ describe('the band travels with the scroll rather than toggling', () => {
     expect(valueOf(bandStyle(tree.root)!.transform[0].translateY)).toBe(0);
   });
 
-  it('is out of sight before it reaches the bar above it', () => {
-    // Faded over the first half of the travel, so the field never reads as
-    // sliding underneath the hamburger and the logo.
+  it('leaves rigidly, without dissolving on the way', () => {
+    /*
+     * The field used to fade over the first half of the travel, so that it was
+     * gone before its top edge met the bar. That is furniture behaviour: a
+     * section does not dissolve as it scrolls, it slides under and is clipped.
+     * An opacity here at all would bring the dissolve back.
+     */
     const offset = new Animated.Value(0);
     const tree = render({searchOffset: offset});
 
-    ReactTestRenderer.act(() => offset.setValue(0));
-    expect(valueOf(bandStyle(tree.root)!.opacity)).toBe(1);
+    for (const y of [0, 32, 64]) {
+      ReactTestRenderer.act(() => offset.setValue(y));
+      expect(bandStyle(tree.root)!.opacity).toBeUndefined();
+    }
+  });
 
-    ReactTestRenderer.act(() => offset.setValue(32));
-    expect(valueOf(bandStyle(tree.root)!.opacity)).toBe(0);
+  it('carries its blue background with it, at the same rate', () => {
+    /*
+     * The blue used to be painted on the box that owns the layout height, so
+     * it stayed at full height while the field slid off under the finger and
+     * then vanished in one frame when the scroll settled. Paint and field are
+     * one section: they travel together or the band comes apart mid-scroll.
+     */
+    const offset = new Animated.Value(0);
+    const tree = render({searchOffset: offset});
+
+    const paint = tree.root
+      .findAllByType(Animated.View)
+      .map(v => StyleSheet.flatten(v.props.style) || {})
+      .find(flat => flat.backgroundColor === '#BFD3EE');
+    expect(paint).toBeTruthy();
+
+    for (const y of [16, 40, 64]) {
+      ReactTestRenderer.act(() => offset.setValue(y));
+      expect(valueOf(paint!.transform[0].translateY)).toBe(
+        valueOf(bandStyle(tree.root)!.transform[0].translateY),
+      );
+    }
   });
 
   it('does not run a timing against an offset the scroll is driving', () => {
@@ -392,12 +419,13 @@ describe('the band travels with the scroll rather than toggling', () => {
     }
   });
 
-  it('travels exactly the height the header lays the band out at', () => {
+  it('lays the band out at the height the page section uses', () => {
     /*
-     * The two are deliberately not imported from one another -- the header
-     * owns the band's layout, ../src/search/bandTravel owns the distance the
-     * scroll has to cover. If they drift, the band either stops short of the
-     * top edge or is asked to keep going after it has already gone.
+     * The band that ships is the injected section in
+     * ../src/webview/searchBandSection; this native one is what shows on a
+     * page where that injection has not landed. The two are deliberately not
+     * imported from one another, so this is what stops them drifting -- and a
+     * drift is visible, because the same customer can see both.
      */
     const s = src();
     const declared = s.match(/const SEARCH_BAND_H = (\d+);/);

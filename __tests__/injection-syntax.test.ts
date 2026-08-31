@@ -36,6 +36,10 @@ import {
 } from '../src/webview/accountBridge';
 import {LOGIN_RESTYLE} from '../src/webview/loginRestyle';
 import {
+  buildSearchBandScript,
+  removeSearchBandScript,
+} from '../src/webview/searchBandSection';
+import {
   OTP_DRIVER,
   driveEditPhone,
   driveResend,
@@ -173,6 +177,16 @@ describe('every separately injected payload is valid too', () => {
     ['applySortScript', applySortScript("Price: 'low' \\ high")],
     ['PRODUCT_ADD_TO_BAG_SCRIPT', PRODUCT_ADD_TO_BAG_SCRIPT],
     ['PRODUCT_BUY_NOW_SCRIPT', PRODUCT_BUY_NOW_SCRIPT],
+    // The band section. Phrases are read off the site's own search box, so
+    // they are Zigly's strings rather than ours -- a prompt with an apostrophe
+    // in it is one theme edit away.
+    [
+      'buildSearchBandScript',
+      buildSearchBandScript(["dog's \ bed", 'cat food'], 100),
+    ],
+    // And the empty case, which is what a page gets before the reader reports.
+    ['buildSearchBandScript(none)', buildSearchBandScript([], 100)],
+    ['removeSearchBandScript', removeSearchBandScript()],
   ])('%s parses cleanly', (_name, script) => {
     expect(typeof script).toBe('string');
     expect(parses(script as string)).toBe(true);

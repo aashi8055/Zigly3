@@ -14,8 +14,9 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          // Local to this app, so autolinking never sees it. Keeps the WebView
+          // login alive across a process death -- see CookieJarModule.
+          add(CookieJarPackage())
         },
     )
   }

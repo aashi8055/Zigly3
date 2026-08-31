@@ -66,7 +66,7 @@ react {
 /**
  * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
  */
-def enableProguardInReleaseBuilds = false
+def enableProguardInReleaseBuilds = true
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -123,6 +123,26 @@ android {
             }
         }
     }
+    /**
+     * One APK per CPU architecture instead of one carrying all four.
+     *
+     * The universal APK ships arm64-v8a, armeabi-v7a, x86 and x86_64 native
+     * libraries -- React Native's own, Hermes and the WebView glue -- and any
+     * given phone loads exactly one set and ignores the rest. Splitting is
+     * where nearly all of the size saving is; minification below is the
+     * smaller half.
+     *
+     * `universalApk true` still produces the combined one, so there is always
+     * a single file that installs anywhere when that is what is wanted.
+     */
+    splits {
+        abi {
+            enable true
+            reset()
+            include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            universalApk true
+        }
+    }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
@@ -130,6 +150,9 @@ android {
         release {
             signingConfig signingConfigs.release
             minifyEnabled enableProguardInReleaseBuilds
+            // Drops resources no code path reaches. Safe only with minification
+            // on, which is why it reads the same flag rather than a literal.
+            shrinkResources enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }

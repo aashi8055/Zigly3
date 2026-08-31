@@ -35,13 +35,12 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   Alert,
-  Animated,
+  AppState,
   BackHandler,
   Linking,
   StyleSheet,
   View,
 } from 'react-native';
-import type {NativeScrollEvent, NativeSyntheticEvent} from 'react-native';
 import {WebView} from 'react-native-webview';
 // react-native-webview@14 declares `class WebView<P = undefined>`, which makes
 // its default props type `WebViewProps & undefined` — i.e. `never`. Supplying
@@ -87,7 +86,11 @@ import {
   buildSectionPrewarmScript,
   SECTION_WARM_SCRIPT,
 } from '../webview/sectionPrewarm';
-import {isSettledOff, nextTravel} from '../search/bandTravel';
+import {
+  BAND_TAP_TAG,
+  buildSearchBandScript,
+  removeSearchBandScript,
+} from '../webview/searchBandSection';
 import {log, warn} from '../utils/logger';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
 import type {CoverVariant} from '../components/PageCover';
@@ -209,6 +212,7 @@ import {
   parseOrders,
 } from '../account/accountData';
 import {loadAuthHint, saveAuthHint} from '../account/authHint';
+import {flushCookies, persistSession} from '../account/cookieJar';
 import type {
   Address,
   AddressFields,
@@ -412,6 +416,21 @@ const OTP_SEND_TIMEOUT_MS = 25000;
  */
 const FRESH_LOGIN_MS = 6000;
 
+/**
+ * When to re-ask the site to confirm a login, until it does.
+ *
+ * A single re-probe was not enough. It was armed when the stale reply arrived
+ * rather than when the login happened, so its answer landed just past
+ * FRESH_LOGIN_MS and was believed even on a device where the cookie had still
+ * not crossed to the dashboard WebView -- which is precisely the case the
+ * suppression exists for. See believeAuth and scheduleConfirmProbe.
+ *
+ * Widening, and finite. The gap being waited on is a cookie flush, so the first
+ * retry catches nearly every case and the later ones are there for a device
+ * under load. After the last one the app stops insisting and believes the site.
+ */
+const CONFIRM_PROBE_DELAYS = [1500, 3000, 6000, 10000];
+
 const STACK_FOR_PHASE: Record<'phone' | 'otp' | 'details', AccountStack> = {
   phone: ['login'],
   otp: ['login', 'otp'],
@@ -532,39 +551,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const [facetBusy, setFacetBusy] = useState(false);
   const listingSheetRef = useRef<'sort' | 'filter' | null>(null);
-  /**
-   * True once the band has been carried fully off; gives its height back.
-   *
-   * The settled end of the travel below, not the travel itself -- see
-   * handleScroll.
-   */
-  const [searchCollapsed, setSearchCollapsed] = useState(false);
-  /**
-   * How far the search band has been carried off, 0..SEARCH_BAND_H.
-   *
-   * The band is not sticky. It belongs to the page's content, so it leaves
-   * with the content on the way down and is drawn back from the top on the way
-   * up, both at the rate the finger moves -- which is what this holds, and why
-   * it is an offset rather than the boolean it used to be.
-   *
-   * setValue rather than a timing: the number is already the answer on every
-   * frame, and interposing an animation between the finger and the band is
-   * exactly what made it read as jumping into place rather than following.
-   * Nothing here touches layout -- the header only ever reads it through a
-   * transform -- so a value written per scroll event costs the WebView
-   * underneath nothing.
-   */
-  const searchOffset = useRef(new Animated.Value(0)).current;
-  /**
-   * The scroll positions the travel is measured between.
-   *
-   * `lastY` is where the previous event left the page, so a delta gives the
-   * direction and distance. `travel` is the band's own offset, kept here as a
-   * plain number because an Animated.Value cannot be read back synchronously
-   * and the next frame's answer is derived from this one's.
-   */
-  const lastScrollY = useRef(0);
-  const bandTravel = useRef(0);
   /** Shown when the page reports an add; the site still owns the cart. */
   const [cartToast, setCartToast] = useState(false);
   /**
@@ -742,6 +728,23 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const signedInAt = useRef(0);
   /**
+   * Whether a probe has agreed that the session exists, since the last login.
+   *
+   * False from the moment a login completes until a probe actually answers
+   * 'signedIn'. While it is false, believeAuth suppresses every 'signedOut'
+   * regardless of the window -- see its comment for the fault that needs, which
+   * is that the scheduled re-probe's answer lands just *outside* the window and
+   * was believed even when it was every bit as stale as the first.
+   *
+   * Latches true and stays there until the next login begins, so it can delay a
+   * sign-out that has not been confirmed but can never prevent one.
+   */
+  const sessionConfirmed = useRef(true);
+  /** The outstanding confirmation retry, if one is armed. */
+  const confirmProbe = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** How many confirmation retries have been used. Indexes CONFIRM_PROBE_DELAYS. */
+  const confirmAttempt = useRef(0);
+  /**
    * probeAccount, reachable from callbacks defined above it.
    *
    * applyAuth needs to re-ask after the fresh-login window, and is declared
@@ -835,11 +838,30 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * this read lands -- entirely possible, both are async -- the hint is dropped:
    * it is strictly the weaker source, and the whole design of this file is that
    * the probe is the authority.
+   *
+   * ONLY 'signedIn' IS SEEDED, and that asymmetry is the fix for the fault this
+   * whole layer caused.
+   *
+   * Before the hint existed, `auth` began every launch at 'unknown', openAccount
+   * opened the account screen on it, and a probe that answered wrongly was
+   * corrected by the next one -- nothing was written down, so nothing could
+   * persist a mistake. The hint made a wrong answer STICKY: one bad 'signedOut'
+   * reached the disk and every later launch opened the login screen from it,
+   * before any probe had run. That is the "log in again every time" report, and
+   * it is why a customer who was signed in kept being asked to sign in.
+   *
+   * A seeded 'signedOut' also buys nothing. 'unknown' and 'signedOut' both end
+   * at the same place once the probe answers; the only difference is which
+   * screen flickers first, and openAccount's own comment says opening the
+   * account screen is the safer of the two. So the risk was all cost and no
+   * benefit, and only the useful half is kept: a 'signedIn' hint still spares a
+   * signed-in customer the login form during the probe's round trip, and if it
+   * is stale the probe corrects it exactly as it always did.
    */
   useEffect(() => {
     let live = true;
     loadAuthHint().then(hint => {
-      if (!live || hint === 'unknown') {
+      if (!live || hint !== 'signedIn') {
         return;
       }
       setAuth(prev => (prev === 'unknown' ? hint : prev));
@@ -848,6 +870,42 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       live = false;
     };
   }, []);
+
+  /**
+   * The last safe moment to write the cookie jar down.
+   *
+   * Backgrounding is the only warning an Android app reliably gets before it is
+   * killed -- from Recents, or by the system reclaiming memory -- and a kill is
+   * where a login is lost, not a relaunch. Android syncs cookies to disk on its
+   * own schedule, so anything set since the last sync is still only in memory
+   * at this point. See ../account/cookieJar.
+   *
+   * persistSession first, then the flush it already performs is what actually
+   * lands: the order matters because extending an expiry-less cookie is what
+   * makes it survive at all, and flushing without that would faithfully write
+   * down a cookie Android then discards for having no Max-Age.
+   *
+   * Guarded on `auth`, so this touches the jar only for a customer the app has
+   * actually seen signed in. A signed-out or unknown state has no session worth
+   * making durable, and re-setting cookies for one would be work done on a jar
+   * that means nothing. Errors are swallowed inside cookieJar, so nothing here
+   * can turn backgrounding into a crash.
+   */
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', next => {
+      if (next !== 'background' && next !== 'inactive') {
+        return;
+      }
+      if (auth !== 'signedIn') {
+        // Still worth writing whatever the jar holds -- a cart, a consent
+        // choice -- but there is no session to extend.
+        flushCookies();
+        return;
+      }
+      persistSession();
+    });
+    return () => subscription.remove();
+  }, [auth]);
 
   // ---------------------------------------------------------------- network
   useEffect(() => {
@@ -1049,34 +1107,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     [],
   );
 
-  /**
-   * Put the band back at the top, whole.
-   *
-   * Both halves, together: the boolean alone would hand the band its layout
-   * height back while the offset still had it translated off, which is a 64px
-   * band of empty page colour under the bar. Every place that decides the band
-   * should be showing again goes through this.
-   *
-   * Written straight rather than animated -- these are page changes, not
-   * gestures. There is no travel to follow, and easing a band down over a page
-   * that is already at the top is the abrupt-looking thing, not the smooth one.
-   */
-  const resetSearchBand = useCallback(() => {
-    lastScrollY.current = 0;
-    bandTravel.current = 0;
-    searchOffset.setValue(0);
-    setSearchCollapsed(false);
-  }, [searchOffset]);
-
-  /**
-   * The search band describes whatever is on screen, so it opens when a
-   * different page comes to the front instead of inheriting the scroll state
-   * of the one that was scrolled.
-   */
-  useEffect(() => {
-    resetSearchBand();
-  }, [showing?.key, resetSearchBand]);
-
   // ---------------------------------------------------------------- injection
   /**
    * Inject into one specific WebView.
@@ -1108,6 +1138,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   /**
+   * What applyStyles needs to build the band, held in refs.
+   *
+   * Refs rather than the values themselves, so that applyStyles keeps one
+   * identity: it is a dependency of the load handlers, and rebuilding it every
+   * time the placeholder reader reports would re-arm those for no reason.
+   */
+  const showSearchBandRef = useRef(true);
+  const searchPlaceholdersRef = useRef<string[]>(SEED_PLACEHOLDERS);
+  const searchTypeMsRef = useRef(DEFAULT_PLACEHOLDER_MS);
+
+  /**
    * Apply the mobile stylesheet. Runs on every completed navigation because a
    * full page load discards the previously injected <style> node.
    */
@@ -1137,6 +1178,23 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       if (Object.keys(sectionIds.current).length > 0) {
         injectInto(target, seedSectionIdsScript(sectionIds.current));
       }
+      /*
+       * The search band, into the document that has just committed.
+       *
+       * A full load discards the node along with everything else, and the
+       * effect that keeps it in step fires on state changes rather than on
+       * loads -- so without this a re-navigation would land on a page with no
+       * band at all.
+       */
+      injectInto(
+        target,
+        showSearchBandRef.current
+          ? buildSearchBandScript(
+              searchPlaceholdersRef.current,
+              searchTypeMsRef.current,
+            )
+          : removeSearchBandScript(),
+      );
       if (target === 'home') {
         // The bar mirrors the dashboard's own announcements; an inner page
         // reporting its (possibly absent) bar would blank it.
@@ -1509,6 +1567,65 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     injectInto('home', COUNTRIES_PROBE);
   }, [injectInto]);
 
+  /** Stop any outstanding confirmation retry. */
+  const clearConfirmProbe = useCallback(() => {
+    if (confirmProbe.current !== null) {
+      clearTimeout(confirmProbe.current);
+      confirmProbe.current = null;
+    }
+    confirmAttempt.current = 0;
+  }, []);
+
+  /**
+   * Keep asking the site until it confirms the session a login just created.
+   *
+   * The delays widen -- see CONFIRM_PROBE_DELAYS -- because the thing being
+   * waited on is a CookieManager flush, which is usually immediate and
+   * occasionally is not. Each reply re-enters applyAuth: a 'signedIn' clears
+   * this, and a 'signedOut' that is still unconfirmed arms the next attempt.
+   *
+   * When the attempts run out the app stops arguing and lets the site have the
+   * last word. `sessionConfirmed` goes true so the next 'signedOut' is believed
+   * on the window's ordinary terms -- a login that truly did not take a session
+   * must not leave the app permanently convinced that it did.
+   */
+  const scheduleConfirmProbe = useCallback(() => {
+    if (confirmProbe.current !== null) {
+      // One retry in flight at a time. Several stale reads can land together --
+      // the account probe and the addresses probe both carry an auth answer --
+      // and each arming its own timer would stampede the dashboard.
+      return;
+    }
+    const attempt = confirmAttempt.current;
+    if (attempt >= CONFIRM_PROBE_DELAYS.length) {
+      /*
+       * The ladder is out of attempts, and what happens next is deliberately
+       * NOT "believe the next signedOut".
+       *
+       * That is what it used to do, and on a store the probe was mis-reading it
+       * was the last link in the chain that signed a customer in and then put
+       * them back on the login screen: every retry mis-read the page the same
+       * way, the ladder gave up, the next 'signedOut' was believed and written
+       * to the hint. Waiting fixes a cookie flush, which is what this was built
+       * for; it does nothing for a page that is being read wrongly.
+       *
+       * So exhaustion now keeps the login this app WATCHED SUCCEED. The mark is
+       * left standing, the hint is not overwritten, and the customer keeps the
+       * session they actually have. A session that has really ended still signs
+       * them out by every route that carries real evidence -- their own Log Out,
+       * a rejected write, or the next launch, none of which come through here.
+       */
+      warn('login never confirmed by a probe; keeping the watched login');
+      confirmAttempt.current = 0;
+      return;
+    }
+    confirmAttempt.current = attempt + 1;
+    confirmProbe.current = setTimeout(() => {
+      confirmProbe.current = null;
+      probeAccountRef.current();
+    }, CONFIRM_PROBE_DELAYS[attempt]);
+  }, []);
+
   /**
    * Apply an auth answer.
    *
@@ -1543,12 +1660,62 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * the window it is believed like any other, so a session that genuinely
      * expires still signs the customer out.
      */
-    if (!believeAuth(state, signedInAt.current, Date.now(), FRESH_LOGIN_MS)) {
-      warn('ignoring signedOut within the fresh-login window');
-      // Ask again once the jar has had time to settle, so the app is not left
-      // trusting a mark instead of the site.
-      setTimeout(() => probeAccountRef.current(), FRESH_LOGIN_MS);
+    if (
+      !believeAuth(
+        state,
+        signedInAt.current,
+        Date.now(),
+        FRESH_LOGIN_MS,
+        sessionConfirmed.current,
+      )
+    ) {
+      warn('ignoring signedOut: login not yet confirmed by a probe');
+      /*
+       * Ask again, and keep asking.
+       *
+       * This used to be a single setTimeout, and that was the bug: one re-probe,
+       * armed when the stale reply landed rather than when the login did, so its
+       * own answer arrived just past the window and was believed even when the
+       * cookie still had not reached the dashboard WebView. A device that was a
+       * little slower than the six seconds ended up with auth='signedOut' and
+       * that written to the hint, which is what showed the login flow again on
+       * the next tap of Account.
+       *
+       * Now it retries on a widening delay until a probe agrees. Each answer
+       * comes back through this same function, so the moment one says 'signedIn'
+       * the schedule below stops mattering -- and if the session really has
+       * ended, the customer's own sign-out clears the mark and is believed at
+       * once. See sessionConfirmed.
+       */
+      scheduleConfirmProbe();
       return;
+    }
+    /*
+     * A probe that agrees is what the suppression above was waiting for.
+     *
+     * Latched here rather than at the call site because every route into an auth
+     * answer goes through this function, and the flag must mean "something
+     * confirmed it" no matter which one carried it.
+     */
+    if (state === 'signedIn') {
+      sessionConfirmed.current = true;
+      clearConfirmProbe();
+      /*
+       * Make the session outlast the process, not just the app.
+       *
+       * This is the point at which a session is known to exist -- a probe has
+       * just said so -- and the cookie behind it is at its most fragile.
+       * Android has not necessarily written the jar to disk yet, and Shopify's
+       * customer cookie carries no expiry, so a process death here is what put
+       * a customer who signed in yesterday back on the login screen today.
+       *
+       * Fire-and-forget, on the same terms as saveAuthHint below: nothing on
+       * this screen waits for it, and ../account/cookieJar swallows its own
+       * failures because the session mostly works without this. Run on every
+       * confirmation rather than only the first, so a cookie Shopify has since
+       * renewed is made durable too.
+       */
+      persistSession();
     }
     // Either a login just landed, or the question is settled and the mark has
     // no further work to do.
@@ -1561,8 +1728,22 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * Only a definite one: 'unknown' is the absence of an answer and this
      * function is already documented as leaving those alone. Fire-and-forget,
      * because nothing on this screen waits for it -- see ../account/authHint.
+     *
+     * A 'signedOut' only reaches this line once believeAuth has accepted it, so
+     * the stale post-login read that used to be persisted here -- and reproduce
+     * the whole fault on the next cold start, before any probe could correct it
+     * -- no longer can be.
      */
-    if (state !== 'unknown') {
+    /*
+     * Only a 'signedIn' is written, matching what the loader will read back.
+     *
+     * The seeding effect above ignores a stored 'signedOut', so writing one
+     * would be storing a value nothing consults -- and storing it is precisely
+     * how a single mis-read probe used to become a permanent login screen. The
+     * customer's own Log Out does not need it either: that clears the session
+     * cookie, so the next launch's probe answers 'signedOut' on its own.
+     */
+    if (state === 'signedIn') {
       saveAuthHint(state);
     }
     if (state === 'signedOut') {
@@ -1571,7 +1752,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       setAddresses(null);
       setEditing(null);
     }
-  }, []);
+  }, [clearConfirmProbe, scheduleConfirmProbe]);
 
   /**
    * Open the account section.
@@ -1599,12 +1780,27 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // would otherwise open underneath the page it was opened from.
     clearPages();
     setAccountScreens(openAccount(authRef.current));
+    /*
+     * Re-read the customer on every open, and clear the orders while it is out.
+     *
+     * `customer` is deliberately NOT cleared: it is what the account screen
+     * draws its name and initials from, and blanking it would flash an empty
+     * profile header on every open for a customer whose details have not
+     * changed. Orders are a list with its own "not read yet" state (null) that
+     * the screen already renders as a wait, so re-reading them is free of that
+     * flicker and means a customer who ordered on the website since last time
+     * does not see a stale list.
+     */
+    setOrders(null);
     probeAccount();
   }, [clearPages, probeAccount]);
 
   const closeAccountSection = useCallback(() => {
     setAccountScreens(closeAccount());
   }, []);
+
+  /** The confirmation retry must not outlive the screen that armed it. */
+  useEffect(() => clearConfirmProbe, [clearConfirmProbe]);
 
   /**
    * One step back inside the section. Empty means it has closed.
@@ -1703,6 +1899,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         verifyingRef.current = false;
         clearSendWatchdog();
         setLoginBusy(false);
+        // A session this app has watched appear but nothing has confirmed yet.
+        // Until a probe agrees, a 'signedOut' is a cookie jar that has not
+        // caught up rather than an answer -- see believeAuth.
+        sessionConfirmed.current = false;
         // Scenario A and the end of scenario B are the same ending: a session
         // exists, so the customer goes to the dashboard rather than to an
         // account screen they never asked for. handleLoginNav says the same
@@ -2212,10 +2412,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
        * is believed whenever it arrives.
        */
       signedInAt.current = 0;
+      // And the confirmation latch, for the same reason: a sign-out the
+      // customer pressed is the most direct evidence there is, and must not be
+      // held back waiting for a probe to confirm a login they have just undone.
+      sessionConfirmed.current = true;
+      clearConfirmProbe();
       setToastMessage(SIGN_OUT_MESSAGE[reason]);
       injectInto('home', LOGOUT_SCRIPT);
     },
-    [injectInto],
+    [clearConfirmProbe, injectInto],
   );
 
   /**
@@ -2571,6 +2776,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       log('login completed, landed on', nav.url);
+      // Same as applyLoginPhase's 'success': the login is watched, not yet
+      // confirmed. Both endings set this because either can be the one that
+      // happens, and both are safe to run twice.
+      sessionConfirmed.current = false;
       applyAuth('signedIn');
       // And out of the account section altogether: signing in is the end of
       // what the customer came here to do, so they land on the dashboard --
@@ -2617,9 +2826,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const handleNavStateChange = useCallback((nav: WebViewNavigation) => {
     canGoBackRef.current = nav.canGoBack;
 
-    // A new page starts at the top; do not carry the band's travel across.
-    resetSearchBand();
-
     const nowInCheckout = isCheckoutUrl(nav.url);
     if (nowInCheckout !== inCheckoutRef.current) {
       inCheckoutRef.current = nowInCheckout;
@@ -2629,7 +2835,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       setInCheckout(nowInCheckout);
       log(nowInCheckout ? 'entered checkout flow' : 'left checkout flow');
     }
-  }, [resetSearchBand]);
+  }, []);
 
   const handleLoadEnd = useCallback(
     (event: {nativeEvent: {url: string}}) => {
@@ -2645,39 +2851,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       }
     },
     [applyStyles, retireSplash],
-  );
-
-  /**
-   * Carry the search band with the page, rather than toggling it.
-   *
-   * The arithmetic -- direction, rate, and the cases that are not gestures at
-   * all -- lives in ../search/bandTravel, where it can be tested against a
-   * reversal mid-scroll and a page change. What is left here is the wiring:
-   * write the new offset, and let the boolean follow it.
-   */
-  const handleScroll = useCallback(
-    (y: number) => {
-      const previous = lastScrollY.current;
-      lastScrollY.current = y;
-
-      const next = nextTravel(bandTravel.current, previous, y);
-      if (next === bandTravel.current) {
-        return;
-      }
-      bandTravel.current = next;
-
-      /*
-       * setValue rather than a timing: the number is already the answer for
-       * this frame, and interposing an animation between the finger and the
-       * band is exactly what made it read as jumping into place rather than
-       * following. Nothing here touches layout -- the header reads it through
-       * a transform only -- so a write per scroll event costs the WebView
-       * underneath nothing.
-       */
-      searchOffset.setValue(next);
-      setSearchCollapsed(prev => isSettledOff(prev, next));
-    },
-    [searchOffset],
   );
 
   /** Every account reply. Returns true when the message was one of ours. */
@@ -2772,6 +2945,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           if (data.state === 'signedOut') {
             signOutReason.current = null;
             applyAuth('signedOut');
+            /*
+             * Write the CLEARED jar down, or the sign-out survives only as long
+             * as the process does.
+             *
+             * The clearing itself is Shopify's -- /account/logout answers with
+             * its own Set-Cookie and ../webview/accountBridge explains why the
+             * app must not do it by hand. But that cleared cookie lands in the
+             * same in-memory jar as any other, and ../account/cookieJar has
+             * just given this host's cookies a year on disk. Kill the app in
+             * the gap before Android's own sync and it reloads the jar from
+             * disk, where the pre-logout cookie is still sitting with its new
+             * expiry: the customer pressed Log Out and came back signed in.
+             *
+             * So the flush is not an optimisation here, it is what makes the
+             * sign-out durable. Only ever a flush -- writing down what the site
+             * decided, never deciding it.
+             */
+            flushCookies();
             if (reason !== null) {
               // Asked for, and now confirmed by the site: the section closes
               // and the dashboard is what the customer lands on. applyAuth has
@@ -2916,6 +3107,62 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !showError;
 
   /**
+   * Whether the search band is on screen at all.
+   *
+   * Named rather than written inline on the header, because two things now
+   * depend on this one answer and they must not be able to disagree: the header
+   * draws the band, and the page reserves the strip the band occupies -- see
+   * ../webview/searchBandSpace. A page reserving space for a band that is not
+   * drawn is a gap under the bar; a band drawn over a page that reserved
+   * nothing covers the page's first rows.
+   *
+   * Dashboard and shopping pages carry the band; breed and content pages show
+   * only the back arrow and the logo. The search screen brings its own field,
+   * so the band stands down. A product's own page drops it too: ProductActionBar
+   * already takes the screen's bottom slot, and the reference app's product page
+   * shows no search band either.
+   */
+  const showSearchBand =
+    (headerUrl === null || onShopPage) &&
+    !onProductPage &&
+    !showCart &&
+    !searchOpen &&
+    !wishlistOpen &&
+    !onAccountScreen;
+
+  /**
+   * Keep the page's band section in step with the app's decision.
+   *
+   * Re-runs when the answer changes, when the visible layer changes, and when
+   * the placeholder reader reports the site's own phrases -- the last of those
+   * is why the phrases are a dependency and not just a ref read: the band is
+   * usually built before the reader has finished, and this is what hands it the
+   * real phrases once they arrive.
+   *
+   * applyStyles re-asserts the same thing on its own schedule, for the loads
+   * this effect does not see. Both are safe to repeat: the script finds the
+   * node by id and rebuilds nothing. See ../webview/searchBandSection.
+   */
+  const bandTarget: Target = showing !== null ? showing.key : 'home';
+  useEffect(() => {
+    showSearchBandRef.current = showSearchBand;
+    searchPlaceholdersRef.current = searchPlaceholders;
+    searchTypeMsRef.current = searchTypeMs;
+    injectInto(
+      bandTarget,
+      showSearchBand
+        ? buildSearchBandScript(searchPlaceholders, searchTypeMs)
+        : removeSearchBandScript(),
+    );
+  }, [
+    bandTarget,
+    showSearchBand,
+    searchPlaceholders,
+    searchTypeMs,
+    injectInto,
+  ]);
+
+  /**
    * When the bar stands down.
    *
    * Search, because it is keyboard-first and the bar would sit on the keyboard.
@@ -2987,20 +3234,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       */}
       <NativeHeader
         cartCount={cartCount}
-        // Dashboard and shopping pages carry the search band; breed and content
-        // pages show only the back arrow and the logo.
-        // The search screen brings its own field, so the band stands down.
-        // A product's own page drops it too: ProductActionBar already takes
-        // the screen's bottom slot, and the reference app's product page
-        // shows no search band either.
-        showSearch={
-          (headerUrl === null || onShopPage) &&
-          !onProductPage &&
-          !showCart &&
-          !searchOpen &&
-          !wishlistOpen &&
-          !onAccountScreen
-        }
+        /*
+         * Never. The band is a section of the page now -- see
+         * ../webview/searchBandSection -- and drawing the native one as well
+         * is exactly the bug that ended the previous approach: a collapsible
+         * bar above the WebView and the page's own band below it, with the
+         * space for each.
+         *
+         * The prop and everything behind it stay, rather than being deleted
+         * with the call site. The header still owns the band's appearance, and
+         * SEARCH_BAND_H there is still what header.test.tsx holds the injected
+         * section's height to; more importantly a page whose injection has not
+         * landed has no band at all, and this is the one thing that could put
+         * it back. Turning it on is a one-word change.
+         */
+        showSearch={false}
         // No wishlist on the dashboard -- that matches the reference too. The
         // cart screen is the other place it appears: the reference drops the
         // bag there (you are already in the bag) and shows the heart instead.
@@ -3019,17 +3267,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         showCartIcon={
           !showCart && !searchOpen && (!onAccountScreen || onOrdersScreen)
         }
-        // Collapsed by a scroll, and collapsed while the drawer is open: the
-        // drawer is drawn under the header, so a search band left standing
-        // would sit above the panel as a pale blue strip belonging to a page
-        // nobody is looking at. Closing it hands the space to the drawer, which
-        // then reaches the bar the hamburger is on -- and the same 180ms
-        // animation carries it, so the band folds away as the panel slides in
-        // rather than vanishing.
-        searchCollapsed={searchCollapsed || menuOpen}
-        // The travel itself. The header reads it through a transform only, so
-        // the band follows the scroll frame for frame without a relayout.
-        searchOffset={menuOpen ? undefined : searchOffset}
+        // Nothing collapses it any more: with showSearch false there is no
+        // native band to collapse. The scroll listener that used to drive this
+        // is gone too -- the band is a section of the page, so the page's own
+        // scrolling is the whole mechanism.
+        searchCollapsed={false}
         searchPlaceholders={searchPlaceholders}
         searchTypeMs={searchTypeMs}
         showBack={
@@ -3064,16 +3306,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           injectedJavaScriptBeforeContentLoaded={HOME_EARLY_SCRIPT}
           onShouldStartLoadWithRequest={handleHomeShouldStart}
           onNavigationStateChange={handleNavStateChange}
-          /*
-           * Fires per frame, which is what the band's travel needs -- the
-           * RNCWebView dispatches from onScrollChanged through React Native's
-           * own OnScrollDispatchHelper, so there is no scrollEventThrottle to
-           * set here (the prop does not exist on this component) and none is
-           * needed.
-           */
-          onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
-            handleScroll(e.nativeEvent.contentOffset.y)
-          }
           onLoadStart={() => {
             // Hide the site's header as early as Android will let us.
             //
@@ -3227,6 +3459,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 } else {
                   restoreWishlistItem(data.handle, data.reason || '');
                 }
+              } else if (data && data.tag === BAND_TAP_TAG) {
+                // The band is a section of the page now, so its tap arrives as
+                // a message rather than as a Pressable. Everything past this
+                // point is the app's own search screen, unchanged.
+                openSearch();
               } else if (data && data.tag === 'announcements') {
                 setAnnouncements(Array.isArray(data.items) ? data.items : []);
               } else if (data && data.tag === 'search-placeholders') {
@@ -3532,9 +3769,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                     setInCheckout(nowInCheckout);
                   }
                 }}
-                onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) =>
-                  handleScroll(e.nativeEvent.contentOffset.y)
-                }
                 onLoadStart={e => {
                   const url = e.nativeEvent.url;
                   // about:blank and javascript: urls are not navigations; a
@@ -3606,6 +3840,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                     const data = JSON.parse(nativeEvent.data);
                     if (data && data.tag === 'cart-added') {
                       setCartToast(true);
+                    } else if (data && data.tag === BAND_TAP_TAG) {
+                      // Shopping pages carry the band too; see the dashboard's
+                      // handler above.
+                      openSearch();
                     } else if (data && data.tag === 'cart-count') {
                       setCartCount(typeof data.n === 'number' ? data.n : 0);
                     } else if (

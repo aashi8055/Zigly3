@@ -709,6 +709,62 @@ describe('a login just watched outranks a probe that has not caught up', () => {
     expect(believeAuth('signedIn', 10000, 11000, WINDOW)).toBe(true);
     expect(believeAuth('unknown', 10000, 11000, WINDOW)).toBe(true);
   });
+
+  /*
+   * The fault the `confirmed` argument fixes, reported against v16: sign in
+   * successfully, land on the dashboard, then tap Account again -- and get the
+   * whole login flow a second time instead of the account screen.
+   *
+   * Nothing was visibly wrong at the time, because the section closes on a
+   * successful login. What went wrong was AFTER it: the re-probe the window
+   * scheduled was armed when the stale reply arrived rather than when the login
+   * happened, so its answer landed a fraction past `window` and was believed --
+   * even on a device where the cookie had still not reached the dashboard
+   * WebView, which is the very condition the window exists for. That set auth
+   * to 'signedOut' and persisted it to the hint, so the next tap opened login.
+   */
+  describe('and keeps outranking it until a probe actually agrees', () => {
+    it('disbelieves a stale signedOut even past the window', () => {
+      // The exact shape of the v16 fault: 7s after the login, so the window has
+      // passed, but nothing has confirmed the session yet.
+      expect(believeAuth('signedOut', 10000, 17000, WINDOW, false)).toBe(false);
+      // And however long it takes -- an unconfirmed login is not evidence of a
+      // sign-out at any distance.
+      expect(believeAuth('signedOut', 10000, 99000, WINDOW, false)).toBe(false);
+    });
+
+    it('believes a signedOut once a probe has confirmed the session', () => {
+      // `confirmed` latches true on the first 'signedIn' a probe returns, and
+      // from then on the ordinary window rules apply again -- which is what
+      // keeps a genuine expiry working.
+      expect(believeAuth('signedOut', 10000, 17000, WINDOW, true)).toBe(true);
+    });
+
+    it('still suppresses inside the window once confirmed', () => {
+      // Confirming does not disable the original rule; a second login's own
+      // race is still covered by the window.
+      expect(believeAuth('signedOut', 10000, 11000, WINDOW, true)).toBe(false);
+    });
+
+    it('believes everything when no login is on record, confirmed or not', () => {
+      // A cold start has since === 0. The latch must not reach back and
+      // suppress a sign-out that has nothing to do with a login this app saw.
+      expect(believeAuth('signedOut', 0, 11000, WINDOW, false)).toBe(true);
+    });
+
+    it('never suppresses a signedIn, confirmed or not', () => {
+      expect(believeAuth('signedIn', 10000, 11000, WINDOW, false)).toBe(true);
+    });
+
+    it('defaults to the old behaviour when the argument is omitted', () => {
+      // Every existing caller and every test above passes four arguments. The
+      // default must therefore be the confirmed case, or adding the parameter
+      // would silently change what they mean.
+      expect(believeAuth('signedOut', 10000, 17000, WINDOW)).toBe(
+        believeAuth('signedOut', 10000, 17000, WINDOW, true),
+      );
+    });
+  });
 });
 
 describe('the bridge to the widget', () => {
@@ -933,11 +989,36 @@ describe('the section wires the flow the way the brief asks', () => {
 
   it('re-asks the site rather than trusting the fresh-login mark', () => {
     // The rule delays one answer; it must not become the app's own opinion of
-    // the session. applyAuth schedules a fresh probe at the end of the window,
-    // so what the app finally settles on is what the site said.
+    // the session. applyAuth keeps probing until the site confirms, so what the
+    // app finally settles on is what the site said.
+    //
+    // This used to assert a single `probeAccountRef.current(), FRESH_LOGIN_MS`,
+    // and that one-shot retry was the bug: armed when the stale reply landed
+    // rather than when the login did, its own answer arrived just outside the
+    // window and was believed even when it was equally stale.
     const text = src();
-    expect(text).toContain('believeAuth(state, signedInAt.current');
-    expect(text).toContain('probeAccountRef.current(), FRESH_LOGIN_MS');
+    expect(text).toContain('believeAuth(');
+    expect(text).toContain('sessionConfirmed.current');
+    expect(text).toContain('scheduleConfirmProbe()');
+    expect(text).toContain('const CONFIRM_PROBE_DELAYS');
+  });
+
+  it('gives up insisting once the retries are spent', () => {
+    // The latch delays a sign-out; it must never prevent one. When the attempts
+    // run out the app believes the site again, so a login that did not actually
+    // create a session cannot leave the app permanently convinced that it did.
+    const text = src();
+    expect(text).toContain('attempt >= CONFIRM_PROBE_DELAYS.length');
+    expect(text).toContain("warn('login never confirmed");
+  });
+
+  it('stops insisting the moment a probe agrees', () => {
+    // The whole point of the latch: a probe answering 'signedIn' is the
+    // confirmation it was waiting for, and every later 'signedOut' is then
+    // judged on the window's ordinary terms.
+    const text = src();
+    expect(text).toContain('sessionConfirmed.current = true;');
+    expect(text).toContain('clearConfirmProbe()');
   });
 
   it('lets a log-out the customer pressed through immediately', () => {

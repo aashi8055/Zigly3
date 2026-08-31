@@ -144,14 +144,53 @@ export type AccountPhase = string;
  *
  * `since` is 0 when no login has been watched, which is the ordinary case and
  * believes everything.
+ *
+ * WHY THE WINDOW ALONE WAS NOT ENOUGH (the fault this parameter fixes).
+ *
+ * The window is measured from the login, but the re-probe it schedules is armed
+ * when the STALE REPLY lands -- which is always a little later. So the answer to
+ * that re-probe arrives after `now - since` has already passed `window`, and was
+ * believed on arrival. On a device where the cookie flush had still not
+ * happened, that second 'signedOut' was just as stale as the first and was
+ * taken as fact: `auth` went to 'signedOut' and the hint was written to disk.
+ * Nothing was on screen to show it, because the section closes on success --
+ * the customer saw it on the NEXT tap of Account, as the login flow all over
+ * again for someone who was already signed in.
+ *
+ * `confirmed` is what closes that hole. It is false until a probe has actually
+ * come back 'signedIn' since the login, and while it is false no 'signedOut' is
+ * believed at all, however long it has been. The app watched the login succeed;
+ * until something independently confirms the session, a WebView saying otherwise
+ * is describing its own cookie jar rather than the customer.
+ *
+ * This cannot strand a customer in a session that has really ended:
+ *   - Once ANY probe answers 'signedIn', `confirmed` is true for good and every
+ *     later 'signedOut' is believed on the window's ordinary terms.
+ *   - A sign-out the customer PRESSES clears `since` to 0 before it asks, so it
+ *     takes the first branch here and is never suppressed.
+ *   - `since` is 0 on a cold start, so a session that expired between launches
+ *     is believed immediately.
+ * The only state it holds open is the one between a login this app watched
+ * succeed and the first probe that agrees -- which is exactly the race.
  */
 export const believeAuth = (
   state: AuthState,
   since: number,
   now: number,
   window: number,
-): boolean =>
-  !(state === 'signedOut' && since !== 0 && now - since < window);
+  confirmed: boolean = true,
+): boolean => {
+  if (state !== 'signedOut' || since === 0) {
+    return true;
+  }
+  // Nothing has confirmed the session yet, so every 'signedOut' since the login
+  // is a WebView that has not been handed the cookie -- not an answer about the
+  // customer. See `confirmed` above for why this cannot strand a real expiry.
+  if (!confirmed) {
+    return false;
+  }
+  return now - since >= window;
+};
 
 /**
  * Apply an auth answer that arrived while the section was open.

@@ -255,15 +255,16 @@ const NativeHeader = ({
     extrapolate: 'clamp',
   });
   /*
-   * Fades over the first half of the travel, so the field is out of sight
-   * before the band's top edge reaches the bar and it never reads as sliding
-   * *under* the furniture above it.
+   * There is deliberately no opacity here.
+   *
+   * The field used to fade out over the first half of the travel, so that it
+   * was gone before the band's top edge met the bar and never read as sliding
+   * *under* it. But sliding under the bar is exactly what a section does, and
+   * the band is a section: the clipping box above is what hides it, edge by
+   * edge, the same way the page's own first section is hidden. Fading as well
+   * made it dissolve rather than leave, which is the one thing content never
+   * does.
    */
-  const bandOpacity = travel.interpolate({
-    inputRange: [0, SEARCH_BAND_H / 2],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
 
   const [bandHeight, setBandHeight] = useState(
     searchCollapsed ? 0 : SEARCH_BAND_H,
@@ -399,8 +400,8 @@ const NativeHeader = ({
          * WebView resizes mid-scroll and a blank strip for the length of the
          * animation.
          *
-         * What follows the scroll instead is bandOpacity / bandLift on the
-         * content below. Both are compositor-only and never touch layout, so
+         * What follows the scroll instead is bandLift, on both the paint and
+         * the field below. It is compositor-only and never touches layout, so
          * the band can track the finger frame for frame -- leaving with the
          * content on the way down, coming back from the top on the way up --
          * while the one relayout this was written to bound still happens
@@ -411,13 +412,35 @@ const NativeHeader = ({
           style={[styles.searchBand, { height: bandHeight }]}
           pointerEvents={searchCollapsed ? 'none' : 'auto'}
         >
+          {/*
+            The blue rides with the field, rather than being painted on the box
+            that owns the height.
+
+            It used to sit on the clipping View above, whose only moving
+            property is that one-step `bandHeight` -- so the field slid off
+            smoothly under the finger while its own background stayed put and
+            then vanished in a single frame when the scroll settled. Here the
+            paint is a layer of its own, lifted by the same `bandLift` as the
+            field, so the two leave together; the height snap behind them then
+            happens on a box that is already empty and offscreen.
+
+            Filling the box absolutely rather than wrapping the field keeps
+            the band's height coming from searchBandInner exactly as before,
+            and -SEARCH_BAND_H of `bottom` gives the paint a second band's
+            worth of body below itself, so an overscroll bounce at the top
+            never exposes bare ground beneath it.
+          */}
+          <Animated.View
+            style={[
+              styles.searchBandPaint,
+              { transform: [{ translateY: bandLift }] },
+            ]}
+            pointerEvents="none"
+          />
           <Animated.View
             style={[
               styles.searchBandInner,
-              {
-                opacity: bandOpacity,
-                transform: [{ translateY: bandLift }],
-              },
+              { transform: [{ translateY: bandLift }] },
             ]}
           >
             {/*
@@ -552,12 +575,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Pale blue band, matching the reference app.
+  // The band's clipping box. It owns the height and nothing else: the pale
+  // blue itself is searchBandPaint below, so that the colour travels with the
+  // field instead of disappearing with the height.
   searchBand: {
-    backgroundColor: '#BFD3EE',
     // No padding here: on the animated view it outlives height 0 and lets the
     // field's border show as a sliver. It belongs on the inner view.
     overflow: 'hidden',
+  },
+  // Pale blue band, matching the reference app.
+  searchBandPaint: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    // Extra body below, so a bounce at the top of the page shows more blue
+    // rather than the ground behind it.
+    bottom: -SEARCH_BAND_H,
+    backgroundColor: '#BFD3EE',
   },
   searchBandInner: { paddingHorizontal: 14, paddingVertical: 10 },
   searchField: {

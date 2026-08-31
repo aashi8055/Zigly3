@@ -451,9 +451,19 @@ describe('the hamburger', () => {
     expect(s).not.toContain('onMenuPress={openMenu}');
   });
 
-  it('folds the search band away while the drawer is over the page', () => {
-    // Otherwise the band stands above the panel as a pale blue strip belonging
-    // to a page nobody is looking at.
-    expect(src()).toContain('searchCollapsed={searchCollapsed || menuOpen}');
+  it('leaves no search band standing above the drawer panel', () => {
+    /*
+     * This used to need arranging: the native band was drawn above the WebView,
+     * outside anything the drawer covered, so it had to be folded away by hand
+     * (`searchCollapsed={searchCollapsed || menuOpen}`) or it stood over the
+     * panel as a pale blue strip belonging to a page nobody was looking at.
+     *
+     * The band is a section of the page now -- ../src/webview/searchBandSection
+     * -- so it is inside the WebView the drawer draws over, and there is
+     * nothing left to fold. What is checked instead is that the native band is
+     * genuinely not drawn, because that is what makes the arranging
+     * unnecessary.
+     */
+    expect(src()).toContain('showSearch={false}');
   });
 });

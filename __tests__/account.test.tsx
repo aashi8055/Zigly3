@@ -491,7 +491,11 @@ describe('where the section leaves you', () => {
     const s = src();
     const at = s.indexOf("case 'auth': {");
     expect(at).toBeGreaterThan(-1);
-    const arm = s.slice(at, at + 1600);
+    // To the end of the arm rather than a fixed number of characters. The
+    // window used to be 1600, which was only ever "enough for now": a comment
+    // added inside the arm pushed the code being asserted on out of the slice
+    // and failed a test about behaviour that had not changed.
+    const arm = s.slice(at, s.indexOf("default:", at));
     // Asked for -> the dashboard. applyAuth has just collapsed the stack to
     // the login screen, which is the right end for an expired session only.
     expect(arm).toContain('signOutReason.current');
@@ -504,7 +508,7 @@ describe('where the section leaves you', () => {
     // in, and the screen they are on is the one that can tell them.
     const s = src();
     const at = s.indexOf("case 'auth': {");
-    const arm = s.slice(at, at + 1600);
+    const arm = s.slice(at, s.indexOf("default:", at));
     const failed = arm.slice(arm.indexOf("data.from === 'logout'"));
     expect(failed).toContain('setAccountNotice(');
     expect(failed).not.toContain('closeAccount(');

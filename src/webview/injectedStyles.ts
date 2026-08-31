@@ -13,9 +13,14 @@
  */
 import {HEADER_DRAWER_CSS, LIFT_PAINT_GATE} from './headerBridge';
 import {BREED_PAGE_CSS} from './breedPage';
+import {SEARCH_BAND_CSS} from './searchBandSection';
 
 export const MOBILE_CSS = `
 ${HEADER_DRAWER_CSS}
+
+/* The search band, which is a section of this page rather than furniture over
+   it; see ./searchBandSection. Inert until that script builds the node. */
+${SEARCH_BAND_CSS}
 
 /* ------------------------------------------------------------------
    App-wide typeface: sans-serif everywhere.
