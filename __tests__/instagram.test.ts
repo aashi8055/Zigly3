@@ -23,6 +23,7 @@ import {
   INSTAGRAM_SECTION_SCRIPT,
   INSTAGRAM_SLOT,
 } from '../src/webview/instagramSection';
+import {MOBILE_CSS} from '../src/webview/injectedStyles';
 
 describe('the posts', () => {
   it('carries a full rail', () => {
@@ -32,16 +33,33 @@ describe('the posts', () => {
     expect(INSTAGRAM_CARDS).toHaveLength(8);
   });
 
-  it('leads with the reels', () => {
-    // Filtering to video only would leave the rail short after a quiet week,
-    // so photos sit behind the reels rather than being dropped. The heading
-    // still wants a reel under it first.
-    const firstPhoto = INSTAGRAM_CARDS.findIndex(c => !c.isVideo);
-    const lastReel = INSTAGRAM_CARDS.map(c => c.isVideo).lastIndexOf(true);
-    if (firstPhoto !== -1) {
-      expect(firstPhoto).toBeGreaterThan(lastReel);
+  it("keeps the account's own order, rather than grouping reels first", () => {
+    // This used to require every reel ahead of every photo. That has been
+    // deliberately dropped: the heading says "From Our Instagram", so the order
+    // the account actually shows is the order that is true, and re-sorting it
+    // was the app editing Zigly's feed to look tidier than it is.
+    //
+    // Asserted as "the groups are interleaved", which is what the real feed
+    // gives: a run of reels, two photos, then more reels. A list that happened
+    // to be sorted would pass a weaker check, so this pins the actual shape.
+    const flags = INSTAGRAM_CARDS.map(c => c.isVideo);
+    const firstPhoto = flags.indexOf(false);
+    const lastReel = flags.lastIndexOf(true);
+    expect(firstPhoto).toBeGreaterThan(-1);
+    // A photo appears before the last reel: proof nothing re-grouped them.
+    expect(firstPhoto).toBeLessThan(lastReel);
+  });
+
+  it('carries the current shortcodes, not the stale set', () => {
+    // Every code in the previous list was from an older run of the reader and
+    // no longer matched a live post, and 'DbASndEhY4' was ten characters where
+    // a shortcode is eleven -- so its cover could never have resolved. That is
+    // what actually emptied the rail, not the endpoint.
+    const ids = INSTAGRAM_CARDS.map(c => c.id);
+    expect(ids).not.toContain('DbASndEhY4');
+    for (const id of ids) {
+      expect(id).toHaveLength(11);
     }
-    expect(INSTAGRAM_CARDS[0].isVideo).toBe(true);
   });
 
   it('has a plausible shortcode on every card', () => {
@@ -151,8 +169,37 @@ describe('the injected section', () => {
     expect(INSTAGRAM_SECTION_SCRIPT).toContain("data-zigly-ig");
   });
 
-  it('takes a card down when its cover will not load', () => {
+  it('marks a card whose cover will not load, rather than removing it', () => {
     expect(INSTAGRAM_SECTION_SCRIPT).toContain('img.onerror');
+    expect(INSTAGRAM_SECTION_SCRIPT).toContain('data-zigly-ig-cover');
+  });
+
+  it('never removes the section when covers fail', () => {
+    // This is why the section went missing from the dashboard.
+    // instagram.com/p/<code>/media/ no longer serves an unauthenticated
+    // third-party request, so ALL EIGHT covers error -- and the old code
+    // counted survivors and removed the section when the count hit zero. It did
+    // exactly what it was written to do, which is why nothing reported a fault.
+    //
+    // Asserted on the absence of the removal, not on a happy path: any
+    // reintroduced "remove the section when the covers fail" is the same bug
+    // back, however it is spelled.
+    expect(INSTAGRAM_SECTION_SCRIPT).not.toContain(
+      'section.parentNode.removeChild(section)',
+    );
+    expect(INSTAGRAM_SECTION_SCRIPT).not.toContain('alive');
+  });
+
+  it('keeps the failed card tappable, so it still opens the real post', () => {
+    // The card loses its picture, not its link: the <img> is hidden and the
+    // anchor -- which is the card -- is untouched.
+    expect(INSTAGRAM_SECTION_SCRIPT).toContain("img.style.display = 'none'");
+    expect(INSTAGRAM_SECTION_SCRIPT).not.toContain('card.parentNode.removeChild(card)');
+  });
+
+  it('styles the failed tile so it does not read as a bug', () => {
+    // An untouched placeholder ground next to loaded covers reads as broken.
+    expect(MOBILE_CSS).toContain("data-zigly-ig-cover='failed'");
   });
 
   it('builds the cards without innerHTML', () => {

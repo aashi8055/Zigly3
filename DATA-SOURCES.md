@@ -366,12 +366,22 @@ carries eight frozen shortcodes; the link and the cover are both derived from
 each shortcode, so refreshing the rail means replacing shortcodes and nothing
 else.
 
-**Why the covers still work.** `instagram.com/p/<shortcode>/media/` is a
-permanent, unsigned URL that redirects to a freshly signed CDN image on every
-request. The signed `*.fbcdn.net` URLs the API returns expire within hours, so
-writing one of those down would guarantee broken images; this one needs no code
-and ships no image bytes in the APK. A cover that will not load takes its own
-card down, and if all of them go so does the heading.
+**Why the covers work.** `instagram.com/p/<shortcode>/media/` is a permanent,
+unsigned URL that redirects to a freshly signed CDN image on every request. The
+signed `*.fbcdn.net` URLs the API returns expire within days, so writing one of
+those down would guarantee broken images; this one needs no code and ships no
+image bytes in the APK.
+
+**The rail was empty, and it was the data, not the endpoint.** Re-checked on
+2026-08-31: every one of the eight shortcodes then in the file was stale, and one
+(`DbASndEhY4`) was ten characters where a shortcode is eleven, so its cover could
+never have resolved. Meanwhile the section removed a card whose cover failed and
+removed itself once the last card went — so a wholly stale list produced no
+section at all, silently, which is exactly what was reported. Both halves are
+fixed: the list was re-read from the API route above (all eight verified to
+return `200 image/jpeg`), and a failed cover now walks a short list of alternate
+URL forms before the card gives up. A card that runs out keeps its place, its
+badge and its link, and loses only the picture — the section is never removed.
 
 **The cost, stated.** The rail ages. These are posts from August 2026 and the
 heading implies recency the list cannot keep on its own. That is the trade taken

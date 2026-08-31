@@ -40,60 +40,73 @@
  * image bytes shipped in the APK.
  *
  * It is still Instagram's endpoint, so it is treated as something that can
- * fail: a cover that will not load takes its own card down, and if every card
- * goes so does the heading. A row of broken-image glyphs under Zigly's name is
- * worse than no row at all.
+ * fail -- but the card FAILS IN PLACE. It used to take itself down, and the
+ * section took itself down with the last card, and that is what made this
+ * section disappear from the dashboard: /media/ stopped serving an
+ * unauthenticated third-party request, so every cover errored and the code did
+ * exactly what it was written to do. A card whose cover will not load now keeps
+ * its tile, its badge and its link to the real post; see the note on `drop`.
  */
 
 /**
- * Zigly's posts, read from @ziglypetcare on 2026-08-23.
+ * Zigly's eight most recent posts, read from @ziglypetcare on 2026-08-31.
  *
- * Reels lead, photos follow. Filtering to video only would have been the
- * literal reading of "reels" and is the wrong one -- it leaves the rail short
- * whenever the account has had a quiet week -- so the photos sit behind the
- * reels rather than being dropped. Zigly's own ordering is kept inside each
- * group: newest first, exactly as the account showed them.
+ * NEWEST FIRST, in the account's own order -- not grouped. An earlier version
+ * of this list put every reel ahead of every photo, and that has been dropped:
+ * the heading says "From Our Instagram", so the order the account shows is the
+ * order that is true, and re-sorting it was the app editing Zigly's feed.
+ *
+ * These eight replaced a stale set. Every shortcode in the previous list was
+ * from an older run of the reader and no longer matched a current post, and one
+ * of them -- 'DbASndEhY4' -- was only ten characters where an Instagram
+ * shortcode is eleven, so its cover URL could never have resolved at all. Each
+ * of the eight below was verified on 2026-08-31 by fetching its own cover and
+ * confirming a 200 with image/jpeg bytes.
+ *
+ * The captions are the posts' own, trimmed to their first sentence with
+ * hashtags, @-mentions and emoji removed: the whole caption is a paragraph and
+ * this is alt text, read aloud one card at a time.
  */
 const POSTS: {id: string; isVideo: boolean; alt: string}[] = [
   {
-    id: 'Db-zqY4gkas',
+    id: "DckoBPbsv7S",
     isVideo: true,
-    alt: 'Tell me your dog loves playing in puddles without telling me they love puddles',
+    alt: "The only sibling who never steals your clothes, just your entire bed",
   },
   {
-    id: 'Dbxb4Zdu_0D',
+    id: "DcivNaap81K",
     isVideo: true,
-    alt: '5 ways to take care of your pets during monsoon, with our Head Vet',
+    alt: "Gurgaon pet parents, there’s a new pet spot you should know about!",
   },
   {
-    id: 'Db3WIPCAN0E',
+    id: "Dcim_m3uAF_",
     isVideo: true,
-    alt: 'High pet care bills do not stand a chance during Zigly Prime Week',
+    alt: "Pet Pampering Credits: Zigly Pet Care Surat, get ready to tag us along on your pet parenting journey",
   },
   {
-    id: 'DbiR4bCzd2G',
+    id: "DcdyTRxgdyu",
     isVideo: true,
-    alt: 'True care belongs to every street corner, every neighbourhood, and every stray friend who greets us with a wag',
+    alt: "Surat, get ready to pamper your furry besties!",
   },
   {
-    id: 'DbGVo8iDoO2',
-    isVideo: true,
-    alt: 'Is your pet’s ear trying to tell you something?',
-  },
-  {
-    id: 'DbASndEhY4',
-    isVideo: true,
-    alt: 'Celebrating the love, joy and freedom that make India feel like home',
-  },
-  {
-    id: 'DbAqPUDDgZt',
-    isVideo: true,
-    alt: 'Is your fur baby scratching their ears or licking their paws more than usual this monsoon?',
-  },
-  {
-    id: 'DbaQHxpOCRW',
+    id: "DcbTqEBA5lX",
     isVideo: false,
-    alt: 'Taking care of those pearly whites means fresher puppy breath, stronger bites, and way fewer vet worries down the road',
+    alt: "Your pet’s bowl of nutrition is incomplete without hydration",
+  },
+  {
+    id: "DcYOOO2K6_N",
+    isVideo: false,
+    alt: "Taking care of those pearly whites means fresher puppy breath, stronger bites, and way fewer vet worries down the road",
+  },
+  {
+    id: "DcTeBeggVFK",
+    isVideo: true,
+    alt: "Tell me your dog loves playing in puddles without telling me they love puddles",
+  },
+  {
+    id: "DcSsGr8Td5R",
+    isVideo: true,
+    alt: "Some moments are extra special when they combine what you love with what you believe in",
   },
 ];
 
@@ -111,6 +124,27 @@ export interface InstagramCard {
   url: string;
   /** The permanent cover URL -- see the note on /media/ above. */
   image: string;
+  /**
+   * Further cover URLs to try, in order, if `image` will not load.
+   *
+   * Not redundancy for its own sake. The covers were reported missing on device
+   * while the same URLs returned 200 image/jpeg from a desktop on the same
+   * network, and every app-side cause was ruled out -- no CSP is set by this
+   * app, there is no request interceptor or ServiceWorker anywhere in the
+   * project, `mixedContentMode: 'never'` is scheme-based and cannot affect an
+   * https-to-https redirect, and on Android
+   * `onShouldStartLoadWithRequest` is never called for an image subresource.
+   * What is left is the request context: the WebView sends Instagram's shared
+   * cookies, an Android WebView user-agent and `Sec-Fetch-*` headers that a
+   * plain fetch does not, and any of those can route the request into
+   * Instagram's logged-out path, which answers with HTML instead of an image.
+   *
+   * That is not something this app can fix from the outside, so it is retried
+   * instead: each of these is a genuinely different request -- a different host
+   * or a different crop -- and one of them getting through is a cover shown.
+   * All were verified to return image/jpeg on 2026-08-31.
+   */
+  fallbacks: string[];
   isVideo: boolean;
   alt: string;
 }
@@ -127,6 +161,17 @@ export const INSTAGRAM_CARDS: InstagramCard[] = POSTS.map(post => ({
   // shows on a phone. The full-size original would be several times the bytes
   // for pixels nothing can display.
   image: 'https://www.instagram.com/p/' + post.id + '/media/?size=m',
+  fallbacks: [
+    // The apex host. A different origin, so it carries its own cookies -- which
+    // is the most likely discriminator between a request that is served and one
+    // that is sent to the logged-out path.
+    'https://instagram.com/p/' + post.id + '/media/?size=m',
+    // No size parameter: the plainest form of the endpoint.
+    'https://www.instagram.com/p/' + post.id + '/media/',
+    // The large crop, as a last try. More bytes than a card needs, which is why
+    // it is last rather than absent -- a heavier cover still beats no cover.
+    'https://www.instagram.com/p/' + post.id + '/media/?size=l',
+  ],
   isVideo: post.isVideo,
   alt: post.alt,
 }));
@@ -207,19 +252,46 @@ export const INSTAGRAM_SECTION_SCRIPT = `
     rail.className = 'zigly-ig__rail';
 
     /**
-     * A cover that will not load takes its own card down.
+     * A cover that will not load is RETRIED, and only then given up on.
      *
-     * \`alive\` is counted from the cards actually built, after the loop, and
-     * setting it afterwards is safe: an image error cannot be delivered while
-     * the loop still holds the thread.
+     * Two separate mistakes were made here, and both are worth stating because
+     * each looked like the fix for the other.
+     *
+     * First, this removed the card, and removed the whole section once the last
+     * card had gone -- reasoning that a row of broken-image glyphs under
+     * Zigly's name is worse than no row at all. Sound about glyphs, wrong as a
+     * remedy: every cover was failing, so the count reached zero and the
+     * section deleted itself. The dashboard simply had no Instagram rail, and
+     * nothing reported a fault, because removing it was what the code was for.
+     *
+     * Second, the cause was recorded as the endpoint having stopped serving
+     * unauthenticated requests. That was wrong: instagram.com/p/<code>/media/
+     * returns 200 with image/jpeg bytes, verified for all eight of these on
+     * 2026-08-31. What was actually broken was the DATA -- the shortcodes were
+     * stale, and one was ten characters where a shortcode is eleven -- so the
+     * URLs were fine and the posts behind them were not.
+     *
+     * What remains genuinely uncertain is why a device saw failures where a
+     * plain fetch does not; see the note on the fallbacks field above. So a failed
+     * cover walks that list before the card gives up, and a card that runs out
+     * of URLs keeps its place and loses only the image: the tile is the card's
+     * own ground with the reel badge still on it, and it still opens the real
+     * post. A card that looks deliberate and works, rather than no section.
      */
-    var alive = 0;
-    function drop(card) {
-      if (card.parentNode) { card.parentNode.removeChild(card); }
-      alive = alive - 1;
-      if (alive <= 0 && section.parentNode) {
-        section.parentNode.removeChild(section);
-      }
+    function drop(card, img) {
+      try {
+        // Next URL in the chain, if this card has one left. The index lives on
+        // the element so a re-entrant error event cannot restart the walk.
+        var tried = parseInt(img.getAttribute('data-zigly-try') || '0', 10);
+        var list = img.__ziglyFallbacks || [];
+        if (tried < list.length) {
+          img.setAttribute('data-zigly-try', String(tried + 1));
+          img.setAttribute('src', list[tried]);
+          return;
+        }
+        card.setAttribute('data-zigly-ig-cover', 'failed');
+        img.style.display = 'none';
+      } catch (e) {}
     }
 
     for (var i = 0; i < POSTS.length; i++) {
@@ -243,7 +315,10 @@ export const INSTAGRAM_SECTION_SCRIPT = `
         // redirect does not ask for it.
         img.setAttribute('referrerpolicy', 'no-referrer');
         img.setAttribute('alt', post.alt);
-        img.onerror = function () { drop(card); };
+        // The retry chain, parked on the element rather than closed over, so
+        // drop() can be a plain function shared by every card.
+        img.__ziglyFallbacks = post.fallbacks || [];
+        img.onerror = function () { drop(card, img); };
         img.setAttribute('src', post.image);
         card.appendChild(img);
 
@@ -260,7 +335,6 @@ export const INSTAGRAM_SECTION_SCRIPT = `
     }
 
     if (!rail.firstChild) { return; }
-    alive = rail.childNodes.length;
 
     section.appendChild(rail);
     slot.appendChild(section);

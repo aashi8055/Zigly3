@@ -150,6 +150,42 @@ describe('getInjectionForUrl', () => {
       expect(script).toContain('overflow-x: auto !important');
     });
 
+    it('insets the first coupon, by padding the track and not the scroller', () => {
+      // The first coupon sat flush against the left edge while every coupon
+      // after it had a gutter: the theme's inset is on an ancestor, and once
+      // this element became a scroller its content box starts at x=0.
+      //
+      // The gutter has to be on the TRACK. A scroll container's own start
+      // padding is scrolled away, and an older Android WebView drops its end
+      // padding outright -- so padding .slider-container fixes neither the
+      // first coupon at rest nor the missing gutter after the last one. On a
+      // max-content flex track the padding is part of the track's width, so it
+      // scrolls with the content.
+      const css = MOBILE_CSS;
+      // The FIRST occurrence of this selector in the file is inside the comment
+      // above the block, which quotes the theme's own marquee rule to explain
+      // what is being stopped. The real declaration is the one after it.
+      const quoted = css.indexOf('.mySwiper_couponSlider .slider-track {');
+      const from = css.indexOf(
+        '.mySwiper_couponSlider .slider-track {',
+        quoted + 1,
+      );
+      expect(from).toBeGreaterThan(quoted);
+      const rule = css.slice(from, css.indexOf('}', from));
+      expect(rule).toContain('padding-left: 12px');
+      expect(rule).toContain('padding-right: 12px');
+      // Included in the track's own width, or the padding pushes the last
+      // coupon out of reach instead of sitting inside the scroll extent.
+      expect(rule).toContain('box-sizing: border-box');
+    });
+
+    it('snaps a coupon to where the first one rests, not under the inset', () => {
+      const css = MOBILE_CSS;
+      const from = css.indexOf('.slider-container.mySwiper_couponSlider {');
+      const rule = css.slice(from, css.indexOf('}', from));
+      expect(rule).toContain('scroll-padding-left: 12px');
+    });
+
     it("re-supplies the site's own copy function, and only if absent", () => {
       // The section's markup calls copyCodeCoupon from an inline onclick, and
       // this app drops transplanted scripts -- so the function has to come

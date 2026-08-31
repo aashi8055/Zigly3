@@ -54,10 +54,25 @@ export const SEED_PLACEHOLDERS = [
 /** How many phrases are kept. The site cycles a handful; this is headroom. */
 export const MAX_PLACEHOLDERS = 12;
 
-/** SearchTap's own cadence, in milliseconds. See the note above. */
-export const TYPE_MS = 100;
-export const HOLD_MS = 1000;
-export const ERASE_MS = 50;
+/**
+ * How much faster than the site the app types.
+ *
+ * The site's own cadence is the figure below at scale 1. The app runs the
+ * typewriter a little quicker than that: a phrase the customer has to wait out
+ * before the next one starts is the one part of the site's animation that reads
+ * as slow on a phone, where the header is the first thing on screen. The hold
+ * shrinks with it, so the whole cycle stays in proportion rather than the
+ * letters racing to a pause of the old length.
+ *
+ * Applied to the measured cadence too (see `acceptInterval`), or the site's own
+ * ~100ms would land as soon as the reader reports it and undo this.
+ */
+const SPEED_SCALE = 0.7;
+
+/** SearchTap's own cadence, in milliseconds, scaled by SPEED_SCALE. */
+export const TYPE_MS = Math.round(100 * SPEED_SCALE);
+export const HOLD_MS = Math.round(1000 * SPEED_SCALE);
+export const ERASE_MS = Math.round(50 * SPEED_SCALE);
 
 /**
  * Cadence used until the site's own has been measured.
@@ -114,40 +129,36 @@ export const cleanPlaceholder = (value: unknown): string | null => {
 };
 
 /**
- * Fold new phrases into the ones already on screen.
+ * The rotating list, which is now exactly SEED_PLACEHOLDERS -- nothing less,
+ * nothing more.
  *
- * Additive on purpose. The reader sees one phrase per rotation tick, so the
- * list arrives a piece at a time; replacing it on every message would leave the
- * header showing whichever single phrase came last. Order is first-seen, which
- * is the order the site rotates them in, and duplicates fold case-insensitively
- * so "Search For Cat Food" does not join "Search for cat food".
+ * This used to fold the site's own phrases in as `webview/searchBridge.ts`
+ * read them off the live search box, growing the list up to
+ * MAX_PLACEHOLDERS. That was the right idea and the wrong result in practice:
+ * the phrases arrive one per rotation tick over several seconds, so the bar
+ * the customer saw changed length and content while they were looking at it,
+ * and what it ended up cycling depended on how long they had stayed on the
+ * page. The seeds are Zigly's own copy and they are the four the header is
+ * designed around, so the list is now fixed at them.
+ *
+ * The function is KEPT, rather than deleted along with the reader, for two
+ * reasons: `existing` is returned by identity so the caller's `useState`
+ * setter does not re-render on every message the bridge still sends, and the
+ * reader itself is what measures the site's typing cadence -- see
+ * `acceptInterval`, which is still live. Growing the list again means changing
+ * this one function, not rewiring the bridge.
+ *
+ * `incoming` is deliberately unused, which is why nothing here validates it any
+ * more: `cleanPlaceholder` was the guard on text arriving from a page this app
+ * does not control, and that guard is only needed by whatever puts such text on
+ * screen. Nothing does. It stays exported, tested and ready for the day the
+ * list grows again -- deleting it would mean rewriting it, unvetted, at exactly
+ * the moment untrusted phrases start being shown.
  */
 export const mergePlaceholders = (
   existing: string[],
-  incoming: unknown,
-): string[] => {
-  if (!Array.isArray(incoming)) {
-    return existing;
-  }
-  const merged = [...existing];
-  const seen = new Set(existing.map(phrase => phrase.toLowerCase()));
-  for (const raw of incoming) {
-    if (merged.length >= MAX_PLACEHOLDERS) {
-      break;
-    }
-    const phrase = cleanPlaceholder(raw);
-    if (phrase === null) {
-      continue;
-    }
-    const fold = phrase.toLowerCase();
-    if (seen.has(fold)) {
-      continue;
-    }
-    seen.add(fold);
-    merged.push(phrase);
-  }
-  return merged.length === existing.length ? existing : merged;
-};
+  _incoming: unknown,
+): string[] => existing;
 
 /**
  * Accept a cadence measured on the page, or keep the current one.
@@ -161,7 +172,14 @@ export const acceptInterval = (raw: unknown, current: number): number => {
     return current;
   }
   const ms = Math.round(raw);
-  return ms >= MIN_PLACEHOLDER_MS && ms <= MAX_PLACEHOLDER_MS ? ms : current;
+  if (ms < MIN_PLACEHOLDER_MS || ms > MAX_PLACEHOLDER_MS) {
+    return current;
+  }
+  // Range-checked against what the site actually does, then scaled: the bound
+  // is a sanity check on the measurement, and SPEED_SCALE is the app's choice
+  // about how fast to replay it. Never below MIN_PLACEHOLDER_MS, so a slow
+  // measurement cannot be scaled into a blur.
+  return Math.max(MIN_PLACEHOLDER_MS, Math.round(ms * SPEED_SCALE));
 };
 
 /* ------------------------------------------------------------------------- *

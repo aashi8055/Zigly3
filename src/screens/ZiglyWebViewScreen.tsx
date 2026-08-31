@@ -39,7 +39,6 @@ import {
   BackHandler,
   Linking,
   StyleSheet,
-  Text, // DIAGNOSTIC: remove with the overlay
   View,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
@@ -213,11 +212,7 @@ import {
   parseOrders,
 } from '../account/accountData';
 import {loadAuthHint, saveAuthHint} from '../account/authHint';
-import {
-  flushCookies,
-  hasSessionCookies, // DIAGNOSTIC: remove with the overlay
-  persistSession,
-} from '../account/cookieJar';
+import {flushCookies, persistSession} from '../account/cookieJar';
 import type {
   Address,
   AddressFields,
@@ -667,23 +662,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * in the WebView message callback, and nothing renders from it.
    */
   const signOutReason = useRef<SignOutReason | null>(null);
-  /* ---------------------------------------------------------------- DIAGNOSTIC
-   * TEMPORARY. Remove this block, `note`, and the overlay in the render before
-   * shipping. It exists to answer one question on a device with no cable
-   * attached: which branch the account read is actually taking.
-   */
-  const [diag, setDiag] = useState<string[]>([]);
-  const diagSeq = useRef(0);
-  /** `note` reachable from callbacks declared above it. */
-  const noteRef = useRef<(line: string) => void>(() => {});
-  /** Record one line on screen. Never throws; never affects behaviour. */
-  const note = useCallback((line: string) => {
-    diagSeq.current += 1;
-    const stamp = new Date().toISOString().slice(14, 23);
-    setDiag(prev => [`${stamp} ${line}`, ...prev].slice(0, 18));
-  }, []);
-  noteRef.current = note;
-  /* -------------------------------------------------------------------------- */
 
   /** Read inside native callbacks, so they must be refs, not state. */
   const authRef = useRef<AuthState>('unknown');
@@ -1582,12 +1560,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * signed-in customer rather than two.
    */
   const probeAccount = useCallback(() => {
-    // DIAGNOSTIC: webRef null here means the script never ran at all.
-    noteRef.current(`probeAccount fired (home webview: ${webRef.current ? 'yes' : 'NULL'})`);
-    // DIAGNOSTIC: the jar as it stands at the moment we ask the site.
-    hasSessionCookies().then(has =>
-      noteRef.current(`  JAR at probe: ${has ? 'HAS cookies' : 'EMPTY'}`),
-    );
     injectInto('home', ACCOUNT_PROBE);
   }, [injectInto]);
 
@@ -1656,13 +1628,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
        * a rejected write, or the next launch, none of which come through here.
        */
       warn('login never confirmed by a probe; keeping the watched login');
-      noteRef.current('  -> LADDER EXHAUSTED, keeping watched login'); // DIAGNOSTIC
       confirmAttempt.current = 0;
       return;
     }
     confirmAttempt.current = attempt + 1;
-    // DIAGNOSTIC
-    noteRef.current(`  -> retry ${attempt + 1} in ${CONFIRM_PROBE_DELAYS[attempt]}ms`);
     confirmProbe.current = setTimeout(() => {
       confirmProbe.current = null;
       probeAccountRef.current();
@@ -1708,13 +1677,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     state: AuthState,
     source: 'probe' | 'evidence' = 'evidence',
   ) => {
-    // DIAGNOSTIC
-    note(
-      `applyAuth ${state} src=${source} held=${authRef.current} ` +
-        `conf=${sessionConfirmed.current} since=${
-          signedInAt.current === 0 ? 0 : Date.now() - signedInAt.current
-        }`,
-    );
     /*
      * A 'signedOut' arriving in the seconds after a completed login is a stale
      * read, not a sign-out.
@@ -1749,7 +1711,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       )
     ) {
       warn('ignoring signedOut: login not yet confirmed by a probe');
-      note('  -> SUPPRESSED by believeAuth, re-probing'); // DIAGNOSTIC
       /*
        * Ask again, and keep asking.
        *
@@ -1794,7 +1755,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       signedOutReads.current += 1;
       if (!confirmSignedOut(authRef.current, signedOutReads.current)) {
         warn('probe said signedOut over a live session; re-asking to confirm');
-        note(`  -> DOUBTED run=${signedOutReads.current}, re-probing`); // DIAGNOSTIC
         scheduleConfirmProbe();
         return;
       }
@@ -1849,7 +1809,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * this also closes the window where a tap immediately after a login would
      * be answered from a ref that had not caught up yet.
      */
-    note(`  -> APPLIED auth=${state}`); // DIAGNOSTIC
     authRef.current = state;
     setAuth(state);
     setAccountScreens(prev => resolveAuth(prev, state));
@@ -1883,7 +1842,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       setAddresses(null);
       setEditing(null);
     }
-  }, [clearConfirmProbe, note, scheduleConfirmProbe]);
+  }, [clearConfirmProbe, scheduleConfirmProbe]);
 
   /**
    * Open the account section.
@@ -1910,12 +1869,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // opened from a link inside a page -- the drawer's Login/Register, say --
     // would otherwise open underneath the page it was opened from.
     clearPages();
-    // DIAGNOSTIC: which screen the tap chose, and what it chose it from.
-    note(
-      `TAP account: auth=${authRef.current} -> ${openAccount(
-        authRef.current,
-      ).join('/')} customer=${customer === null ? 'NULL(skeleton)' : 'set'}`,
-    );
     setAccountScreens(openAccount(authRef.current));
     /*
      * Re-read the customer on every open, and clear the orders while it is out.
@@ -1930,7 +1883,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      */
     setOrders(null);
     probeAccount();
-  }, [clearPages, customer, note, probeAccount]);
+  }, [clearPages, probeAccount]);
 
   const closeAccountSection = useCallback(() => {
     setAccountScreens(closeAccount());
@@ -2059,18 +2012,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // Until a probe agrees, a 'signedOut' is a cookie jar that has not
         // caught up rather than an answer -- see believeAuth.
         sessionConfirmed.current = false;
-        note('LOGIN success: sessionConfirmed=false'); // DIAGNOSTIC
-        // DIAGNOSTIC: does the SHARED jar actually hold anything for the site
-        // now that the login WebView says it is done? If this is false, the
-        // cookie never left that WebView and no probe can ever succeed.
-        hasSessionCookies().then(has =>
-          noteRef.current(`  JAR after login: ${has ? 'HAS cookies' : 'EMPTY'}`),
-        );
-        flushCookies().then(() =>
-          hasSessionCookies().then(has =>
-            noteRef.current(`  JAR after flush: ${has ? 'HAS cookies' : 'EMPTY'}`),
-          ),
-        );
+        // The shared jar is flushed so the dashboard WebView's next probe can
+        // actually see the cookie the login WebView just set.
+        flushCookies();
         // Scenario A and the end of scenario B are the same ending: a session
         // exists, so the customer goes to the dashboard rather than to an
         // account screen they never asked for. handleLoginNav says the same
@@ -2105,7 +2049,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         setLoginError(null);
       }
     },
-    [applyAuth, clearSendWatchdog, closeAccountSection, note, probeAccount],
+    [applyAuth, clearSendWatchdog, closeAccountSection, probeAccount],
   );
 
   /**
@@ -3035,14 +2979,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const handleAccountMessage = useCallback(
     (data: Record<string, unknown>): boolean => {
       switch (data.tag) {
-        /* DIAGNOSTIC: remove with the rest. */
-        case 'probe-detail': {
-          note(`  HERE ${String(data.here)}`);
-          note(`  GOT ${String(data.landed)} [${String(data.status)}] len=${String(data.len)}`);
-          note(`  BODY ${String(data.head)}`);
-          return true;
-        }
-
         case 'account': {
           const state: AuthState =
             data.state === 'signedIn'
@@ -3050,13 +2986,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               : data.state === 'signedOut'
               ? 'signedOut'
               : 'unknown';
-          // DIAGNOSTIC: what the site actually said, before any rule sees it.
-          note(
-            `MSG account state=${String(data.state)} via=${String(data.via)} ` +
-              `name="${String(data.name ?? '')}" orders=${
-                Array.isArray(data.items) ? data.items.length : '?'
-              }`,
-          );
           // A page read, and nothing more: the weakest evidence there is, so a
           // 'signedOut' from here is re-asked before it is believed over a
           // session the app is already holding. See confirmSignedOut.
@@ -3187,7 +3116,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           return false;
       }
     },
-    [applyAuth, clearWriteWatch, note, probeAddresses],
+    [applyAuth, clearWriteWatch, probeAddresses],
   );
 
   const retry = useCallback(() => {
@@ -4341,29 +4270,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         }}
       />
 
-      {/* ------------------------------------------------------ DIAGNOSTIC
-        TEMPORARY. Remove this block and everything marked DIAGNOSTIC once the
-        account-screen fault is understood. Tap it to clear; it never blocks a
-        press underneath it except on itself.
-      */}
-      {diag.length > 0 ? (
-        <View style={styles.diag} pointerEvents="box-none">
-          <Text
-            style={styles.diagHead}
-            onPress={() => setDiag([])}
-            suppressHighlighting
-          >
-            {`auth=${auth} customer=${
-              customer === null ? 'NULL' : 'set'
-            } stack=${accountScreens.join('/') || '-'} (tap to clear)`}
-          </Text>
-          {diag.map((line, i) => (
-            <Text key={i} style={styles.diagLine} numberOfLines={2}>
-              {line}
-            </Text>
-          ))}
-        </View>
-      ) : null}
     </View>
   );
 };
@@ -4393,24 +4299,6 @@ const styles = StyleSheet.create({
    */
   parked: {transform: [{translateX: 10000}]},
 
-  /* DIAGNOSTIC. Remove with the overlay above. */
-  diag: {
-    position: 'absolute',
-    top: 40,
-    left: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.86)',
-    padding: 6,
-    borderRadius: 4,
-    zIndex: 9999,
-  },
-  diagHead: {
-    color: '#4ade80',
-    fontSize: 10,
-    fontWeight: '700',
-    marginBottom: 3,
-  },
-  diagLine: {color: '#e5e7eb', fontSize: 9, lineHeight: 12},
 });
 
 export default ZiglyWebViewScreen;

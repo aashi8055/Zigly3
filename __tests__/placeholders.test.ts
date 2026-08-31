@@ -188,36 +188,63 @@ describe('phrases from the page are checked, not trusted', () => {
   });
 });
 
-describe('the list grows towards what the site is showing', () => {
-  it('folds new phrases in after the ones already on screen', () => {
-    const merged = mergePlaceholders(['Search For Dry Food'], [
-      'Search For Grooming Tools',
-    ]);
-    expect(merged).toEqual([
-      'Search For Dry Food',
-      'Search For Grooming Tools',
-    ]);
+describe('the list is exactly the seeds -- nothing less, nothing more', () => {
+  /*
+   * The reader used to grow this list as it read the site's own search box, and
+   * that is what this block now asserts is gone. The phrases arrived one per
+   * rotation tick over several seconds, so the bar changed length and content
+   * while the customer was looking at it, and what it settled on depended on
+   * how long they happened to stay -- so what the header cycles is now fixed.
+   *
+   * The bridge still SENDS these messages, because it is also what measures the
+   * typing cadence. So the assertion that matters is that an incoming phrase
+   * changes nothing, not that no message arrives.
+   */
+  it('ignores a phrase the site was seen typing', () => {
+    const seeds = [...SEED_PLACEHOLDERS];
+    expect(mergePlaceholders(seeds, ['Search For Something New'])).toEqual(
+      SEED_PLACEHOLDERS,
+    );
   });
 
-  it('folds duplicates regardless of case', () => {
-    const merged = mergePlaceholders(['Search For Cat Food'], [
-      'search for cat food',
-    ]);
-    expect(merged).toEqual(['Search For Cat Food']);
+  it('cannot be grown past the seeds by any number of messages', () => {
+    const many = Array.from({length: 40}, (_, i) => `Search For Item ${i}`);
+    expect(mergePlaceholders(SEED_PLACEHOLDERS, many)).toHaveLength(
+      SEED_PLACEHOLDERS.length,
+    );
+    // Well under the old cap, which is what stops this reading as "the cap
+    // still works" when the cap is no longer what holds the list down.
+    expect(SEED_PLACEHOLDERS.length).toBeLessThan(MAX_PLACEHOLDERS);
   });
 
-  it('returns the same array when nothing new arrived', () => {
+  it('cannot be emptied or replaced by a message either', () => {
+    // A bar with no prompt is the failure the seeds exist to prevent.
+    expect(mergePlaceholders(SEED_PLACEHOLDERS, [])).toEqual(SEED_PLACEHOLDERS);
+    expect(mergePlaceholders(SEED_PLACEHOLDERS, ['Only This'])).toEqual(
+      SEED_PLACEHOLDERS,
+    );
+  });
+
+  it('returns the same array, whatever arrives', () => {
     // Identity matters: a new array on every message would re-run the header's
-    // animation effect and restart the phrase mid-word.
+    // animation effect and restart the phrase mid-word. The bridge is still
+    // sending one message per phrase, so this is load-bearing, not incidental.
     const existing = ['Search For Dry Food'];
+    expect(mergePlaceholders(existing, ['Search For Grooming Tools'])).toBe(
+      existing,
+    );
     expect(mergePlaceholders(existing, ['Search For Dry Food'])).toBe(existing);
     expect(mergePlaceholders(existing, 'not an array')).toBe(existing);
     expect(mergePlaceholders(existing, null)).toBe(existing);
   });
 
-  it('stops growing at the cap', () => {
-    const many = Array.from({length: 40}, (_, i) => `Search For Item ${i}`);
-    expect(mergePlaceholders([], many)).toHaveLength(MAX_PLACEHOLDERS);
+  it("is exactly the four seeds, in Zigly's own observed order", () => {
+    expect(SEED_PLACEHOLDERS).toEqual([
+      'Search For Applod Dog Biscuits',
+      'Search For Dry Food',
+      'Search For Oral & Dental Care',
+      'Search For Grooming Tools',
+    ]);
   });
 
   it('starts from Zigly copy, not from a blank bar', () => {
@@ -233,9 +260,22 @@ describe('the list grows towards what the site is showing', () => {
 });
 
 describe('a measured cadence is accepted only if it is plausible', () => {
-  it('takes a figure in range', () => {
-    expect(acceptInterval(100, TYPE_MS)).toBe(100);
-    expect(acceptInterval(83.4, TYPE_MS)).toBe(83);
+  it('takes a figure in range, and replays it faster than the site', () => {
+    // The range check is on the MEASUREMENT -- is this a keystroke gap at all
+    // -- and the app then chooses how fast to replay it. The two are separate
+    // decisions, which is why an in-range figure does not come back unchanged:
+    // the site's own ~100ms lands as 70ms, the same scaling TYPE_MS carries.
+    // Without this the reader's first report would undo the faster typing on
+    // every page load, which is the bug the scaling is here to prevent.
+    expect(acceptInterval(100, TYPE_MS)).toBe(70);
+    expect(acceptInterval(83.4, TYPE_MS)).toBe(58);
+  });
+
+  it('never scales a slow measurement below the floor', () => {
+    // 40ms is the fastest gap this accepts as real. A measurement AT the floor
+    // must not be scaled under it -- that would be the app inventing a cadence
+    // outside the range it just checked against.
+    expect(acceptInterval(40, TYPE_MS)).toBe(40);
   });
 
   it('ignores a figure that cannot be a keystroke gap', () => {

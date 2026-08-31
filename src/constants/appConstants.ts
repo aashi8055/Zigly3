@@ -158,6 +158,29 @@ export const COLORS = {
 };
 
 /**
+ * The fill behind every add-to-cart control in the app.
+ *
+ * ONE colour, in ONE place, because there are three different renderers drawing
+ * this button and they have to agree: the native sticky bar
+ * (../components/ProductActionBar), the site's own button on every product card
+ * -- Hot Picks, Bestsellers, the listing grid -- which is restyled by
+ * ../webview/injectedStyles, and SearchTap's replacement card, which appears the
+ * moment a filter is applied. A customer moves between all three in one
+ * session, so a per-renderer colour reads as three different buttons for the
+ * same action.
+ *
+ * The pale fill with COLORS.red text is what Buy Now already used. Add to Bag
+ * was #1B1B1B with white text, which made it look like the primary of a pair on
+ * the product bar and disagreed with the card buttons entirely.
+ *
+ * The injected stylesheet cannot import this -- it is a CSS string compiled into
+ * a script -- so it carries the literal and cites this token. Changing the
+ * colour means changing both; ../../__tests__/buttonColour.test.ts fails if they
+ * drift apart.
+ */
+export const BUTTON_FILL = '#FDE8E8';
+
+/**
  * The paths the site puts a sortable product grid behind.
  *
  * This is the one place the answer is written down, and both the app and the

@@ -1023,8 +1023,20 @@ body.zigly-listing .quick-add {
 body.zigly-listing .atc-wrapper {
   display: none !important;
 }
-/* Full-width, and tall enough to be a real target. The theme's own button
-   colours are left alone -- this only gives it the shape the reference has. */
+/* Full-width, tall enough to be a real target, and in the app's one add-to-cart
+   colour.
+
+   The colour used to be left to the theme, on the principle that the control is
+   Zigly's and its styling is theirs. That gave the customer three different Add
+   to Bag buttons in one session -- the theme's on a card, SearchTap's on a
+   filtered card, and the native sticky bar's on a product page -- for a single
+   action. So the fill is asserted here to match BUTTON_FILL in
+   ../constants/appConstants, which is where the figure is decided and which the
+   native bar imports directly.
+
+   Only the fill and the text colour. The button is still the theme's own
+   element, still inside its own <product-form>, still posting to Shopify; what
+   it says, what it submits and what it does on tap are untouched. */
 #zigly-hot-picks .quick-add__submit,
 [id^="zigly-x-"] .quick-add__submit,
 body.zigly-listing .quick-add__submit {
@@ -1034,6 +1046,39 @@ body.zigly-listing .quick-add__submit {
   width: 100% !important;
   min-height: 38px !important;
   margin: 8px 0 0 !important;
+  background: #FDE8E8 !important;
+  background-color: #FDE8E8 !important;
+  /* background-image, because the theme paints some of these buttons with a
+     gradient -- a background-color alone would sit underneath it and never
+     show. */
+  background-image: none !important;
+  color: #ED2427 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+/* The theme's button draws its border and its focus ring with ::before and
+   ::after at inset:1px. Left alone they paint a dark edge over the new pale
+   fill, which reads as a button with a stray outline rather than a restyled
+   one. Their geometry is untouched -- see the note on position:relative above,
+   which this must not undo -- only their paint. */
+#zigly-hot-picks .quick-add__submit::before,
+#zigly-hot-picks .quick-add__submit::after,
+[id^="zigly-x-"] .quick-add__submit::before,
+[id^="zigly-x-"] .quick-add__submit::after,
+body.zigly-listing .quick-add__submit::before,
+body.zigly-listing .quick-add__submit::after {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+/* SearchTap's own card carries the same class on its button, so the rule above
+   already reaches it -- but it also wraps the button in a red pill of its own
+   (.atc-wrapper.st-atc), which the listing block clears. Its label element is
+   separate, and inherits nothing, so it is coloured here too. */
+body.zigly-listing .quick-add__submit *,
+#zigly-hot-picks .quick-add__submit *,
+[id^="zigly-x-"] .quick-add__submit * {
+  color: #ED2427 !important;
 }
 /* Cards are a column with the button pinned to the bottom edge, so a two-line
    title next to a one-line title does not stagger the buttons in a rail. */
@@ -1229,12 +1274,35 @@ body.zigly-listing .quick-add__submit {
   transform: none !important;
   transition: none !important;
   width: max-content;
+  /* The gutter goes on the TRACK, not on the scroll container.
+
+     The first coupon used to sit flush against the left edge while every
+     coupon after it had a gutter, and the reason is that the theme's inset is
+     on an ancestor of the scroller: once this element became a horizontal
+     scroller, its content box starts at x=0 and the first slide starts with
+     it. Padding on .slider-container would not fix it either -- a scroll
+     container's start padding is honoured at rest but is scrolled away, and in
+     an older Android WebView the end padding is dropped outright, which is the
+     other half of the same defect (no gutter after the last coupon).
+
+     Padding on a max-content flex track is part of the track's own
+     width, so it scrolls with the content: the first coupon is inset by it and
+     the last keeps a matching gutter at the far end. 12px matches the rails
+     above and below (Hot Picks, Explore, Instagram) so the strip lines up with
+     them. */
+  padding-left: 12px;
+  padding-right: 12px;
+  box-sizing: border-box;
 }
 .slider-container.mySwiper_couponSlider {
   overflow-x: auto !important;
   overflow-y: hidden !important;
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x proximity;
+  /* Snapping a slide to the container's own left edge would put it under the
+     12px the track just reserved. Offsetting the snapport by the same figure
+     lands each coupon exactly where the first one rests. */
+  scroll-padding-left: 12px;
 }
 .slider-container.mySwiper_couponSlider::-webkit-scrollbar {
   display: none;
@@ -1251,6 +1319,28 @@ body.zigly-listing .quick-add__submit {
   min-height: 34px;
   align-items: center;
   justify-content: center;
+}
+
+/* ------------------------------------------------------------------
+   Care by Concern: the whole card is the tap target.
+
+   concernCards.ts moves each card's contents into an anchor carrying that
+   card's own "Shop now" destination -- so the photo and the heading now go
+   where the button goes. All this has to do is make that anchor fill the card
+   and not restyle what it wraps: it is a new element in the middle of Zigly's
+   own markup, so it must be transparent to the section's layout.
+
+   display: contents was the obvious choice here and is the wrong one -- a
+   display:contents element generates no box, so it takes no clicks either, and
+   the card would have gone back to being untappable outside the button. block
+   with the card's own sizing is what leaves the layout alone AND stays hittable.
+   ------------------------------------------------------------------ */
+.zigly-concern-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  /* Inherits the card's own box so the wrapper adds no space of its own. */
+  width: 100%;
 }
 
 /* ------------------------------------------------------------------
@@ -1313,6 +1403,37 @@ body.zigly-listing .quick-add__submit {
   margin-bottom: 0 !important;
   margin-left: 0 !important;
   margin-right: 0 !important;
+}
+/* The Popular / Emerging tabs, centred.
+
+   The section's own layout runs them from the left edge, under a heading the
+   theme centres, so the two rows disagreed. The tabs are a <ul> of <li>s (the
+   theme's handler is bound to the <li>, which is why brandRail.ts listens on
+   document and re-sweeps after a tap) -- so centring is done on the list, and
+   the list is reached through the section wrapper rather than by a tab class
+   name, because the theme's own class here is not one this app depends on
+   anywhere else.
+
+   Layout only. Nothing about which tab is active, what a tap does, or which
+   brands each tab shows is touched: that is the site's handler toggling a
+   class, and the class is what its own stylesheet reads. */
+.home-brand-section-wrapper ul:not(.swiper-wrapper) {
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: center !important;
+  /* The theme's list-item bullets and indent, which only showed once the list
+     stopped being laid out by its own rule. */
+  list-style: none;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  /* Not the rail: the brand cards live in a .swiper-wrapper, not a <ul>, but a
+     theme that ever wraps them in one must not have them centred and wrapped. */
+  text-align: center;
+}
+.home-brand-section-wrapper ul:not(.swiper-wrapper) > li {
+  flex: 0 0 auto;
 }
 /* The arrows are desktop chrome and overlap the first and last card on a
    phone, where the rail is scrolled by thumb. */
@@ -1457,6 +1578,27 @@ body.zigly-listing .quick-add__submit {
   object-fit: cover;
   display: block;
   border-radius: 14px;
+}
+/* A card whose cover Instagram would not serve.
+
+   The <img> is hidden by the script and the tile is left standing, so the rail
+   keeps its shape and every card still opens its real post. Marked rather than
+   left plain: a slightly darker ground and a centred glyph read as a tile
+   whose picture has not arrived, which is what it is -- an untouched #EFEFEF
+   card next to loaded ones reads as a bug. */
+.zigly-ig__card[data-zigly-ig-cover='failed'] {
+  background: #E4E4E4;
+}
+.zigly-ig__card[data-zigly-ig-cover='failed']::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.08);
 }
 /* The reel marker. Only video posts carry one, so it tells the customer which
    cards are reels rather than decorating all of them alike. */

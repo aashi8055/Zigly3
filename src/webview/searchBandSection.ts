@@ -29,6 +29,8 @@
  * app's own, native, unchanged. Nothing here searches.
  */
 
+import {ERASE_MS, HOLD_MS} from '../search/placeholders';
+
 /**
  * The band's height. Field plus its padding, matching what the native header
  * lays out.
@@ -136,8 +138,12 @@ export const buildSearchBandScript = (
 (function () {
   var PHRASES = ${JSON.stringify(phrases)};
   var TYPE_MS = ${JSON.stringify(typeMs)};
-  var HOLD_MS = 1000;
-  var ERASE_MS = 50;
+  // Shared with the native header's typewriter rather than restated, so the
+  // app's SPEED_SCALE is applied in one place -- these used to be the site's
+  // own 1000/50 hardcoded here, which held the band at the old cadence while
+  // the header sped up.
+  var HOLD_MS = ${JSON.stringify(HOLD_MS)};
+  var ERASE_MS = ${JSON.stringify(ERASE_MS)};
 
   try {
     /*

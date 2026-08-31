@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
-import {COLORS, FONT_FAMILY} from '../constants/appConstants';
+import {BUTTON_FILL, COLORS, FONT_FAMILY} from '../constants/appConstants';
 
 interface Props {
   onAddToBag: () => void;
@@ -65,12 +65,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addButton: {backgroundColor: '#1B1B1B'},
-  buyButton: {backgroundColor: '#FDE8E8'},
+  /**
+   * One button colour for both, and for every Add to Bag in the app.
+   *
+   * Add to Bag was #1B1B1B with white text, which made the two buttons in this
+   * bar read as a primary and a secondary -- and it also disagreed with the Add
+   * to Bag on every product card, which is the site's own button and is styled
+   * by ../webview/injectedStyles. Three different add buttons in one session is
+   * what this unifies: the pale fill with red text is now the app's add-to-cart
+   * look wherever one appears, native or in the page.
+   *
+   * `addButton` and `buyButton` stay as separate keys, both pointing at the
+   * same token, rather than collapsing into one style. They are two controls
+   * with two jobs, and a later decision to distinguish them again should be an
+   * edit to one line here -- not an unpicking of a shared style.
+   */
+  addButton: {backgroundColor: BUTTON_FILL},
+  buyButton: {backgroundColor: BUTTON_FILL},
   pressed: {opacity: 0.85},
   addLabel: {
     fontFamily: FONT_FAMILY,
-    color: COLORS.white,
+    color: COLORS.red,
     fontSize: 16,
     fontWeight: '700',
   },

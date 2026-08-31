@@ -72,6 +72,35 @@ describe('the stylesheet half', () => {
     expect(MOBILE_CSS).toContain("[data-zigly-brand-native='true']");
   });
 
+  it('centres the Popular / Emerging tabs under the centred heading', () => {
+    // The section's own layout runs the tabs from the left edge while the
+    // theme centres the heading above them, so the two rows disagreed.
+    const at = MOBILE_CSS.indexOf(
+      '.home-brand-section-wrapper ul:not(.swiper-wrapper) {',
+    );
+    expect(at).toBeGreaterThan(-1);
+    const rule = MOBILE_CSS.slice(at, MOBILE_CSS.indexOf('}', at));
+    expect(rule).toContain('justify-content: center !important');
+  });
+
+  it('does not centre the brand rail itself', () => {
+    // The cards live in a .swiper-wrapper, which is also a list in some themes.
+    // Centring THAT would centre a scroller -- the first card would start
+    // off-screen-left on a rail wider than the viewport, which is the rail
+    // arriving already scrolled.
+    expect(MOBILE_CSS).toContain('ul:not(.swiper-wrapper)');
+    expect(MOBILE_CSS).not.toContain('.home-brand-section-wrapper ul {');
+  });
+
+  it('drops the bullets the tabs show once the list stops being a list', () => {
+    const at = MOBILE_CSS.indexOf(
+      '.home-brand-section-wrapper ul:not(.swiper-wrapper) {',
+    );
+    const rule = MOBILE_CSS.slice(at, MOBILE_CSS.indexOf('}', at));
+    expect(rule).toContain('list-style: none');
+    expect(rule).toContain('padding-left: 0 !important');
+  });
+
   it('carries no backtick, which would end the template literal', () => {
     // Two comments added with backticks in them turned the whole stylesheet
     // into a parse error -- and a stylesheet that does not parse is a page
