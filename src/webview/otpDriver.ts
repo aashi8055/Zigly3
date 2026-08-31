@@ -239,7 +239,58 @@ const DRIVER_CORE = `
       if (!(ZO.askedOn === 'otp' && now === 'phone')) {
         ZO.askedOn = '';
       }
+      if (now === 'phone') {
+        // The moment the phone step is actually on screen, not the moment
+        // Send is pressed. See ZO.primeCaptcha for why the difference is the
+        // whole fix.
+        ZO.primeCaptcha();
+      }
       ZO.post({tag: 'otp-phase', phase: now});
+    };
+
+    /**
+     * Wake the widget's own lazily-loaded captcha script, well before Send is
+     * ever pressed.
+     *
+     * THE REPORTED FAULT: the very first send on a fresh page load was
+     * refused by the fraud check, and every attempt after it went through.
+     * Some builds of the widget attach their captcha script on the first
+     * focus or click of a phone input -- see the note in driveSendOtp's own
+     * send() -- and that script is fetched over the network. send() fires
+     * those same events and presses the button in the same tick, which is
+     * exactly enough time for a person but not for a fetch: on a page nobody
+     * has touched yet, the button is pressed before any token exists, and a
+     * request that carries none is what the fraud check refuses. Once the
+     * fetch has landed once it stays warm for the rest of the page's life,
+     * which is why only ever the first attempt showed it.
+     *
+     * The fix is not to make send() wait -- a customer types their number
+     * for several real seconds before they ever reach for the button, which
+     * is already a head start most fetches finish inside, and a drive that
+     * blocked the press on a captcha it cannot reliably observe is the
+     * regression __tests__/otpDriver.test.ts pins against by name. So instead
+     * this fires the same wake as soon as the phone step is the thing on
+     * screen -- on the very first sweep after the login WebView loads, well
+     * before the customer has typed anything -- so the fetch's head start is
+     * the whole time they spend reading and typing rather than the single
+     * tick between their tap and the press.
+     *
+     * Once only: a repeat here would refocus the field on every later sweep
+     * this same step produces (a resend, a widget re-render), which is a
+     * caret stolen from whatever the customer is doing at that moment. Scoped
+     * to '.login-box' alone, and to no other step, because that is the one
+     * box PHONE_FIELD_ORDER can actually find a field to wake in.
+     */
+    ZO.captchaPrimed = false;
+    ZO.primeCaptcha = function () {
+      if (ZO.captchaPrimed) { return; }
+      var box = ZO.shown('.login-box');
+      if (!box) { return; }
+      var input = ZO.pick(box, ${JSON.stringify(PHONE_FIELD_ORDER)});
+      if (!input) { return; }
+      ZO.captchaPrimed = true;
+      ZO.fire(input, 'focus');
+      ZO.fire(input, 'click');
     };
 
     /**
