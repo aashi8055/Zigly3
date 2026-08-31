@@ -39,6 +39,7 @@ import {
   BackHandler,
   Linking,
   StyleSheet,
+  Text, // DIAGNOSTIC: remove with the overlay
   View,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
@@ -212,7 +213,11 @@ import {
   parseOrders,
 } from '../account/accountData';
 import {loadAuthHint, saveAuthHint} from '../account/authHint';
-import {flushCookies, persistSession} from '../account/cookieJar';
+import {
+  flushCookies,
+  hasSessionCookies, // DIAGNOSTIC: remove with the overlay
+  persistSession,
+} from '../account/cookieJar';
 import type {
   Address,
   AddressFields,
@@ -225,6 +230,7 @@ import type {
 import {
   actOnPhase,
   believeAuth,
+  confirmSignedOut,
   EMPTY_ACCOUNT_STACK,
   closeAccount,
   isLoginFlow,
@@ -661,6 +667,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * in the WebView message callback, and nothing renders from it.
    */
   const signOutReason = useRef<SignOutReason | null>(null);
+  /* ---------------------------------------------------------------- DIAGNOSTIC
+   * TEMPORARY. Remove this block, `note`, and the overlay in the render before
+   * shipping. It exists to answer one question on a device with no cable
+   * attached: which branch the account read is actually taking.
+   */
+  const [diag, setDiag] = useState<string[]>([]);
+  const diagSeq = useRef(0);
+  /** `note` reachable from callbacks declared above it. */
+  const noteRef = useRef<(line: string) => void>(() => {});
+  /** Record one line on screen. Never throws; never affects behaviour. */
+  const note = useCallback((line: string) => {
+    diagSeq.current += 1;
+    const stamp = new Date().toISOString().slice(14, 23);
+    setDiag(prev => [`${stamp} ${line}`, ...prev].slice(0, 18));
+  }, []);
+  noteRef.current = note;
+  /* -------------------------------------------------------------------------- */
+
   /** Read inside native callbacks, so they must be refs, not state. */
   const authRef = useRef<AuthState>('unknown');
   const accountScreensRef = useRef<AccountStack>(EMPTY_ACCOUNT_STACK);
@@ -740,6 +764,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * sign-out that has not been confirmed but can never prevent one.
    */
   const sessionConfirmed = useRef(true);
+  /**
+   * How many consecutive passive probes have now reported 'signedOut'.
+   *
+   * Reset by any answer that is not a passive 'signedOut', so it counts a run
+   * rather than a total. Read only by `confirmSignedOut`, which explains what
+   * the run is for: a single ACCOUNT_PROBE read that contradicts a session the
+   * app is holding is a question, not an answer, and is re-asked before it is
+   * allowed to sign the customer out.
+   */
+  const signedOutReads = useRef(0);
   /** The outstanding confirmation retry, if one is armed. */
   const confirmProbe = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** How many confirmation retries have been used. Indexes CONFIRM_PROBE_DELAYS. */
@@ -1548,6 +1582,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * signed-in customer rather than two.
    */
   const probeAccount = useCallback(() => {
+    // DIAGNOSTIC: webRef null here means the script never ran at all.
+    noteRef.current(`probeAccount fired (home webview: ${webRef.current ? 'yes' : 'NULL'})`);
+    // DIAGNOSTIC: the jar as it stands at the moment we ask the site.
+    hasSessionCookies().then(has =>
+      noteRef.current(`  JAR at probe: ${has ? 'HAS cookies' : 'EMPTY'}`),
+    );
     injectInto('home', ACCOUNT_PROBE);
   }, [injectInto]);
 
@@ -1616,10 +1656,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
        * a rejected write, or the next launch, none of which come through here.
        */
       warn('login never confirmed by a probe; keeping the watched login');
+      noteRef.current('  -> LADDER EXHAUSTED, keeping watched login'); // DIAGNOSTIC
       confirmAttempt.current = 0;
       return;
     }
     confirmAttempt.current = attempt + 1;
+    // DIAGNOSTIC
+    noteRef.current(`  -> retry ${attempt + 1} in ${CONFIRM_PROBE_DELAYS[attempt]}ms`);
     confirmProbe.current = setTimeout(() => {
       confirmProbe.current = null;
       probeAccountRef.current();
@@ -1634,8 +1677,44 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * must all leave the app in the same state. Anything that is not a definite
    * yes or no is left alone: an errored probe is not evidence of a signed-out
    * customer, and treating it as one would sign people out on a dropped packet.
+   *
+   * `source` says what kind of evidence carried the answer. 'probe' is a
+   * passive page read -- the weakest source there is, and the one
+   * `confirmSignedOut` makes say a 'signedOut' twice. The default, 'evidence',
+   * is for answers backed by something the app did and watched: the customer's
+   * own Log Out, or a write the site refused. Those are applied at once.
+   *
+   * CONFIRMS_SESSION -- why `source` also gates the 'signedIn' latch, which is
+   * the fault actually reported: log in, tap Account, get the login screen.
+   *
+   * `sessionConfirmed` is what believeAuth's `confirmed` argument reads, and it
+   * must mean "something INDEPENDENT has agreed this session exists".
+   * applyLoginPhase('success') sets it false immediately before calling
+   * applyAuth('signedIn') for exactly that reason -- and the latch below used to
+   * set it straight back to true one line later, undoing the protection at the
+   * only moment it was ever needed.
+   *
+   * The damage lands after the window, not inside it. The suppression held for
+   * FRESH_LOGIN_MS, but the confirm-ladder's re-probe answers just PAST it, and
+   * with the latch wrongly true believeAuth accepted that stale 'signedOut' --
+   * writing auth, and the hint on disk, to signed out for a customer who was
+   * signed in. Nothing was on screen to show it, because the section closes on
+   * success; the customer met it on the next tap of Account, as the login flow.
+   *
+   * So only a probe may set it. A login this app merely watched is precisely
+   * the claim awaiting confirmation, and cannot confirm itself.
    */
-  const applyAuth = useCallback((state: AuthState) => {
+  const applyAuth = useCallback((
+    state: AuthState,
+    source: 'probe' | 'evidence' = 'evidence',
+  ) => {
+    // DIAGNOSTIC
+    note(
+      `applyAuth ${state} src=${source} held=${authRef.current} ` +
+        `conf=${sessionConfirmed.current} since=${
+          signedInAt.current === 0 ? 0 : Date.now() - signedInAt.current
+        }`,
+    );
     /*
      * A 'signedOut' arriving in the seconds after a completed login is a stale
      * read, not a sign-out.
@@ -1670,6 +1749,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       )
     ) {
       warn('ignoring signedOut: login not yet confirmed by a probe');
+      note('  -> SUPPRESSED by believeAuth, re-probing'); // DIAGNOSTIC
       /*
        * Ask again, and keep asking.
        *
@@ -1691,6 +1771,39 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       return;
     }
     /*
+     * A passive read that contradicts a session the app is holding has to say
+     * it twice.
+     *
+     * The check above is anchored to `signedInAt` and so only covers the
+     * seconds after a login this app watched; `believeAuth` returns true for
+     * everything once that mark is 0, which it is on a cold start, after a
+     * hint-seeded 'signedIn', and at any distance from a login. That left a
+     * single misread by ACCOUNT_PROBE -- a cookie-jar lapse, a redirect caught
+     * mid-flight, a dropped connection re-serving the login page -- able to
+     * sign the customer out for good, because nothing re-checks a verdict once
+     * it has been applied. The symptom is the reported one: tap Account again
+     * and get the login screen.
+     *
+     * So the run is counted and the first one only asks a question, which
+     * scheduleConfirmProbe goes and answers. A session that has really ended
+     * answers it the same way twice and is applied on the second read, a beat
+     * later than before; every route carrying real evidence passes
+     * source='evidence' and is not delayed at all. See confirmSignedOut.
+     */
+    if (state === 'signedOut' && source === 'probe') {
+      signedOutReads.current += 1;
+      if (!confirmSignedOut(authRef.current, signedOutReads.current)) {
+        warn('probe said signedOut over a live session; re-asking to confirm');
+        note(`  -> DOUBTED run=${signedOutReads.current}, re-probing`); // DIAGNOSTIC
+        scheduleConfirmProbe();
+        return;
+      }
+    } else {
+      // Any other answer breaks the run -- including a 'signedIn', which is the
+      // ordinary way a suspected sign-out turns out to have been a bad read.
+      signedOutReads.current = 0;
+    }
+    /*
      * A probe that agrees is what the suppression above was waiting for.
      *
      * Latched here rather than at the call site because every route into an auth
@@ -1698,7 +1811,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * confirmed it" no matter which one carried it.
      */
     if (state === 'signedIn') {
-      sessionConfirmed.current = true;
+      // Only a PROBE confirms a session; a watched login is the thing waiting
+      // to BE confirmed. See CONFIRMS_SESSION below for the fault this fixes.
+      if (source === 'probe') {
+        sessionConfirmed.current = true;
+      }
       clearConfirmProbe();
       /*
        * Make the session outlast the process, not just the app.
@@ -1720,6 +1837,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // Either a login just landed, or the question is settled and the mark has
     // no further work to do.
     signedInAt.current = state === 'signedIn' ? Date.now() : 0;
+    /*
+     * Written here as well as by the effect below, because the effect does not
+     * run until the next render and this value is read from callbacks that fire
+     * before it. `confirmSignedOut` above asks what the app is currently
+     * holding: reading a lagging ref there meant a stale 'signedOut' arriving
+     * hard on the heels of the login saw 'unknown' rather than 'signedIn', and
+     * was waved through as a first answer instead of being doubted.
+     *
+     * openAccountSection reads the same ref to decide which screen to open, so
+     * this also closes the window where a tap immediately after a login would
+     * be answered from a ref that had not caught up yet.
+     */
+    note(`  -> APPLIED auth=${state}`); // DIAGNOSTIC
+    authRef.current = state;
     setAuth(state);
     setAccountScreens(prev => resolveAuth(prev, state));
     /*
@@ -1752,7 +1883,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       setAddresses(null);
       setEditing(null);
     }
-  }, [clearConfirmProbe, scheduleConfirmProbe]);
+  }, [clearConfirmProbe, note, scheduleConfirmProbe]);
 
   /**
    * Open the account section.
@@ -1779,6 +1910,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // opened from a link inside a page -- the drawer's Login/Register, say --
     // would otherwise open underneath the page it was opened from.
     clearPages();
+    // DIAGNOSTIC: which screen the tap chose, and what it chose it from.
+    note(
+      `TAP account: auth=${authRef.current} -> ${openAccount(
+        authRef.current,
+      ).join('/')} customer=${customer === null ? 'NULL(skeleton)' : 'set'}`,
+    );
     setAccountScreens(openAccount(authRef.current));
     /*
      * Re-read the customer on every open, and clear the orders while it is out.
@@ -1793,7 +1930,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      */
     setOrders(null);
     probeAccount();
-  }, [clearPages, probeAccount]);
+  }, [clearPages, customer, note, probeAccount]);
 
   const closeAccountSection = useCallback(() => {
     setAccountScreens(closeAccount());
@@ -1899,10 +2036,41 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         verifyingRef.current = false;
         clearSendWatchdog();
         setLoginBusy(false);
+        /*
+         * The login worked, so nothing red belongs on the screen any more.
+         *
+         * The driver's guards keep a stale complaint from being POSTED as this
+         * attempt's verdict, but they cannot retract one that was already
+         * posted and believed -- a genuinely wrong first code, then a correct
+         * second one, is the ordinary way to arrive here with `loginError`
+         * still set. Without this the customer reads "OTP is not correct" for
+         * as long as the screen is on its way out, which is the reported red
+         * line on a correct code, and the one form of it that is nobody's
+         * misreading: the message WAS true, about the previous attempt.
+         *
+         * Cleared on the success ending rather than on the submit, because a
+         * submit is not yet an answer: wiping it at the click would blank a
+         * real complaint the instant a customer retried, before anything had
+         * replaced it. 'otp' and 'details' already clear it below on the same
+         * principle -- a step that moved is a question answered.
+         */
+        setLoginError(null);
         // A session this app has watched appear but nothing has confirmed yet.
         // Until a probe agrees, a 'signedOut' is a cookie jar that has not
         // caught up rather than an answer -- see believeAuth.
         sessionConfirmed.current = false;
+        note('LOGIN success: sessionConfirmed=false'); // DIAGNOSTIC
+        // DIAGNOSTIC: does the SHARED jar actually hold anything for the site
+        // now that the login WebView says it is done? If this is false, the
+        // cookie never left that WebView and no probe can ever succeed.
+        hasSessionCookies().then(has =>
+          noteRef.current(`  JAR after login: ${has ? 'HAS cookies' : 'EMPTY'}`),
+        );
+        flushCookies().then(() =>
+          hasSessionCookies().then(has =>
+            noteRef.current(`  JAR after flush: ${has ? 'HAS cookies' : 'EMPTY'}`),
+          ),
+        );
         // Scenario A and the end of scenario B are the same ending: a session
         // exists, so the customer goes to the dashboard rather than to an
         // account screen they never asked for. handleLoginNav says the same
@@ -1937,7 +2105,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         setLoginError(null);
       }
     },
-    [applyAuth, clearSendWatchdog, closeAccountSection, probeAccount],
+    [applyAuth, clearSendWatchdog, closeAccountSection, note, probeAccount],
   );
 
   /**
@@ -2416,6 +2584,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       // customer pressed is the most direct evidence there is, and must not be
       // held back waiting for a probe to confirm a login they have just undone.
       sessionConfirmed.current = true;
+      // And the run of doubted probe reads. The logout reply carries
+      // source='evidence' and so is not gated by it anyway, but leaving a part-
+      // finished run behind would let the next passive misread land on a count
+      // of 1 and be applied as though a second probe had agreed with it.
+      signedOutReads.current = 0;
       clearConfirmProbe();
       setToastMessage(SIGN_OUT_MESSAGE[reason]);
       injectInto('home', LOGOUT_SCRIPT);
@@ -2776,6 +2949,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       log('login completed, landed on', nav.url);
+      // The other ending, and it clears the error for applyLoginPhase's
+      // reason: whichever of the two fires, a login that succeeded must not
+      // leave the previous attempt's complaint on the screen behind it.
+      verifyingRef.current = false;
+      setLoginError(null);
       // Same as applyLoginPhase's 'success': the login is watched, not yet
       // confirmed. Both endings set this because either can be the one that
       // happens, and both are safe to run twice.
@@ -2857,6 +3035,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const handleAccountMessage = useCallback(
     (data: Record<string, unknown>): boolean => {
       switch (data.tag) {
+        /* DIAGNOSTIC: remove with the rest. */
+        case 'probe-detail': {
+          note(`  HERE ${String(data.here)}`);
+          note(`  GOT ${String(data.landed)} [${String(data.status)}] len=${String(data.len)}`);
+          note(`  BODY ${String(data.head)}`);
+          return true;
+        }
+
         case 'account': {
           const state: AuthState =
             data.state === 'signedIn'
@@ -2864,7 +3050,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               : data.state === 'signedOut'
               ? 'signedOut'
               : 'unknown';
-          applyAuth(state);
+          // DIAGNOSTIC: what the site actually said, before any rule sees it.
+          note(
+            `MSG account state=${String(data.state)} via=${String(data.via)} ` +
+              `name="${String(data.name ?? '')}" orders=${
+                Array.isArray(data.items) ? data.items.length : '?'
+              }`,
+          );
+          // A page read, and nothing more: the weakest evidence there is, so a
+          // 'signedOut' from here is re-asked before it is believed over a
+          // session the app is already holding. See confirmSignedOut.
+          applyAuth(state, 'probe');
           if (state === 'signedIn') {
             setCustomer(parseCustomer(data));
             setOrders(parseOrders(data, ZIGLY_ORIGIN));
@@ -2880,7 +3076,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
         case 'addresses': {
           if (data.state === 'signedOut') {
-            applyAuth('signedOut');
+            // ADDRESSES_PROBE reads a page through the same ZA.load as the
+            // account probe, so it can be wrong in exactly the same way.
+            applyAuth('signedOut', 'probe');
             return true;
           }
           setAddresses(parseAddresses(data));
@@ -2989,7 +3187,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           return false;
       }
     },
-    [applyAuth, clearWriteWatch, probeAddresses],
+    [applyAuth, clearWriteWatch, note, probeAddresses],
   );
 
   const retry = useCallback(() => {
@@ -4142,6 +4340,30 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           openCart();
         }}
       />
+
+      {/* ------------------------------------------------------ DIAGNOSTIC
+        TEMPORARY. Remove this block and everything marked DIAGNOSTIC once the
+        account-screen fault is understood. Tap it to clear; it never blocks a
+        press underneath it except on itself.
+      */}
+      {diag.length > 0 ? (
+        <View style={styles.diag} pointerEvents="box-none">
+          <Text
+            style={styles.diagHead}
+            onPress={() => setDiag([])}
+            suppressHighlighting
+          >
+            {`auth=${auth} customer=${
+              customer === null ? 'NULL' : 'set'
+            } stack=${accountScreens.join('/') || '-'} (tap to clear)`}
+          </Text>
+          {diag.map((line, i) => (
+            <Text key={i} style={styles.diagLine} numberOfLines={2}>
+              {line}
+            </Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -4170,6 +4392,25 @@ const styles = StyleSheet.create({
    * Android clips children to the parent, so it is not drawn either.
    */
   parked: {transform: [{translateX: 10000}]},
+
+  /* DIAGNOSTIC. Remove with the overlay above. */
+  diag: {
+    position: 'absolute',
+    top: 40,
+    left: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.86)',
+    padding: 6,
+    borderRadius: 4,
+    zIndex: 9999,
+  },
+  diagHead: {
+    color: '#4ade80',
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 3,
+  },
+  diagLine: {color: '#e5e7eb', fontSize: 9, lineHeight: 12},
 });
 
 export default ZiglyWebViewScreen;

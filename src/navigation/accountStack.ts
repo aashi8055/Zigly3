@@ -193,6 +193,52 @@ export const believeAuth = (
 };
 
 /**
+ * Whether a passive probe's 'signedOut' is enough, on its own, to sign the
+ * customer out of a session the app currently believes in.
+ *
+ * The fault this exists for, reported after v16: sign in, go back to the
+ * dashboard, tap Account again -- and get the login screen instead of the
+ * account screen.
+ *
+ * `believeAuth` above covers the race it was built for and no more: it is
+ * anchored to `signedInAt`, so it only protects the seconds after a login this
+ * app WATCHED complete. Its first line returns true whenever `since` is 0, and
+ * `since` is 0 in every other situation there is -- a cold start whose session
+ * came from the cookie jar, a hint-seeded 'signedIn' (the seeding effect
+ * deliberately bypasses applyAuth and so never sets the mark), or simply any
+ * moment more than one window after signing in. In all of those, a single
+ * 'signedOut' from ACCOUNT_PROBE was believed at face value.
+ *
+ * That matters because the read is not reliable enough to be trusted once. The
+ * probe runs in the dashboard WebView and calls `ZA.load`, which reports
+ * 'signedOut' whenever the fetch lands on /account/login -- which is what a
+ * genuine expiry looks like, and equally what a momentary cookie-jar lapse, a
+ * redirect caught mid-flight or a connection that dropped and re-served the
+ * login page looks like. One such misread set auth to 'signedOut', collapsed
+ * the section to ['login'] through `resolveAuth`, and -- because nothing
+ * re-checks a verdict once applied -- left `openAccount` opening the login
+ * screen on every tap afterwards.
+ *
+ * So a probe that contradicts a session the app is holding has to say it twice.
+ * `agreed` is how many consecutive 'signedOut' reads have now arrived; the
+ * first is treated as a question rather than an answer, and the caller re-probes
+ * to settle it.
+ *
+ * This deliberately does NOT gate the routes that carry real evidence:
+ *   - The customer's own Log Out goes through the 'auth' reply of LOGOUT_SCRIPT,
+ *     which asked the site to end the session and watched it agree.
+ *   - A write rejected with 'signedOut' has had a POST refused, not a page read.
+ *   - A cold start has nothing to contradict: `held` is not 'signedIn', so the
+ *     first answer stands, exactly as it always did.
+ * Only the passive read is asked to repeat itself, because only the passive read
+ * has been observed to be wrong.
+ */
+export const confirmSignedOut = (
+  held: AuthState,
+  agreed: number,
+): boolean => held !== 'signedIn' || agreed >= 2;
+
+/**
  * Apply an auth answer that arrived while the section was open.
  *
  * Signing out from anywhere in the section collapses it to the login screen,

@@ -43,6 +43,7 @@ import {
   LOGIN_FLOW,
   actOnPhase,
   believeAuth,
+  confirmSignedOut,
   isLoginFlow,
   openAccount,
   popScreen,
@@ -764,6 +765,105 @@ describe('a login just watched outranks a probe that has not caught up', () => {
         believeAuth('signedOut', 10000, 17000, WINDOW, true),
       );
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/*
+ * The fault reported after v16: sign in, go back to the dashboard, tap the
+ * Account icon again -- and get the login screen instead of the account screen.
+ *
+ * `believeAuth` above does not cover it, and the gap is worth stating exactly.
+ * It is anchored to `signedInAt`, so its protection lasts only for the seconds
+ * after a login this app watched complete; its first line returns true whenever
+ * `since` is 0, and `since` is 0 in every other case there is -- a cold start
+ * whose session came out of the cookie jar, a hint-seeded 'signedIn' (the
+ * seeding effect bypasses applyAuth by design and so never sets the mark), or
+ * simply any tap more than one window after signing in.
+ *
+ * In all of those, one 'signedOut' from ACCOUNT_PROBE was applied at face
+ * value -- and since nothing re-checks a verdict once applied, a single misread
+ * became permanent: auth went to 'signedOut' and `openAccount` opened the login
+ * screen on every tap from then on.
+ */
+describe('a passive probe must repeat itself to end a live session', () => {
+  it('doubts the first signedOut read over a session the app holds', () => {
+    // The misread. One read, and the app is holding 'signedIn' -- so this is a
+    // question to be re-asked, not an answer to be applied.
+    expect(confirmSignedOut('signedIn', 1)).toBe(false);
+  });
+
+  it('applies it once a second read agrees', () => {
+    // A session that has really ended reads the same way twice. It is applied
+    // one retry later than before, which is the whole cost of the fix.
+    expect(confirmSignedOut('signedIn', 2)).toBe(true);
+    expect(confirmSignedOut('signedIn', 3)).toBe(true);
+  });
+
+  it('never delays a first answer when no session is held', () => {
+    // A cold start has nothing to contradict, so the first read stands exactly
+    // as it always did. Delaying here would show the account screen to someone
+    // who is signed out, which is the mistake this must not introduce.
+    expect(confirmSignedOut('unknown', 1)).toBe(true);
+    expect(confirmSignedOut('signedOut', 1)).toBe(true);
+  });
+
+  it('is the reopen case end to end: doubted read leaves Account open', () => {
+    // What the customer actually does. The stack is on the account screen and
+    // one bad read arrives; because it is not applied, `resolveAuth` is never
+    // asked to collapse it, and the next tap still opens ['account'].
+    const held = 'signedIn' as const;
+    expect(confirmSignedOut(held, 1)).toBe(false);
+    // auth is therefore untouched, so this is what the next tap reads:
+    expect(openAccount(held)).toEqual(['account']);
+  });
+
+  it('still collapses to login when the sign-out is real', () => {
+    // Two agreeing reads are applied, and only then does the section collapse.
+    expect(confirmSignedOut('signedIn', 2)).toBe(true);
+    expect(resolveAuth(['account'], 'signedOut')).toEqual(['login']);
+    expect(openAccount('signedOut')).toEqual(['login']);
+  });
+});
+
+/*
+ * The fault as actually reported: log in, tap Account, get the login screen.
+ *
+ * `believeAuth`'s `confirmed` argument was written for exactly this and works.
+ * What defeated it was the success path setting sessionConfirmed=false and then
+ * calling applyAuth('signedIn'), whose own latch set it straight back to true a
+ * line later -- so the re-probe that lands just PAST FRESH_LOGIN_MS was believed
+ * with confirmed=true, and a stale 'signedOut' became auth and the stored hint.
+ *
+ * These pin the rule the fix restores: a login this app merely WATCHED is the
+ * thing waiting to be confirmed, so only a probe may set that latch.
+ */
+describe('only a probe confirms a session, never a watched login', () => {
+  const WINDOW = 6000;
+
+  it('suppresses the stale read past the window while unconfirmed', () => {
+    // The exact shape: the ladder's re-probe answers at 7s, past the window.
+    // With the latch correctly still false, it is not believed.
+    expect(believeAuth('signedOut', 10000, 17000, WINDOW, false)).toBe(false);
+  });
+
+  it('would have believed it had the login been allowed to confirm itself', () => {
+    // The bug, stated as a test: this is what the success path used to produce,
+    // and it is why the customer ended up signed out on disk.
+    expect(believeAuth('signedOut', 10000, 17000, WINDOW, true)).toBe(true);
+  });
+
+  it('still believes a signedOut once a probe has genuinely confirmed', () => {
+    // The latch must still be reachable, or a real expiry could never land.
+    expect(believeAuth('signedOut', 10000, 17000, WINDOW, true)).toBe(true);
+    expect(openAccount('signedOut')).toEqual(['login']);
+  });
+
+  it('leaves the next Account tap opening the account screen', () => {
+    // What the customer sees after the fix: auth is still 'signedIn', so the
+    // tap opens ['account'] rather than the login flow.
+    expect(openAccount('signedIn')).toEqual(['account']);
   });
 });
 

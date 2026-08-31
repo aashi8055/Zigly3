@@ -558,7 +558,31 @@ const DRIVER_CORE = `
        * the toast is settled first and the guard applies only to the inline
        * spans, which are the ones that go stale.
        */
-      var toast = ZO.toastError();
+      /*
+       * ...but only for the case that reasoning is about, which is a SEND.
+       *
+       * The bypass above is justified by one fact: a send is asked on 'phone'
+       * and the widget moves itself to 'otp' before the provider answers, so
+       * the refusal necessarily arrives on a step other than the one asked.
+       * That is a property of the send path and of nothing else.
+       *
+       * Applied to a VERIFY it re-opens the very hole the guard exists to
+       * close, through the other channel. A correct code makes the widget tear
+       * its verify step down and reset -- and any toast it raises in that
+       * window (a resend pressed a moment earlier, a rate limit answering
+       * late) differs from what ZO.mute recorded at the click, so it counted
+       * as news and posted as the verdict on a code that had just been
+       * accepted. Same red line, same accepted code, same customer already on
+       * their way to the dashboard; only the element it was read from differs.
+       *
+       * So the toast is settled ahead of the guard only while the outstanding
+       * attempt is a send. Once a verify is outstanding the toast is subject
+       * to the guard like every other reading, which costs nothing a customer
+       * would want: a verify is asked and answered on 'otp', so a toast that
+       * genuinely belongs to it is read on the step it was asked on and still
+       * reports.
+       */
+      var toast = ZO.askedOn === 'otp' ? '' : ZO.toastError();
       var message = toast || (
         ZO.askedOn && now !== ZO.askedOn ? ZO.lastError : ZO.spanError()
       );

@@ -501,3 +501,76 @@ describe('issue 2: the red line on a code that was accepted', () => {
     expect(errors[errors.length - 1]?.message).toBe('Invalid request');
   });
 });
+
+describe('issue 2b: a stale toast on a code that was accepted', () => {
+  it('does not report a leftover toast as the verdict on a correct code', () => {
+    // Same ending as the span case above, through the OTHER channel. A send
+    // the provider refused earlier leaves '.toast-card.error' in the page, and
+    // the widget takes its own toasts down on a timer rather than at submit.
+    // So a customer who is toasted once -- a rate limit, a retried send --
+    // and then enters the CORRECT code has that toast still in the document at
+    // the moment the widget unwinds towards a session.
+    const body = new El('body');
+    const login = new El('div', 'login-box hideBox');
+    const verify = new El('div', 'verify-box');
+    for (let i = 0; i < 6; i++) {
+      verify.add(new El('input', 'otp-input-box'));
+    }
+    verify.add(new El('button', 'verify-btn'));
+    const toast = new El('div', 'toast-card error');
+    toast.text = 'Please wait before requesting another code';
+    body.add(login, verify, toast);
+
+    const {posted, run, advance, core} = runner(body);
+
+    run(driveSubmitOtp('123456'));
+    advance(2000);
+    const afterSubmit = posted.filter(p => p.tag === 'otp-error').length;
+
+    // The correct code is accepted: the widget tears the verify step down and
+    // unhides its login box as it resets, on its way to a session.
+    body.remove(verify);
+    login.classList.remove('hideBox');
+    core().sweep();
+    advance(2000);
+
+    const errors = posted.filter(p => p.tag === 'otp-error');
+    expect(errors.length).toBe(afterSubmit);
+  });
+
+  it('does not report a toast that appears while the widget unwinds', () => {
+    // The gap the test above does not reach. ZO.mute records whatever the
+    // widget is saying AT THE CLICK, so a toast already on screen is covered.
+    // A toast that arrives AFTER the click is, by that measure, news -- and a
+    // correct code is exactly when the widget is busiest: it tears the verify
+    // step down, resets, and any toast it raises in that window (a resend the
+    // customer pressed just before, a rate limit answering late) differs from
+    // what mute recorded and posts as the verdict on an accepted code.
+    const body = new El('body');
+    const login = new El('div', 'login-box hideBox');
+    const verify = new El('div', 'verify-box');
+    for (let i = 0; i < 6; i++) {
+      verify.add(new El('input', 'otp-input-box'));
+    }
+    verify.add(new El('button', 'verify-btn'));
+    body.add(login, verify);
+
+    const {posted, run, advance, core} = runner(body);
+
+    run(driveSubmitOtp('123456'));
+    advance(2000);
+    const afterSubmit = posted.filter(p => p.tag === 'otp-error').length;
+
+    // The code was correct. The widget unwinds, and a late toast lands.
+    body.remove(verify);
+    login.classList.remove('hideBox');
+    const toast = new El('div', 'toast-card error');
+    toast.text = 'Please wait before requesting another code';
+    body.add(toast);
+    core().sweep();
+    advance(2000);
+
+    const errors = posted.filter(p => p.tag === 'otp-error');
+    expect(errors.length).toBe(afterSubmit);
+  });
+});

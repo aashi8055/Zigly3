@@ -138,6 +138,22 @@ const HELPERS = `
         });
       })
       .then(function (res) {
+        /* DIAGNOSTIC: remove with the rest. What the fetch actually did. */
+        try {
+          ZA.send('probe-detail', {
+            here: String(location.href).slice(0, 80),
+            asked: path + '?sections=' + ZA.sectionOf(path),
+            landed: String(res.url || '').slice(0, 80),
+            status: res.status,
+            len: String(res.text || '').length,
+            // The first bytes of the body. A login page and an account page are
+            // unmistakable from their <title> alone, and this says which one
+            // Shopify actually served -- without reading any cookie, which the
+            // one-jar rule forbids and which would show nothing anyway (the
+            // session cookie is HttpOnly).
+            head: String(res.text || '').slice(0, 90)
+          });
+        } catch (e) {}
         if (ZA.isLoginUrl(res.url)) { done(null, 'signedOut', 'section'); return; }
         var html = ZA.sectionHtml(res.text);
         if (html) { done(ZA.parse(html), 'signedIn', 'section'); return; }

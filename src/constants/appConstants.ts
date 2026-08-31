@@ -125,7 +125,7 @@ export const APP_INTENT_SCHEMES = [
 /** Brand palette, read out of the live theme CSS. */
 export const COLORS = {
   navy: '#183761',
-  navyDeep: '#0F213B',
+  navyDeep: '#113459',
   red: '#ED2427',
   white: '#FFFFFF',
   ink: '#323232',
