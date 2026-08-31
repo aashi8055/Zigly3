@@ -12,6 +12,7 @@ import {
   LISTING_PAGE_SCRIPT,
   PRODUCT_FLAG,
 } from '../src/webview/listingPage';
+import {BANNER_CAROUSEL_SCRIPT} from '../src/webview/bannerCarousel';
 import {EARLY_HEADER_CSS} from '../src/webview/headerBridge';
 import {HOT_PICKS_SCRIPT} from '../src/webview/hotPicks';
 import {MOBILE_CSS} from '../src/webview/injectedStyles';
@@ -275,12 +276,24 @@ describe('getInjectionForUrl', () => {
     });
 
     it('re-specifies nothing about the carousel', () => {
-      // Every parameter comes from what the theme passed. A hardcoded
-      // slidesPerView or delay here would be this app deciding how Zigly's
-      // banner behaves.
-      const s = home();
-      expect(s).not.toContain('slidesPerView:');
-      expect(s).not.toContain('spaceBetween:');
+      /*
+       * Every parameter comes from what the theme passed. A hardcoded
+       * slidesPerView or delay here would be this app deciding how Zigly's
+       * banner behaves.
+       *
+       * Asserted against the carousel MODULE, not the whole bundle, and that
+       * narrowing is the point rather than a loosening: the bundle is one
+       * string, so a rule written against it says "nothing anywhere in this app
+       * may name slidesPerView" -- which is not what this test means and not
+       * true. ../src/webview/productPage.ts names it deliberately, to pin the
+       * product gallery to one photo per swipe, and that is a different widget
+       * on a different page. What must stay true is that the BANNER's geometry
+       * is still Zigly's, which is exactly what this now checks.
+       */
+      expect(BANNER_CAROUSEL_SCRIPT).not.toContain('slidesPerView:');
+      expect(BANNER_CAROUSEL_SCRIPT).not.toContain('spaceBetween:');
+      // ...and it is still what the page actually receives.
+      expect(home()).toContain('__ziglyBannerCarousel');
     });
 
     it('cannot leave a dead carousel if the rebuild fails', () => {

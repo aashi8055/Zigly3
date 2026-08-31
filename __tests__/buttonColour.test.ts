@@ -1,7 +1,7 @@
 /**
- * One add-to-cart colour, across three renderers.
+ * One add-to-cart colour on the cards -- and one deliberate exception.
  *
- * The same action is drawn by three different things in this app, and a
+ * The same action is drawn by several different things in this app, and a
  * customer moves between all of them in one session:
  *
  *   - the native sticky bar on a product page (ProductActionBar),
@@ -13,8 +13,17 @@
  * Add to Bag used to be #1B1B1B with white text on the native bar while the
  * cards kept whatever the theme painted, so the same button was two or three
  * different colours depending on where you met it. BUTTON_FILL is the single
- * decision; this file is what stops the two halves drifting, because the
- * injected stylesheet is a CSS string and cannot import the token.
+ * decision for the cards, and most of this file is what stops the two halves
+ * drifting, because the injected stylesheet is a CSS string and cannot import
+ * the token.
+ *
+ * THE EXCEPTION, added with the product-page redesign: the sticky bar's Add to
+ * Bag is solid red with a white label. It is the one primary action on that
+ * page and the reference draws it as the loudest thing on the screen, while a
+ * card's Add to Bag is one of eight on a rail and stays quiet. Buy Now keeps
+ * BUTTON_FILL, so the pair reads as primary and secondary. That is a decision,
+ * not a drift, so the last describe below pins it: the exception is exactly one
+ * button, and the cards are checked to have NOT followed it.
  */
 import {BUTTON_FILL, COLORS} from '../src/constants/appConstants';
 import {MOBILE_CSS} from '../src/webview/injectedStyles';
@@ -115,5 +124,53 @@ describe('the injected stylesheet agrees with the token', () => {
     expect(properties).not.toContain('content');
     expect(properties).not.toContain('pointer-events');
     expect(rule).not.toContain('display: none');
+  });
+});
+
+describe('the sticky bar is the one red Add to Bag', () => {
+  /*
+   * Read out of the compiled StyleSheet rather than by rendering, for the same
+   * reason the rules above are read out of the CSS string: what is asserted is
+   * the DECISION -- which token each of the two buttons carries -- and a render
+   * test would pass just as well with both buttons the same colour as long as
+   * they were both on screen.
+   */
+  const sheet = (): string =>
+    require('fs').readFileSync('src/components/ProductActionBar.tsx', 'utf8');
+
+  it('fills Add to Bag with the red, not the pale token', () => {
+    const src = sheet();
+    expect(src).toContain('addButton: {backgroundColor: COLORS.red}');
+  });
+
+  it('labels it white, so the red is readable', () => {
+    // A red fill under the red label the button used to carry would be
+    // invisible text, which is the one way this change could go wrong silently.
+    const src = sheet();
+    const at = src.indexOf('addLabel: {');
+    expect(at).toBeGreaterThan(-1);
+    const block = src.slice(at, src.indexOf('}', at));
+    expect(block).toContain('color: COLORS.white');
+    expect(block).not.toContain('color: COLORS.red');
+  });
+
+  it('leaves Buy Now on the pale fill, so the pair reads primary/secondary', () => {
+    const src = sheet();
+    expect(src).toContain('buyButton: {backgroundColor: BUTTON_FILL}');
+    const at = src.indexOf('buyLabel: {');
+    expect(at).toBeGreaterThan(-1);
+    expect(src.slice(at, src.indexOf('}', at))).toContain('color: COLORS.red');
+  });
+
+  it('does not drag the card buttons red with it', () => {
+    /*
+     * The whole point of the exception being an exception. If someone later
+     * "unifies" the colour again by painting the cards red, this fails -- the
+     * card rule is still the pale fill, checked through the same helper the
+     * rest of this file uses.
+     */
+    const rule = colourRule();
+    expect(rule).toContain('background: ' + BUTTON_FILL + ' !important');
+    expect(rule).not.toContain('background: ' + COLORS.red + ' !important');
   });
 });

@@ -510,6 +510,299 @@ body.zigly-product .product__buy-buttons-container .shopify-payment-button {
 body.zigly-product [onclick*="shiprocketCheckoutEvents"] {
   display: none !important;
 }
+
+/* ------------------------------------------------------------------
+   The product page, redesigned.
+
+   Every selector below was read off the served PDP on 2026-08-31 -- a live
+   fetch of /products/zl-bobo-bear-squeaker-dog-toy -- and the reference the
+   layout is measured against is the pair of app screenshots taken the same
+   day. The order the reference draws:
+
+     1. one photo, as big as the column allows
+     2. name, then price with the compare-at and the "% OFF" chip
+     3. quantity
+     4. Description and Sub Category Description, expanded
+     5. Reviews / Write a review, then People Also Bought
+
+   Steps 1-3 and 5 are the theme's own order, so they are CSS. Step 4 is not:
+   the description accordions are a separate top-level Shopify section that the
+   theme renders BELOW the reviews, and no amount of CSS order moves a node
+   between two containers. ./productPage moves that one section and presses the
+   accordion headers open; nothing here depends on it having succeeded.
+
+   1. ONE PHOTO, MUCH BIGGER.
+
+   The theme's own mobile rules already hide .product-media-thumbnails, so the
+   sliver of a second photo in the reference shots is the Swiper itself -- and
+   it is deliberate. Read out of the main product section on 2026-08-31:
+
+     breakpoints: {
+       0:   { slidesPerView: totalSlides > 1 ? 1.14 : 1, spaceBetween: 10 },
+       750: { slidesPerView: totalSlides > 1 ? 1.14 : 1, spaceBetween: 20 },
+     }
+
+   1.14 slides per view. The 0.14 IS the peek, and it is a JavaScript number,
+   not a stylesheet value -- so CSS alone cannot win here: Swiper writes the
+   slide width as an inline style from that number on init and again on every
+   resize and update, and an inline style beats a stylesheet rule. That is why
+   ./productPage reaches the live instance and sets slidesPerView to 1 through
+   the Swiper API, which is the only thing the widget will not immediately
+   overwrite.
+
+   These rules are the other half, and they are still worth having: they hold
+   the layout during the moment before the script lands, and they carry the
+   part that was never Swiper's -- the image's own size.
+
+     - the viewport clips, so nothing shows beside the current slide
+     - the slide is exactly the width of that viewport
+     - the image is allowed its natural square instead of a cropped band
+
+   None of them touches .swiper-wrapper's transform. Moving that track is how
+   the widget changes slides, and a rule against it would freeze the gallery on
+   the first photo -- swiping must keep working, one whole image per swipe.
+
+   The pagination dots stay. They are the only thing left telling a customer
+   there IS a second photo once the thumbnails and the peek are both gone.
+   ------------------------------------------------------------------ */
+body.zigly-product .product-slider .main-slider {
+  overflow: hidden !important;
+}
+body.zigly-product .product-slider .main-slider .swiper-slide {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  margin-right: 0 !important;
+  height: auto !important;
+}
+/* aspect-ratio, not a fixed height: the media is square (550x550 on the read)
+   and a height in pixels would letterbox it on one screen and crop it on the
+   next. object-fit contain, so a non-square photo is never cut -- a cropped product is
+   the fault the reference shots show. */
+body.zigly-product .product-slider .main-slider .media_wrapper,
+body.zigly-product .product-slider .main-slider .productImgWrapper {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1 / 1 !important;
+}
+body.zigly-product .product-slider .main-slider .productImage,
+body.zigly-product .product-slider .main-slider .productImgWrapper img {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  object-fit: contain !important;
+}
+/* The column itself: no sticky, no reserved thumbnail gutter, full bleed.
+   .product__column-sticky pins the gallery on desktop; on a phone that pin
+   makes the photo scroll under the header instead of away with the page. */
+body.zigly-product .product-slider {
+  position: static !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+body.zigly-product .product-slider .slider-inner-wrapper {
+  display: block !important;
+  width: 100% !important;
+}
+body.zigly-product .product-slider .product-media-thumbnail-slider,
+body.zigly-product .product-slider .product-media-thumbnails {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------
+   2. NAME, PRICE, then 3. QUANTITY -- and nothing between them.
+
+   The theme's info column runs: title, sub-description, price, tax note, a
+   variant slider, an extra-offer pill, a pincode checker, and only then the
+   buy box with the quantity stepper. The reference draws name, price, quantity,
+   so the tail between price and quantity is stood down.
+
+   HIDDEN, AND WHY EACH ONE IS SAFE TO HIDE:
+
+     .product__tax             "Shipping calculated at checkout" is kept -- it
+                               is in the reference shot, under the price. Not
+                               hidden; listed here so the next reader knows it
+                               was a decision.
+     .product-extra-offer      a marketing pill for an offer that is also on
+                               the announcement bar the app already draws.
+     .pdp_pincode_container    a delivery-estimate widget. Hidden, NOT removed:
+                               ../../DATA-SOURCES.md records its endpoints as
+                               redeployable without notice, and its own script
+                               reads its inputs on load. A hidden container
+                               still answers those reads.
+     .product-media-share-button  a share control the app draws natively in the
+                               header.
+
+   The variant selector is NOT hidden. A product with sizes cannot be added to
+   the bag until one is chosen, and the native bar presses the theme's own
+   submit -- hiding the chooser would make Add to Bag fail with a validation
+   message the customer could not act on. Same reason ./injectedStyles leaves
+   .product__buy-buttons-container itself visible.
+   ------------------------------------------------------------------ */
+body.zigly-product .product__info-container .product-extra-offer,
+body.zigly-product .product__info-container .pdp_pincode_container,
+body.zigly-product .product-media-share-button {
+  display: none !important;
+}
+/* The info column, unpinned and unpadded, so name/price/quantity read as one
+   block rather than three cards with the theme's desktop gutters between. */
+body.zigly-product .product__info-container {
+  position: static !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+/* Name and price, at the reference's weights. The theme draws the title
+   line-clamped to two lines, which cuts a long product name mid-word. */
+body.zigly-product .product__title .main-heading,
+body.zigly-product .product__title h1,
+body.zigly-product .product__title h2 {
+  display: block !important;
+  overflow: visible !important;
+  -webkit-line-clamp: none !important;
+  font-size: 2.0rem !important;
+  line-height: 1.35 !important;
+  font-weight: 600 !important;
+}
+/* Price, compare-at and the % OFF chip on one row, as the reference draws it. */
+body.zigly-product .price-main-container .all_price,
+body.zigly-product .price-main-container .main-price-section {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+}
+body.zigly-product .price-main-container .price-item--last,
+body.zigly-product .price-main-container .compare_main-price {
+  font-size: 2.2rem !important;
+  font-weight: 700 !important;
+}
+/* The quantity row: its own band under the price, label left, stepper right --
+   the reference's "Quantity   [-  1  +]". */
+body.zigly-product .product-form__quantity {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+/* ------------------------------------------------------------------
+   4. PRODUCT DETAILS, expanded -- and the other two accordions gone.
+
+   The section ships three accordions, read off the live page on 2026-08-31:
+
+     Product Details    the description, and the "Sub Category Description"
+                        heading under it. THE ONE THAT STAYS, and the one
+                        ./productPage expands.
+     Key Features       a bulleted metafield. Removed.
+     More Information   a second metafield table. Removed.
+
+   Hidden here rather than in the script, and the two halves are deliberate:
+   CSS hides them, so they are gone on the first paint with no flash of a
+   section about to disappear, and ./productPage skips them when it opens
+   things, so it never clicks a header the customer cannot see. Either alone
+   would be a bug -- CSS alone would leave the script pressing invisible
+   headers, and script alone would show them until it ran.
+
+   Matched on the trigger id, which carries the block name
+   (AccordionTrigger-Features-..., AccordionTrigger-Information-...) rather
+   than on position: an :nth-child rule would silently retarget the moment the
+   merchant reorders the blocks in the theme editor, and it would then hide the
+   description instead. The panel is matched the same way through its own
+   AccordionContent- id.
+
+   ./productPage moves this section under the buy box and clicks the remaining
+   header. The rules below are only about how it reads once open, and they are
+   written so that a page where that script did not run is still correct --
+   nothing here forces a collapsed panel open, because a panel forced open by
+   CSS while its header still says "collapsed" is the accessibility bug
+   described in that file.
+
+   #text-container is the one-line sub-description in the info column ("A cute
+   squeaker toy designed to keep dogs happily engaged"), and it stays where the
+   theme puts it, under the title. The "Sub Category Description" the reference
+   shows under Description is a different thing: it is a heading inside the
+   Product Details rich text, so it arrives with that panel.
+   ------------------------------------------------------------------ */
+body.zigly-product .product-overview-accordion-section
+  .accordion:has([id*="AccordionTrigger-Features-"]),
+body.zigly-product .product-overview-accordion-section
+  .accordion:has([id*="AccordionTrigger-Information-"]) {
+  display: none !important;
+}
+/* :has() is not everywhere, and this app ships to whatever WebView the phone
+   has. The fallback hides the header and the panel themselves, which leaves
+   the empty .accordion wrapper behind -- a few pixels of nothing rather than a
+   section the brief asked to remove. */
+body.zigly-product .product-overview-accordion-section [id*="AccordionTrigger-Features-"],
+body.zigly-product .product-overview-accordion-section [id*="AccordionContent-Features-"],
+body.zigly-product .product-overview-accordion-section [id*="AccordionTrigger-Information-"],
+body.zigly-product .product-overview-accordion-section [id*="AccordionContent-Information-"] {
+  display: none !important;
+}
+body.zigly-product .product-overview-accordion-section .product-overview-wrapper {
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+}
+body.zigly-product .product-overview-accordion-section .accordion-content[aria-hidden="false"] {
+  height: auto !important;
+  overflow: visible !important;
+}
+body.zigly-product .product-overview-accordion-section .accordion-content p,
+body.zigly-product .product-overview-accordion-section .accordion-content li {
+  font-size: 1.5rem !important;
+  line-height: 1.7 !important;
+}
+
+/* ------------------------------------------------------------------
+   5. REVIEWS, then PEOPLE ALSO BOUGHT -- and NOT Frequently Bought Together.
+
+   Which element is which rail was got wrong once, so it is written down. Read
+   off the live page on 2026-08-31:
+
+     "People Also Bought"  is the THEME's own rail, not an app's:
+                           <product-recommendations> in the related-products
+                           section, fetching /recommendations/products?limit=10
+                           and drawn by a Swiper at slidesPerView 2.1 -- which
+                           is exactly the two-and-a-sliver of the reference
+                           shot. It stays.
+     "Frequently Bought    is Selleasy, mounted at .lb-widget-bl -- a single
+      Together"            empty div high in the info column, right after the
+                           delivery-features row, filled client-side. Removed.
+
+   The Selleasy block is hidden rather than removed from the DOM, which is the
+   same call ./injectedStyles already makes for .sticky-bar-container: the
+   app's own script mounts into that div, and a div deleted out from under it
+   is a null the app never guarded against. Hidden, it mounts into something
+   real that simply never paints.
+
+   Judge.me and the recommendation rail are both filled after the first parse,
+   so they are styled and never depended on -- an empty block is left to
+   collapse to nothing rather than being given a min-height that would leave a
+   hole where a widget failed to load.
+
+   The cards inside the recommendation rail keep their own pale Add to Bag: the
+   brief is that only the native sticky bar turns red, and these are the same
+   product-card buttons the rest of the app already unified. See
+   ../../__tests__/buttonColour.test.ts, which holds that line.
+   ------------------------------------------------------------------ */
+body.zigly-product .lb-widget-bl {
+  display: none !important;
+}
+body.zigly-product #judgeme_product_reviews,
+body.zigly-product .product-recommendation-wrapper {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+/* "View full details" links from the product page back to itself -- dead on
+   the page it is already on, and the reference does not draw it. */
+body.zigly-product .product__view-details {
+  display: none !important;
+}
+
 /* relative, for the reason spelled out on the Hot Picks rule above: static
    hands the button's absolutely-positioned ::before / ::after to .card-wrapper
    and they cover the card, swallowing every tap into add-to-cart. */

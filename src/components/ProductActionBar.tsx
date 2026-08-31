@@ -66,26 +66,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   /**
-   * One button colour for both, and for every Add to Bag in the app.
+   * THIS Add to Bag is red. Every other one in the app is not.
    *
-   * Add to Bag was #1B1B1B with white text, which made the two buttons in this
-   * bar read as a primary and a secondary -- and it also disagreed with the Add
-   * to Bag on every product card, which is the site's own button and is styled
-   * by ../webview/injectedStyles. Three different add buttons in one session is
-   * what this unifies: the pale fill with red text is now the app's add-to-cart
-   * look wherever one appears, native or in the page.
+   * The two buttons in this bar were both BUTTON_FILL -- the pale fill with red
+   * text -- so that the native bar agreed with the site's own Add to Bag on
+   * every product card, which ../webview/injectedStyles paints the same way.
+   * The redesigned product page changes that on purpose: this is the page's one
+   * primary action, sitting under a photo and a price, and read against a
+   * screenful of white it has to be the loudest thing on it. A card's Add to
+   * Bag is one of eight on a rail and must stay quiet.
    *
-   * `addButton` and `buyButton` stay as separate keys, both pointing at the
-   * same token, rather than collapsing into one style. They are two controls
-   * with two jobs, and a later decision to distinguish them again should be an
-   * edit to one line here -- not an unpicking of a shared style.
+   * So the unified colour now covers the cards and Buy Now, and the sticky Add
+   * to Bag is the deliberate exception: solid COLORS.red, white label. Buy Now
+   * keeps BUTTON_FILL, which is what makes the pair read as primary and
+   * secondary rather than as two equal buttons.
+   *
+   * ../../__tests__/buttonColour.test.ts holds both halves of this: the cards
+   * still agree with BUTTON_FILL, and this button is checked as the exception
+   * rather than being allowed to drift into one by accident.
    */
-  addButton: {backgroundColor: BUTTON_FILL},
+  addButton: {backgroundColor: COLORS.red},
   buyButton: {backgroundColor: BUTTON_FILL},
   pressed: {opacity: 0.85},
   addLabel: {
     fontFamily: FONT_FAMILY,
-    color: COLORS.red,
+    color: COLORS.white,
     fontSize: 16,
     fontWeight: '700',
   },

@@ -17,6 +17,7 @@ import {BREED_SECTION_SCRIPT} from './breedSection';
 import {HOT_PICKS_SCRIPT} from './hotPicks';
 import {EXPLORE_SCRIPT} from './explorePicker';
 import {LISTING_PAGE_SCRIPT} from './listingPage';
+import {PRODUCT_PAGE_SCRIPT} from './productPage';
 import {FACET_BRIDGE_SCRIPT} from './facetBridge';
 import {DRAWER_EXTRAS_SCRIPT} from './drawerExtras';
 import {BREED_PAGE_SCRIPT} from './breedPage';
@@ -83,6 +84,7 @@ ${INSTAGRAM_SECTION_SCRIPT}
 ${CART_TOAST_SCRIPT}
 ${READY_SIGNAL_SCRIPT}
 ${LISTING_PAGE_SCRIPT}
+${PRODUCT_PAGE_SCRIPT}
 ${FACET_BRIDGE_SCRIPT}
 ${DRAWER_EXTRAS_SCRIPT}
 ${BREED_PAGE_SCRIPT}
