@@ -97,12 +97,34 @@ describe('the links and covers derived from them', () => {
     });
   });
 
-  it('takes covers from the unsigned permanent endpoint', () => {
-    // This is the whole reason a hardcoded list is possible. /p/<code>/media/
-    // redirects to a freshly signed image on every request; the signed CDN
-    // URLs the API hands out expire within hours.
+  it('shows bytes that ship with the app, not a live request', () => {
+    // The point of the change: no card makes a third-party request from inside
+    // the customer's shopping session just to draw itself.
     INSTAGRAM_CARDS.forEach(card => {
-      expect(card.image).toBe(
+      expect(card.image.startsWith('data:image/jpeg;base64,')).toBe(true);
+    });
+  });
+
+  it('bundles a real JPEG for every post', () => {
+    // Guards the failure the generator is written to avoid: an entry that
+    // exists but decodes to nothing, which is a blank card on the dashboard.
+    // ffd8ff is the JPEG start-of-image marker.
+    // The first three bytes of a JPEG are ff d8 ff, and base64 packs three
+    // bytes into its first four characters -- so a JPEG always begins '/9j/'.
+    // Asserted on the encoded text because neither Buffer nor atob is typed
+    // in this suite, and decoding is not what is being tested.
+    INSTAGRAM_CARDS.forEach(card => {
+      const b64 = card.image.split(',')[1];
+      expect(b64.length).toBeGreaterThan(1024);
+      expect(b64.slice(0, 4)).toBe('/9j/');
+    });
+  });
+
+  it('keeps Instagram-s own endpoint as the fallback', () => {
+    // Used only when a shortcode has no bundled cover -- i.e. POSTS was edited
+    // without re-running tools/fetch-instagram-covers.js.
+    INSTAGRAM_CARDS.forEach(card => {
+      expect(card.fallback).toBe(
         'https://www.instagram.com/p/' + card.id + '/media/?size=m',
       );
     });
@@ -110,11 +132,12 @@ describe('the links and covers derived from them', () => {
 
   it('has no signed CDN URL written down anywhere', () => {
     // The failure this guards is slow and silent: a pasted fbcdn link works
-    // for an afternoon and is a broken image by the next day.
+    // for an afternoon and is a broken image by the next day. The bundled
+    // cover is bytes, so this is really about `fallback` staying unsigned.
     INSTAGRAM_CARDS.forEach(card => {
-      expect(card.image).not.toContain('cdninstagram');
-      expect(card.image).not.toContain('fbcdn');
-      expect(card.image).not.toContain('oe=');
+      expect(card.fallback).not.toContain('cdninstagram');
+      expect(card.fallback).not.toContain('fbcdn');
+      expect(card.fallback).not.toContain('oe=');
     });
   });
 
