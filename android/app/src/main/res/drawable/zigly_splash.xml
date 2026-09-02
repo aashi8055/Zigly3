@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the window shows before React Native exists.
+
+  THE GAP THIS FILLS. Everything else that hides the loading page in this app is
+  a React component: the JS splash (../../../../../../src/screens/SplashScreen.tsx),
+  PageCover, and the document-level paint gate in
+  ../../../../../../src/webview/headerBridge.ts. None of them exist until the JS
+  bundle has loaded, Hermes has started and the first frame has rendered — and
+  the WebView inside ZiglyWebViewScreen begins painting zigly.com as soon as it
+  mounts. On a mid-range device that boot is a second or more, and for the whole
+  of it there was nothing above the WebView at all, because the app declared no
+  launch theme and AppCompat's default window background is what showed. That is
+  the raw mobile website on screen at launch, and no amount of tuning the reveal
+  timers could reach it: those timers only start counting once the thing they
+  govern already exists.
+
+  So this is the first frame, drawn by the window manager itself with no JS
+  involved. It is deliberately the same composition as the JS splash — the same
+  white ground, the same mark, centred — so that when React finally mounts and
+  SplashScreen takes over, the swap is invisible: two identical images, one
+  replacing the other.
+
+  A layer-list rather than a bitmap, because the mark must NOT be stretched to
+  the window. `gravity="center"` draws it at its own size on the ground colour,
+  which is what keeps a wordmark from being a few percent wide on a tall phone.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/zigly_splash_ground" />
+    <item>
+        <bitmap
+            android:src="@mipmap/zigly_splash_logo"
+            android:gravity="center" />
+    </item>
+</layer-list>

@@ -113,38 +113,8 @@ const POSTS: {id: string; isVideo: boolean; alt: string}[] = [
 /** What the rail renders, derived from the shortcodes above. */
 export interface InstagramCard {
   id: string;
-  /**
-   * The permalink. Opens outside the app: instagram.com is in EXTERNAL_HOSTS,
-   * so the WebView hands it to the Instagram app or the browser rather than
-   * loading a login wall inside the customer's shopping session.
-   *
-   * /reel/ and /p/ both resolve for either kind of post, but the one that
-   * matches opens the right screen in the Instagram app.
-   */
   url: string;
-  /** The permanent cover URL -- see the note on /media/ above. */
   image: string;
-  /**
-   * Further cover URLs to try, in order, if `image` will not load.
-   *
-   * Not redundancy for its own sake. The covers were reported missing on device
-   * while the same URLs returned 200 image/jpeg from a desktop on the same
-   * network, and every app-side cause was ruled out -- no CSP is set by this
-   * app, there is no request interceptor or ServiceWorker anywhere in the
-   * project, `mixedContentMode: 'never'` is scheme-based and cannot affect an
-   * https-to-https redirect, and on Android
-   * `onShouldStartLoadWithRequest` is never called for an image subresource.
-   * What is left is the request context: the WebView sends Instagram's shared
-   * cookies, an Android WebView user-agent and `Sec-Fetch-*` headers that a
-   * plain fetch does not, and any of those can route the request into
-   * Instagram's logged-out path, which answers with HTML instead of an image.
-   *
-   * That is not something this app can fix from the outside, so it is retried
-   * instead: each of these is a genuinely different request -- a different host
-   * or a different crop -- and one of them getting through is a cover shown.
-   * All were verified to return image/jpeg on 2026-08-31.
-   */
-  fallbacks: string[];
   isVideo: boolean;
   alt: string;
 }
@@ -157,25 +127,13 @@ export const INSTAGRAM_CARDS: InstagramCard[] = POSTS.map(post => ({
     '/' +
     post.id +
     '/',
-  // size=m is Instagram's 320px square crop, which is what a card this wide
-  // shows on a phone. The full-size original would be several times the bytes
-  // for pixels nothing can display.
-  image: 'https://www.instagram.com/p/' + post.id + '/media/?size=m',
-  fallbacks: [
-    // The apex host. A different origin, so it carries its own cookies -- which
-    // is the most likely discriminator between a request that is served and one
-    // that is sent to the logged-out path.
-    'https://instagram.com/p/' + post.id + '/media/?size=m',
-    // No size parameter: the plainest form of the endpoint.
-    'https://www.instagram.com/p/' + post.id + '/media/',
-    // The large crop, as a last try. More bytes than a card needs, which is why
-    // it is last rather than absent -- a heavier cover still beats no cover.
-    'https://www.instagram.com/p/' + post.id + '/media/?size=l',
-  ],
+  image:
+    'https://www.instagram.com/p/' +
+    post.id +
+    '/media/',
   isVideo: post.isVideo,
   alt: post.alt,
 }));
-
 /**
  * The reel marker, drawn over the top-right of a video card.
  *
@@ -306,21 +264,12 @@ export const INSTAGRAM_SECTION_SCRIPT = `
         card.setAttribute('rel', 'noopener noreferrer');
 
         var img = document.createElement('img');
-        img.className = 'zigly-ig__img';
-        img.setAttribute('loading', 'lazy');
-        img.setAttribute('decoding', 'async');
-        // The covers come from Instagram and this page is zigly.com. Sending
-        // Zigly's URL along as the referrer would tell Instagram where their
-        // customers are browsing, which is not ours to disclose -- and the
-        // redirect does not ask for it.
-        img.setAttribute('referrerpolicy', 'no-referrer');
-        img.setAttribute('alt', post.alt);
-        // The retry chain, parked on the element rather than closed over, so
-        // drop() can be a plain function shared by every card.
-        img.__ziglyFallbacks = post.fallbacks || [];
-        img.onerror = function () { drop(card, img); };
-        img.setAttribute('src', post.image);
-        card.appendChild(img);
+img.className = 'zigly-ig__img';
+img.setAttribute('loading', 'lazy');
+img.setAttribute('decoding', 'async');
+img.setAttribute('alt', post.alt);
+img.setAttribute('src', post.image);
+card.appendChild(img);
 
         if (post.isVideo) {
           var badge = document.createElement('span');

@@ -4,6 +4,62 @@
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <!--
+          The ground under the app itself, for the window rather than for a
+          React view.
+
+          Without this the window is AppCompat's default — which is dark under
+          DayNight on a device in dark mode — and it shows in two places React
+          cannot paint: behind the activity during a configuration change, and
+          in the gap between the launch screen being torn down and the first JS
+          frame arriving. Both read as a flash of the wrong colour. Setting it
+          to the same white as everything else closes them.
+        -->
+        <item name="android:windowBackground">@color/zigly_splash_ground</item>
+    </style>
+
+    <!--
+      The launch theme. This is what the window wears from the moment the
+      launcher icon is tapped until React Native's first frame.
+
+      WHY IT EXISTS. See ../drawable/zigly_splash.xml for the full reasoning:
+      in short, every other loading cover in this app is a React component, and
+      none of them are on screen during the ~1-3s a mid-range Android spends
+      booting the JS bundle. The WebView mounts and starts painting zigly.com in
+      that window, so without a launch theme the first thing the customer sees
+      is the raw mobile website. This is the only layer that can cover it,
+      because it is the only one that does not need JavaScript to be running.
+
+      MainActivity swaps back to AppTheme in onCreate — see MainActivity.kt.
+      That handoff is what stops this drawable staying on screen behind the app.
+    -->
+    <style name="AppLaunchTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <!--
+          Pre-Android-12 (including the Samsung A31 this was reported on): the
+          window background IS the splash, drawn by the window manager before
+          any of the app's code runs.
+        -->
+        <item name="android:windowBackground">@drawable/zigly_splash</item>
+
+        <!--
+          Android 12+ ignores windowBackground for the launch and draws the
+          platform splash screen instead, so the same intent has to be stated
+          again in its own vocabulary. Without these three the app would launch
+          to a bare launcher icon on the system's colour on new devices while
+          being correct on old ones.
+
+          These attributes are only read on API 31+, and naming them here is
+          safe on older platforms: unknown attributes in a theme are ignored,
+          which is why this does not need a values-v31 variant.
+        -->
+        <item name="android:windowSplashScreenBackground">@color/zigly_splash_ground</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/zigly_splash_logo</item>
+        <!--
+          Hold the platform splash for a beat rather than letting it snap away
+          the instant the activity is ready. 0 would let Android 12+ tear it
+          down before the JS splash exists, reopening the very gap this closes.
+        -->
+        <item name="android:windowSplashScreenAnimationDuration">400</item>
     </style>
 
 </resources>

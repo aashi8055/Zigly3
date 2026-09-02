@@ -1028,9 +1028,26 @@ describe('the section wires the flow the way the brief asks', () => {
 
   it('lands a verified existing customer on the dashboard', () => {
     // Scenario A: no signup form, no account screen they did not ask for.
-    const phase = handler('applyLoginPhase');
-    expect(phase).toContain("applyAuth('signedIn')");
-    expect(phase).toContain('closeAccountSection()');
+    //
+    // The success ending hands to watchedLogin, which is what closes the
+    // section. The assertion moved off applyAuth('signedIn') deliberately --
+    // see the next test.
+    expect(handler('applyLoginPhase')).toContain('watchedLogin(');
+    expect(handler('watchedLogin')).toContain('closeAccountSection()');
+  });
+
+  it('asks the site rather than declaring the session itself', () => {
+    // A success panel is a reading of the SCREEN. It is not evidence that
+    // Shopify issued a customer session, and on this shop the two came apart:
+    // SimplyOTP verified the phone number while no session was created. The
+    // app then held 'signedIn' against every probe that disagreed, `customer`
+    // was never set, and the account screen showed its skeleton for ever.
+    //
+    // So the only route to a signed-in state is a probe that says so.
+    const watched = handler('watchedLogin');
+    expect(watched).toContain('probeAccount()');
+    expect(watched).not.toContain("applyAuth('signedIn')");
+    expect(handler('applyLoginPhase')).not.toContain("applyAuth('signedIn')");
   });
 
   it('shows the site’s own signup form for a number new to the shop', () => {

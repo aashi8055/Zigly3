@@ -466,9 +466,32 @@ describe('where the section leaves you', () => {
   it('lands a completed login on the dashboard, not on the account screen', () => {
     // The customer came to the Account tab to sign in; signing in is the end of
     // that, and the app's home is where the app starts.
+    //
+    // Both endings now route through watchedLogin, which is what closes the
+    // section -- see the next test for why the assertion moved off
+    // applyAuth('signedIn').
     const nav = handler('handleLoginNav');
-    expect(nav).toContain("applyAuth('signedIn')");
-    expect(nav).toContain('closeAccountSection()');
+    expect(nav).toContain('watchedLogin(');
+    expect(handler('watchedLogin')).toContain('closeAccountSection()');
+  });
+
+  it('never asserts a session a probe has not confirmed', () => {
+    // THE FAULT THIS PINS. Both endings of the login flow used to call
+    // applyAuth('signedIn') off a reading of the SCREEN -- the widget's success
+    // panel, or the login WebView landing on an internal url. Neither asks the
+    // site whether a customer session exists, and on this shop they came apart:
+    // SimplyOTP verified the phone number while Shopify issued no session. The
+    // app then held 'signedIn' against every probe that said otherwise,
+    // `customer` was never set, and the account screen showed its skeleton for
+    // ever.
+    //
+    // So the watched login asks instead of asserting. The only route to
+    // 'signedIn' is a probe that came back saying so.
+    const watched = handler('watchedLogin');
+    expect(watched).toContain('probeAccount()');
+    expect(watched).not.toContain("applyAuth('signedIn')");
+    expect(handler('handleLoginNav')).not.toContain("applyAuth('signedIn')");
+    expect(handler('applyLoginPhase')).not.toContain("applyAuth('signedIn')");
   });
 
   it('still swaps login for the account screen when a probe corrects it', () => {
