@@ -24,29 +24,43 @@
  *
  * REFRESHING THE LIST
  *
- * Read the account and replace POSTS. The only field that has to be right is
- * `id`, the shortcode out of the post's own URL; `isVideo` decides whether the
- * card gets the reel badge, and `alt` is the post's caption, used as alt text.
- * Both the cover and the link are derived from the shortcode, so there is
- * nothing else to look up.
+ * Read the account and replace POSTS, then run:
+ *
+ *   node tools/fetch-instagram-covers.js
+ *
+ * The only field that has to be right is `id`, the shortcode out of the post's
+ * own URL; `isVideo` decides whether the card gets the reel badge, and `alt` is
+ * the post's caption, used as alt text. The link is derived from the shortcode
+ * and the cover is fetched by that tool, so there is nothing else to look up.
  *
  * THE COVERS
  *
- * instagram.com/p/<shortcode>/media/ is a permanent, unsigned URL that
- * redirects to a freshly signed CDN image on every request. That is what makes
- * a hardcoded list possible at all: the signed CDN URLs the API hands out
- * expire within hours, so writing one of those down would guarantee a grid of
- * broken images, while this one keeps working with no code of ours and no
- * image bytes shipped in the APK.
+ * The cards show BYTES THAT SHIP WITH THE APP -- see instagramCovers.ts, which
+ * holds one base64 data: URI per shortcode and is written by the tool above.
  *
- * It is still Instagram's endpoint, so it is treated as something that can
- * fail -- but the card FAILS IN PLACE. It used to take itself down, and the
- * section took itself down with the last card, and that is what made this
- * section disappear from the dashboard: /media/ stopped serving an
- * unauthenticated third-party request, so every cover errored and the code did
- * exactly what it was written to do. A card whose cover will not load now keeps
- * its tile, its badge and its link to the real post; see the note on `drop`.
+ * They used to be loaded live from instagram.com/p/<shortcode>/media/, which
+ * does work: it is unsigned, permanent, and redirects to a freshly signed CDN
+ * image on every request, where the signed URLs themselves expire within hours.
+ * The reason it is no longer what the cards load is not that it is broken; it
+ * is that it is a third-party request made from inside the customer's shopping
+ * session, on a screen carrying Zigly's name. It can be slow, can be
+ * rate-limited mid-scroll, tells Instagram which page the customer is on, and
+ * can be changed by someone who has never heard of this app. This section had
+ * already gone missing from the dashboard once.
+ *
+ * That endpoint is still written down, as each card's `fallback`: it is used
+ * only if a bundled cover is missing, which means a shortcode was added to
+ * POSTS without re-running the tool.
+ *
+ * If a cover still will not load, the card FAILS IN PLACE. It used to take
+ * itself down, and the section took itself down with the last card, and that is
+ * what made this section disappear before: every cover errored -- the
+ * shortcodes were stale -- and the code did exactly what it was written to do.
+ * A card whose cover will not load now keeps its tile, its badge and its link
+ * to the real post; see the note on `drop`.
  */
+
+import {INSTAGRAM_COVERS} from './instagramCovers';
 
 /**
  * Zigly's eight most recent posts, read from @ziglypetcare on 2026-08-31.
@@ -114,10 +128,23 @@ const POSTS: {id: string; isVideo: boolean; alt: string}[] = [
 export interface InstagramCard {
   id: string;
   url: string;
+  /** The cover the card loads: bundled bytes as a data: URI. */
   image: string;
+  /** Instagram's own endpoint, tried only if `image` fails to decode. */
+  fallback: string;
   isVideo: boolean;
   alt: string;
 }
+
+/**
+ * The live cover endpoint for a shortcode.
+ *
+ * No longer what the cards load -- it is the fallback, used only if a bundled
+ * cover is somehow missing (a shortcode added to POSTS without re-running the
+ * fetch tool). ?size=m matches what was downloaded.
+ */
+const remoteCover = (id: string): string =>
+  'https://www.instagram.com/p/' + id + '/media/?size=m';
 
 export const INSTAGRAM_CARDS: InstagramCard[] = POSTS.map(post => ({
   id: post.id,
@@ -127,10 +154,10 @@ export const INSTAGRAM_CARDS: InstagramCard[] = POSTS.map(post => ({
     '/' +
     post.id +
     '/',
-  image:
-    'https://www.instagram.com/p/' +
-    post.id +
-    '/media/',
+  // The bundled bytes, so the card needs no network. A shortcode with no
+  // bundled cover falls back to Instagram's endpoint rather than to nothing.
+  image: INSTAGRAM_COVERS[post.id] ?? remoteCover(post.id),
+  fallback: remoteCover(post.id),
   isVideo: post.isVideo,
   alt: post.alt,
 }));
@@ -264,12 +291,20 @@ export const INSTAGRAM_SECTION_SCRIPT = `
         card.setAttribute('rel', 'noopener noreferrer');
 
         var img = document.createElement('img');
-img.className = 'zigly-ig__img';
-img.setAttribute('loading', 'lazy');
-img.setAttribute('decoding', 'async');
-img.setAttribute('alt', post.alt);
-img.setAttribute('src', post.image);
-card.appendChild(img);
+        img.className = 'zigly-ig__img';
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        // Nothing to leak on a data: URI, but the fallback is a real request
+        // to Instagram and this is set before either src is assigned.
+        img.setAttribute('referrerpolicy', 'no-referrer');
+        img.setAttribute('alt', post.alt);
+        // Where a cover goes when the bundled bytes will not decode. Held on
+        // the element, not in a closure, so the error handler cannot restart
+        // the walk from the beginning on a re-entrant event.
+        img.__ziglyFallbacks = post.fallback ? [post.fallback] : [];
+        img.onerror = function () { drop(card, img); };
+        img.setAttribute('src', post.image);
+        card.appendChild(img);
 
         if (post.isVideo) {
           var badge = document.createElement('span');
