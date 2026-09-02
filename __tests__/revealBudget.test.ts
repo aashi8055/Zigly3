@@ -44,26 +44,39 @@ import {READY_SIGNAL_SCRIPT} from '../src/webview/readySignal';
  * "how long does the dashboard get" is a multiplication, and it is the product
  * that has to be compared against the app's deadlines.
  */
-const numbers = (): {tick: number; home: number; inner: number} => {
+const numbers = (): {
+  tick: number;
+  home: number;
+  inner: number;
+  homeStop: number;
+  innerStop: number;
+} => {
   const tick = READY_SIGNAL_SCRIPT.match(/}, (\d+)\);/);
   const caps = READY_SIGNAL_SCRIPT.match(
     /var cap = home \? (\d+) : (\d+);/,
   );
-  if (!tick || !caps) {
+  const stops = READY_SIGNAL_SCRIPT.match(
+    /var stop = home \? (\d+) : (\d+);/,
+  );
+  if (!tick || !caps || !stops) {
     throw new Error(
-      'the ready watcher no longer states its interval and caps in the shape ' +
-        'this test reads; update the patterns here rather than deleting the test',
+      'the ready watcher no longer states its interval, caps and stops in the ' +
+        'shape this test reads; update the patterns here rather than deleting ' +
+        'the test',
     );
   }
   return {
     tick: Number(tick[1]),
     home: Number(caps[1]),
     inner: Number(caps[2]),
+    homeStop: Number(stops[1]),
+    innerStop: Number(stops[2]),
   };
 };
 
 const HOME_MS = () => numbers().home * numbers().tick;
 const INNER_MS = () => numbers().inner * numbers().tick;
+const HOME_STOP_MS = () => numbers().homeStop * numbers().tick;
 
 describe('the numbers are readable at all', () => {
   it('finds an interval and both caps in the shipped script', () => {
@@ -139,6 +152,43 @@ describe('the document-level gate sits inside the native one', () => {
   });
 });
 
+describe('the dashboard never volunteers an unstyled reveal', () => {
+  /*
+   * The bug this is here for, and it is the dashboard's copy of the one
+   * INNER_MAX_TRIES already prevents on every other page.
+   *
+   * The watcher's loop reports ready when `done || (tries > cap && styled()) ||
+   * tries > stop`. Only the middle branch is guarded by `styled()`; the third
+   * fires whatever the page looks like. `stop` for home used to BE HOME_TRIES,
+   * so the guarded branch and the unguarded one came due on the very same tick
+   * -- which means the guard could never actually hold anything back. Any
+   * dashboard still assembling at 5.4s announced itself ready while it was
+   * still the unstyled mobile website, and `dashboard-ready` retires the splash
+   * and clears the dashboard's cover at once. That is the raw site on screen,
+   * which is the single thing this whole budget exists to prevent.
+   */
+  it('gives home a hard stop later than the cap it guards', () => {
+    expect(HOME_STOP_MS()).toBeGreaterThan(HOME_MS());
+  });
+
+  it('leaves the give-up case to the app cover, not to the page', () => {
+    /*
+     * The property that actually matters. Past its hard stop the page reveals
+     * itself unstyled, so that moment must land AFTER the app's own cover has
+     * already lifted on its own clock -- exactly the arrangement inner pages
+     * have against PAGE_COVER_CAP_MS.
+     */
+    expect(HOME_STOP_MS()).toBeGreaterThan(HOME_COVER_MAX_MS);
+  });
+
+  it('holds the same line for inner pages', () => {
+    // Stated here too so this file is the whole rule, not half of it.
+    expect(numbers().innerStop * numbers().tick).toBeGreaterThan(
+      PAGE_COVER_CAP_MS,
+    );
+  });
+});
+
 describe('the dashboard cover outlasts the splash it stands behind', () => {
   it('gives up only after the splash has exhausted its own failsafe', () => {
     /*
@@ -172,6 +222,7 @@ describe('the whole budget, in order', () => {
       ['splash grace', SPLASH_READY_GRACE_MS],
       ['splash hard cap', SPLASH_MAX_MS],
       ['dashboard cover hard cap', HOME_COVER_MAX_MS],
+      ['dashboard watcher hard stop', HOME_STOP_MS()],
     ] as const;
 
     const values = ladder.map(([, ms]) => ms);

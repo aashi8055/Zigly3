@@ -87,14 +87,18 @@ class CookieJarModule(reactContext: ReactApplicationContext) :
    *
    * Attributes are rebuilt rather than echoed because getCookie() does not
    * return them: it hands back `name=value; name=value`, so Path, Secure and
-   * SameSite have to be stated here. They are stated to match what Shopify sets
-   * on a storefront session -- root path, Secure, SameSite=Lax -- and the call
-   * is a no-op against an https host if they are already so. HttpOnly is
-   * deliberately NOT set: this runs on the Java side where that flag is not
-   * ours to grant, and re-setting a cookie as non-HttpOnly would EXPOSE it to
-   * page JavaScript that could not otherwise read it. Cookies already marked
-   * HttpOnly by the server keep that flag, because setCookie does not clear an
-   * attribute it does not mention.
+   * SameSite have to be stated here.
+   *
+   * AND THAT IS EXACTLY WHY THE SHOP'S OWN COOKIES ARE SKIPPED. `setCookie`
+   * REPLACES a cookie with the attributes given; it does not merge them into
+   * what is already there. An earlier revision of this file claimed the
+   * opposite -- "cookies already marked HttpOnly by the server keep that flag,
+   * because setCookie does not clear an attribute it does not mention" -- and
+   * that claim was false. Rebuilding a server-set cookie here therefore
+   * silently strips HttpOnly and anything else not restated, which is how
+   * `_shopify_essential` stopped being sent and every account probe started
+   * reading as signed out. The loop below now leaves those alone; see the
+   * comment on the skip itself.
    *
    * Only cookies that lack an expiry are touched. One Shopify has already given
    * a lifetime is a decision by the site about that cookie, and this module
@@ -125,6 +129,26 @@ class CookieJarModule(reactContext: ReactApplicationContext) :
         if (eq <= 0) continue
         val name = cookie.substring(0, eq)
         val value = cookie.substring(eq + 1)
+        /*
+         * Leave the shop's own cookies exactly as the server set them.
+         *
+         * THE FAULT THIS FIXES: the loop used to re-set every cookie
+         * getCookie() returned, and `setCookie` REPLACES a cookie rather than
+         * merging attributes into it -- the note above this function used to
+         * claim otherwise, and it was wrong. So `_shopify_essential`, which
+         * Shopify issues as `Max-Age=31536000; Path=/; HttpOnly; Secure;
+         * Priority=High; SameSite=Lax`, was rewritten without HttpOnly and
+         * without Priority. The rewritten cookie stayed visible in the jar --
+         * which is why it still appeared in a jar dump -- but was no longer
+         * the cookie the storefront issued, and the WebView stopped sending it
+         * on its own fetches. /account then answered every probe with a
+         * redirect to /account/login, and the account screen never filled in.
+         *
+         * These cookies also do not need this module: Shopify already gives
+         * them a year. What this module exists for is the expiry-LESS session
+         * cookie, and rewriting anything else was never part of that job.
+         */
+        if (name.startsWith("_shopify") || name.startsWith("_secure_")) continue
         // getCookie() strips attributes, so every pair it returns is one the
         // jar is currently serving. Re-setting it with Max-Age is what makes it
         // outlive the process; the value is copied through untouched.

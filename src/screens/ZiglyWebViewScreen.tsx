@@ -38,7 +38,9 @@ import {
   AppState,
   BackHandler,
   Linking,
+  Pressable,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
@@ -1758,6 +1760,28 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     source: 'probe' | 'evidence' = 'evidence',
   ) => {
     /*
+     * 'unknown' from a probe is not a resting answer -- it is the absence of
+     * one, and treating it as final is its own reported bug: the account
+     * screen opens (auth is not 'signedOut', so openAccount is optimistic)
+     * and then never fills in, because nothing else was ever going to probe
+     * again. A malformed or network-interrupted read of /account -- ZA.load's
+     * own 'error', or a page ZA.sectionHtml could not parse -- reports this
+     * way, and unlike 'signedOut' it had no retry ladder at all: applyAuth
+     * used to write it straight into authRef and stop, leaving `customer`
+     * null with the skeleton on screen for good.
+     *
+     * So it is asked again on the same ladder a suppressed 'signedOut'
+     * already uses, rather than being written down. Scoped to source==='probe'
+     * because that is the only route 'unknown' can arrive by -- LOGOUT_SCRIPT's
+     * own failure reports 'error' too, but that call site does not pass
+     * 'probe' and must not be retried here; see its own handling.
+     */
+    if (state === 'unknown' && source === 'probe') {
+      warn('ignoring unknown account read; asking again');
+      scheduleConfirmProbe();
+      return;
+    }
+    /*
      * A 'signedOut' arriving in the seconds after a completed login is a stale
      * read, not a sign-out.
      *
@@ -2032,6 +2056,62 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   );
 
   /**
+   * A login this app WATCHED finish -- which is not the same as a session.
+   *
+   * THE FAULT THIS FIXES. Both endings of the login flow used to assert a
+   * signed-in state directly: the widget rendering its success panel,
+   * and the login WebView navigating to any internal url that is not
+   * /account/login. Both are readings of the SCREEN. Neither asks the site
+   * whether a customer session actually exists, and on this shop they can both
+   * be true while it does not -- SimplyOTP verifies the phone number in its own
+   * service, and the hand-off that turns that into a Shopify customer session
+   * is a separate step that can fail silently.
+   *
+   * When it did, the app sat in a state it could not leave: `auth` was
+   * 'signedIn' because a screen said so, every ACCOUNT_PROBE answered
+   * 'signedOut' because the site was right, `confirmSignedOut` refused to
+   * believe the probe over the held session, and `customer` was never set --
+   * so the account screen showed its skeleton for ever. The app was arguing
+   * with the truth and winning.
+   *
+   * So a watched login no longer ASSERTS a session. It records that one is
+   * expected, flushes the jar so the dashboard WebView can see whatever the
+   * login WebView set, and asks. The signed-in state is now applied only when
+   * a probe comes back 'signedIn' -- the same route a cold start takes. The
+   * confirm ladder already re-asks on a widening delay, which covers the real
+   * cookie-visibility race this used to be conflated with; what it no longer
+   * does is invent a session that the ladder then spends its attempts failing
+   * to confirm.
+   *
+   * The section still closes, because the customer has finished what they came
+   * to do either way. If no session materialises, the next probe answers
+   * 'signedOut' and the next tap of Account opens the login screen -- honest,
+   * and recoverable by trying again.
+   */
+  const watchedLogin = useCallback(
+    (why: string) => {
+      verifyingRef.current = false;
+      clearSendWatchdog();
+      setLoginBusy(false);
+      setLoginError(null);
+      /*
+       * Not yet confirmed, and deliberately not asserted either.
+       *
+       * signedInAt is still marked so that believeAuth suppresses the first
+       * stale 'signedOut' from a jar that has not caught up -- that race is
+       * real and this is still the window for it. What is gone is the direct
+       * assertion of a signed-in state that used to precede it.
+       */
+      sessionConfirmed.current = false;
+      signedInAt.current = Date.now();
+      flushCookies();
+      closeAccountSection();
+      probeAccount();
+    },
+    [clearSendWatchdog, closeAccountSection, probeAccount],
+  );
+
+  /**
    * Move the app to wherever the widget says it is.
    *
    * The widget is the authority on which step it is on, so this never argues
@@ -2091,18 +2171,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // A session this app has watched appear but nothing has confirmed yet.
         // Until a probe agrees, a 'signedOut' is a cookie jar that has not
         // caught up rather than an answer -- see believeAuth.
-        sessionConfirmed.current = false;
-        // The shared jar is flushed so the dashboard WebView's next probe can
-        // actually see the cookie the login WebView just set.
-        flushCookies();
-        // Scenario A and the end of scenario B are the same ending: a session
-        // exists, so the customer goes to the dashboard rather than to an
-        // account screen they never asked for. handleLoginNav says the same
-        // thing when the widget navigates instead of rendering its success
-        // panel, and both are safe to run twice.
-        applyAuth('signedIn');
-        closeAccountSection();
-        probeAccount();
+        watchedLogin('widget success panel');
         return;
       }
 
@@ -2129,7 +2198,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         setLoginError(null);
       }
     },
-    [applyAuth, clearSendWatchdog, closeAccountSection, probeAccount],
+    [clearSendWatchdog, watchedLogin],
   );
 
   /**
@@ -2958,9 +3027,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * watches -- SimplyOTP's success screen is a class name that could be
    * renamed in an app update, and a redirect is not.
    *
-   * The auth state is flipped here rather than waiting for the probe to answer:
-   * the login WebView is showing the website's own account page at this moment,
-   * and that page must not be what the customer sees.
+   * What this does NOT do any more is flip the auth state. Landing on an
+   * internal page is evidence that the login flow ENDED, not that a session
+   * exists -- on this shop the two came apart, and asserting a session off a
+   * url is what left the account screen skeletonised for ever. See
+   * watchedLogin, which this hands to.
    */
   const handleLoginNav = useCallback(
     (nav: WebViewNavigation) => {
@@ -2973,16 +3044,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       log('login completed, landed on', nav.url);
-      // The other ending, and it clears the error for applyLoginPhase's
-      // reason: whichever of the two fires, a login that succeeded must not
-      // leave the previous attempt's complaint on the screen behind it.
-      verifyingRef.current = false;
-      setLoginError(null);
-      // Same as applyLoginPhase's 'success': the login is watched, not yet
-      // confirmed. Both endings set this because either can be the one that
-      // happens, and both are safe to run twice.
-      sessionConfirmed.current = false;
-      applyAuth('signedIn');
+      // The other ending. Both go through watchedLogin, which asks the site
+      // rather than asserting a session off a url -- see its comment.
+      watchedLogin('login webview navigated to ' + parsed.path);
       // And out of the account section altogether: signing in is the end of
       // what the customer came here to do, so they land on the dashboard --
       // the app's own home -- rather than on the account screen. applyAuth has
@@ -2994,7 +3058,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       closeAccountSection();
       probeAccount();
     },
-    [applyAuth, closeAccountSection, probeAccount],
+    [watchedLogin],
   );
 
   /**

@@ -71,6 +71,28 @@ const INNER_TRIES = 24;
  * the app revealed this page at its cap seconds ago.
  */
 const INNER_MAX_TRIES = 60;
+/**
+ * The same hard stop, for the dashboard -- and the reason it has to exist
+ * separately at all. ~10.5s.
+ *
+ * This was missing, and `stop` for home was HOME_TRIES itself. That collapsed
+ * the two deadlines into one number, which quietly re-created on the dashboard
+ * the exact bug INNER_MAX_TRIES exists to prevent on every other page: past the
+ * cap the loop's `tries > stop` branch fires UNCONDITIONALLY, with no `styled()`
+ * test in front of it. So on any launch where the dashboard had not finished
+ * assembling inside 5.4s -- a mid-range Android on a cold cache is exactly that
+ * launch -- the page announced `dashboard-ready` while it was still the
+ * unstyled mobile website, and that one message retires the splash AND clears
+ * the dashboard's cover (both listen to it). The customer got the raw site.
+ *
+ * The `styled()` guard on the cap is what is supposed to hold that line, and it
+ * only gets to run while `tries <= stop`. Giving home its own stop past the
+ * app's own HOME_COVER_MAX_MS (9000) hands the give-up case back to the app's
+ * cover, where every other page already leaves it: the page never volunteers an
+ * unstyled reveal, and nobody waits for ever because the cover still lifts on
+ * its own clock. Asserted in __tests__/revealBudget.test.ts.
+ */
+const HOME_MAX_TRIES = 70;
 /** How many images are checked for "the top of the page has arrived". */
 const IMAGE_SAMPLE = 30;
 
@@ -222,7 +244,7 @@ ${LISTING_TEST_JS}
   var ready = home ? homeReady : innerReady;
   var tag = home ? 'dashboard-ready' : 'page-ready';
   var cap = home ? ${HOME_TRIES} : ${INNER_TRIES};
-  var stop = home ? ${HOME_TRIES} : ${INNER_MAX_TRIES};
+  var stop = home ? ${HOME_MAX_TRIES} : ${INNER_MAX_TRIES};
 
   var tries = 0;
   var timer = setInterval(function () {

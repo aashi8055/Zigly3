@@ -397,9 +397,37 @@ export const ACCOUNT_PROBE = `
       ZA.send('account', {state: state, via: via});
       return;
     }
+    /*
+     * The screen this reply feeds has no retry of its own for a reply that
+     * never comes: the native side's confirm-probe ladder only re-asks a
+     * definite 'signedOut' or 'unknown' answer, and neither of those is what
+     * an uncaught exception in here produces. profile() and orders() walk
+     * whatever markup this store's theme actually renders, on a template this
+     * file cannot see ahead of time -- a customisation that nests the address
+     * link's block unusually, or a table row shaped in a way cell() does not
+     * expect, throws here rather than reporting "not found", and a thrown
+     * error inside a fetch().then() callback is swallowed by the runtime with
+     * no message ever posted back. The account screen is then a skeleton for
+     * good: nothing failed loudly enough to retry.
+     *
+     * So the read each of those functions does is wrapped rather than trusted,
+     * on the same rule the rest of this file already states out loud --
+     * "nothing here throws" -- extended to the one place that was still an
+     * assumption instead of a guarantee. A caught failure still sends 'account'
+     * with whatever this pass could confirm (state, via) and empty profile
+     * fields, which is honest: not what the theme rendered, but not nothing
+     * either, and the native side is not left waiting on a reply that was
+     * never coming.
+     */
     var root = ZA.main(doc);
-    var who = profile(root);
-    var list = orders(root);
+    var who = {name: '', email: '', phone: '', nameFrom: 'none'};
+    var list = [];
+    try {
+      who = profile(root);
+    } catch (e) {}
+    try {
+      list = orders(root);
+    } catch (e) {}
     ZA.send('account', {
       state: 'signedIn',
       via: via,
