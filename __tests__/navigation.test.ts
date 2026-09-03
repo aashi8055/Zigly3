@@ -230,6 +230,74 @@ describe('native cart', () => {
       'src/screens/ZiglyWebViewScreen.tsx',
       'utf8',
     );
-    expect(src).toContain('/checkout`');
+    /*
+     * On the website's OWN checkout, which is the Shiprocket embed. This test
+     * used to assert '/checkout`' -- Shopify's native contact-information step
+     * -- and that turned out to be the bug rather than the requirement: the
+     * store does not check out through Shopify.
+     */
+    expect(src).toContain('CART_CHECKOUT_SCRIPT');
+    // No native checkout of ours anywhere: no order is placed by this app.
+    expect(src).not.toContain('/checkout`');
+  });
+
+  it('checks out from where the customer is, like Buy Now', () => {
+    const src = require('fs').readFileSync(
+      'src/screens/ZiglyWebViewScreen.tsx',
+      'utf8',
+    );
+    /*
+     * The second bug: Checkout opened /cart and clicked the Shiprocket-looking
+     * control there, which was a cart-drawer trigger -- a page, then a sidebar,
+     * then Shiprocket, for what Buy Now reaches directly. The press must now
+     * navigate nowhere at all.
+     */
+    const handler = src.slice(
+      src.indexOf('onCheckout={'),
+      src.indexOf('onOpenItem={', src.indexOf('onCheckout={')),
+    );
+    expect(handler).toContain('CART_CHECKOUT_SCRIPT');
+    // The whole point: no navigation of its own.
+    expect(handler).not.toContain('showPage(');
+    /*
+     * And the overlay is not torn down by the press itself -- only once
+     * Shiprocket reports the flow started, so a press that found nothing
+     * leaves the customer with their cart rather than on the dashboard.
+     */
+    expect(handler).not.toContain('setShowCart(false)');
+    expect(src).toContain("'cart-checkout-started'");
+  });
+
+  it("never falls back to Shopify's checkout", () => {
+    const {CART_CHECKOUT_SCRIPT} = require('../src/webview/cartBridge');
+    /*
+     * Deliberate. Landing on Shopify's flow would hide a broken Shiprocket
+     * integration behind a checkout that takes the customer's money through
+     * the wrong path -- worse than a button that says it failed.
+     */
+    expect(CART_CHECKOUT_SCRIPT).not.toContain('name="checkout"');
+    expect(CART_CHECKOUT_SCRIPT).not.toContain('/checkout');
+    expect(CART_CHECKOUT_SCRIPT).toContain('cart-checkout-unavailable');
+  });
+
+  it('prefers the Shiprocket API over hunting for a control', () => {
+    const {CART_CHECKOUT_SCRIPT} = require('../src/webview/cartBridge');
+    // The PDP control calls shiprocketCheckoutEvents.buyProduct(event), so the
+    // global is the API; a DOM control is only ever a wrapper around it.
+    expect(CART_CHECKOUT_SCRIPT).toContain('window.shiprocketCheckoutEvents');
+    // No URL is constructed here: Shiprocket's entry point is signed.
+    expect(CART_CHECKOUT_SCRIPT).not.toContain('location.href');
+    // Injected scripts carry no backtick; see the injected-script notes.
+    expect(CART_CHECKOUT_SCRIPT).not.toContain('`');
+  });
+
+  it('refuses to click a cart-drawer trigger', () => {
+    const {CART_CHECKOUT_SCRIPT} = require('../src/webview/cartBridge');
+    /*
+     * The exact regression this replaces. Whatever else is uncertain about the
+     * page, an element that opens a drawer is not a checkout button.
+     */
+    expect(CART_CHECKOUT_SCRIPT).toContain('isDrawerTrigger');
+    expect(CART_CHECKOUT_SCRIPT).toContain("indexOf('drawer')");
   });
 });
