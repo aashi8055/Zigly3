@@ -422,6 +422,19 @@ const OTP_SEND_TIMEOUT_MS = 25000;
 const FRESH_LOGIN_MS = 6000;
 
 /**
+ * How long the native cart may be held over the page while Shiprocket opens.
+ *
+ * A FAILSAFE, not the mechanism: the hold normally ends when
+ * ../webview/cartBridge reports Shiprocket has painted, and that script caps
+ * its own wait at 4s. This only fires when the reply never arrives at all --
+ * the page navigated out from under the injection, or the bridge message was
+ * dropped. It therefore sits just past that cap, so the script always gets to
+ * answer first, and never so far past it that a customer is left staring at a
+ * Checkout button that spins.
+ */
+const CHECKOUT_HOLD_CAP_MS = 5000;
+
+/**
  * When to re-ask the site to confirm a login, until it does.
  *
  * A single re-probe was not enough. It was armed when the stale reply arrived
@@ -580,6 +593,31 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const [showCart, setShowCart] = useState(false);
   const [cart, setCart] = useState<CartData | null>(null);
+  /**
+   * Checkout has been asked for and Shiprocket has not painted yet.
+   *
+   * The cart is an overlay over a live WebView, and Shiprocket's flow opens in
+   * that WebView -- so between the tap and Shiprocket's first frame there is a
+   * page underneath which is neither the cart nor the checkout. Taking the
+   * overlay off on the tap showed the customer that page for about a second:
+   * the dashboard, flashing between the two screens they actually asked for.
+   *
+   * So the overlay is held until ../webview/cartBridge reports that
+   * Shiprocket is on screen, and only then does it come off. Nothing about
+   * the checkout is delayed by this -- Shiprocket's own script started on the
+   * tap; what is delayed is uncovering it.
+   */
+  const [checkoutPending, setCheckoutPending] = useState(false);
+  /**
+   * Releases the hold if no paint is ever reported.
+   *
+   * The script answers within its own 4s cap, so this only fires when the
+   * reply itself never arrives -- a page that navigated away underneath, a
+   * bridge message dropped. Without it the customer is stuck behind a cart
+   * whose Checkout button spins forever, which is a worse failure than the
+   * flash this replaces.
+   */
+  const checkoutHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * The wishlist. Native, and sourced from the site's own storage.
@@ -1620,18 +1658,75 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     }, 6000);
   }, []);
 
+  /**
+   * The hold is over: stop the failsafe and let the button be pressed again.
+   *
+   * Every path that ends a hold goes through this, because the one that
+   * forgets the timer is the one that fires a stale release four seconds
+   * later and closes a cart the customer has since reopened. Whether the
+   * OVERLAY comes off is a separate question, and the callers differ on it.
+   */
+  const endCheckoutHold = useCallback(() => {
+    if (checkoutHoldTimer.current) {
+      clearTimeout(checkoutHoldTimer.current);
+      checkoutHoldTimer.current = null;
+    }
+    setCheckoutPending(false);
+  }, []);
+
+  /**
+   * Uncover the page: Shiprocket is there, or it is never going to say so.
+   *
+   * One place for both, because the overlay must come off exactly once and on
+   * whichever of the two happens first.
+   */
+  const releaseCheckoutHold = useCallback(() => {
+    endCheckoutHold();
+    /*
+     * Closes the cart only if the cart is still what is open.
+     *
+     * There are half a dozen ways out of the cart that are the customer's own
+     * -- back, the close control, a tab, opening a line item -- and any of
+     * them can happen while a hold is in flight. A release that closed
+     * unconditionally would then close whatever they moved to instead. Read
+     * through the ref so this callback stays stable and does not need to be
+     * rebuilt every time the cart opens.
+     */
+    if (showCartRef.current) {
+      setShowCart(false);
+    }
+  }, [endCheckoutHold]);
+
   const closeCart = useCallback(() => {
     setShowCart(false);
+    /*
+     * Any pending checkout hold goes with it. The customer has left the cart
+     * by their own route -- back, or the close control -- so there is nothing
+     * left for a release to uncover, and a timer that fires after this would
+     * close whatever they opened next.
+     */
+    endCheckoutHold();
     // Either badge may have changed while the cart was open.
     injectInto('home', REPORT_CART_COUNT);
     injectInto('home', REPORT_WISHLIST_COUNT);
-  }, [injectInto]);
+  }, [endCheckoutHold, injectInto]);
 
   const openCart = useCallback(() => {
     setCart(null);
     setShowCart(true);
     injectInto('home', READ_CART_SCRIPT);
   }, [injectInto]);
+
+  /** The checkout hold's timer must not outlive the screen. */
+  useEffect(
+    () => () => {
+      if (checkoutHoldTimer.current) {
+        clearTimeout(checkoutHoldTimer.current);
+        checkoutHoldTimer.current = null;
+      }
+    },
+    [],
+  );
 
   // ----------------------------------------------------------------- account
   /**
@@ -3719,9 +3814,23 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               } else if (data && data.tag === 'cart-added') {
                 setCartToast(true);
               } else if (data && data.tag === 'cart-checkout-started') {
-                // Shiprocket's own flow is starting on the page below, so the
-                // cart overlay has to come off to reveal it.
-                setShowCart(false);
+                /*
+                 * Shiprocket is on the page below now, so the overlay comes
+                 * off to reveal it.
+                 *
+                 * This used to fire the moment the script CALLED Shiprocket,
+                 * which is about a second before Shiprocket has anything on
+                 * screen -- and for that second the customer was looking at
+                 * the dashboard the cart had been covering. cartBridge now
+                 * waits for the paint before sending this, so by the time it
+                 * arrives there is a checkout underneath to uncover.
+                 *
+                 * `painted: false` means its own wait timed out and nothing
+                 * matched. The overlay still comes off -- holding a cart up
+                 * over a checkout that may well be there is worse than the
+                 * flash -- so that path is the old behaviour exactly.
+                 */
+                releaseCheckoutHold();
               } else if (data && data.tag === 'cart-checkout-unavailable') {
                 /*
                  * Shiprocket's script exposed no checkout method and no
@@ -3736,6 +3845,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  * from the app side.
                  */
                 warn('checkout unavailable:', JSON.stringify(data));
+                /*
+                 * The BUTTON is released, so the customer can press it again;
+                 * the overlay is deliberately not, per the note above. Ending
+                 * the hold here also cancels the failsafe, which would
+                 * otherwise close the cart five seconds after the toast.
+                 */
+                endCheckoutHold();
                 setToastMessage("Couldn't open checkout — please try again");
               } else if (data && data.tag === 'wishlist-count') {
                 /*
@@ -4197,9 +4313,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                           : "Couldn't add to bag — please try again",
                       );
                     } else if (data && data.tag === 'cart-checkout-started') {
-                      // Shiprocket's own flow is starting on the page below, so
-                      // the cart overlay has to come off to reveal it.
-                      setShowCart(false);
+                      // Shiprocket is on the page below now -- see the same
+                      // tag on the dashboard WebView above for why this waits
+                      // for the paint rather than firing on the call.
+                      releaseCheckoutHold();
                     } else if (data && data.tag === 'cart-checkout-unavailable') {
                       /*
                        * Nothing of Shiprocket's to press on this page -- see
@@ -4208,6 +4325,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                        * being dropped somewhere by a tap that did nothing.
                        */
                       warn('checkout unavailable:', JSON.stringify(data));
+                      // Button released to be pressed again, overlay left up
+                      // so the customer keeps their cart -- as above.
+                      endCheckoutHold();
                       setToastMessage(
                         "Couldn't open checkout — please try again",
                       );
@@ -4310,12 +4430,27 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  * the cart is an overlay over a live WebView, so that script is
                  * already there with the session behind it. See
                  * ../webview/cartBridge.
+                 *
+                 * The flow starts on the tap, as it always did. What is new is
+                 * that this overlay is HELD until cartBridge reports
+                 * Shiprocket has painted: uncovering on the tap showed the
+                 * customer the page underneath -- the dashboard -- for the
+                 * second Shiprocket took to arrive.
                  */
+                // Any previous hold first: the failsafe below must be the only
+                // one armed.
+                endCheckoutHold();
+                setCheckoutPending(true);
+                checkoutHoldTimer.current = setTimeout(
+                  releaseCheckoutHold,
+                  CHECKOUT_HOLD_CAP_MS,
+                );
                 injectInto(
                   showing ? showing.key : 'home',
                   CART_CHECKOUT_SCRIPT,
                 );
               }}
+              checkoutPending={checkoutPending}
               onOpenItem={url => {
                 setShowCart(false);
                 showPage(
