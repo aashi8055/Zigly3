@@ -57,6 +57,26 @@ export const PAYMENT_HOSTS = [
   'checkout.shopify.com',
   'gokwik.co',
   'pdp.gokwik.co',
+  /*
+   * Shiprocket, which is this store's ACTUAL checkout -- the same embed that
+   * owns Buy Now on a product page and Checkout in the cart.
+   *
+   * Its absence here was a real bug rather than an omission. Everything that
+   * asks "is the customer in the money flow?" goes through isCheckoutUrl, and
+   * that reads this list: with no Shiprocket host in it, a loaded Shiprocket
+   * checkout was not recognised as checkout at all. So the bottom nav stayed
+   * over a payment page, the page got injected into like a storefront page,
+   * and the native cart overlay was never told to come down -- it sat on top
+   * of a working checkout until a timeout declared the checkout had failed.
+   *
+   * Both apex and the checkout subdomain: hostMatches covers subdomains of an
+   * entry, but the entry has to be there to be matched.
+   */
+  'shiprocket.in',
+  'checkout.shiprocket.in',
+  'fastrr.shiprocket.in',
+  'fastrr-boost-ui.pickrr.com',
+  'pickrr.com',
   'razorpay.com',
   'api.razorpay.com',
   'payu.in',

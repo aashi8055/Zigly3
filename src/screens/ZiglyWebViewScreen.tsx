@@ -103,6 +103,7 @@ import MessageToast from '../components/MessageToast';
 import CartScreen from '../components/CartScreen';
 import type {CartData} from '../components/CartScreen';
 import {
+  CART_CHECKOUT_SCRIPT,
   READ_CART_SCRIPT,
   addToCartScript,
   changeQtyScript,
@@ -3717,6 +3718,25 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 }
               } else if (data && data.tag === 'cart-added') {
                 setCartToast(true);
+              } else if (data && data.tag === 'cart-checkout-started') {
+                // Shiprocket's own flow is starting on the page below, so the
+                // cart overlay has to come off to reveal it.
+                setShowCart(false);
+              } else if (data && data.tag === 'cart-checkout-unavailable') {
+                /*
+                 * Shiprocket's script exposed no checkout method and no
+                 * checkout control of theirs was on the page -- see
+                 * ../webview/cartBridge. The overlay is deliberately left up:
+                 * the customer keeps their cart and is told, rather than being
+                 * dropped somewhere by a tap that did nothing.
+                 *
+                 * Logged with everything the script saw -- path, whether the
+                 * global existed, its method names, the controls it rejected --
+                 * because this is the one failure that cannot be diagnosed
+                 * from the app side.
+                 */
+                warn('checkout unavailable:', JSON.stringify(data));
+                setToastMessage("Couldn't open checkout — please try again");
               } else if (data && data.tag === 'wishlist-count') {
                 /*
                  * The badge. Sent by whichever WebView saw the list change, so
@@ -4176,6 +4196,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                           ? "Buy Now isn't available for this item right now"
                           : "Couldn't add to bag — please try again",
                       );
+                    } else if (data && data.tag === 'cart-checkout-started') {
+                      // Shiprocket's own flow is starting on the page below, so
+                      // the cart overlay has to come off to reveal it.
+                      setShowCart(false);
+                    } else if (data && data.tag === 'cart-checkout-unavailable') {
+                      /*
+                       * Nothing of Shiprocket's to press on this page -- see
+                       * ../webview/cartBridge. The overlay is left up so the
+                       * customer keeps their cart and is told, rather than
+                       * being dropped somewhere by a tap that did nothing.
+                       */
+                      warn('checkout unavailable:', JSON.stringify(data));
+                      setToastMessage(
+                        "Couldn't open checkout — please try again",
+                      );
                     } else if (data && data.tag === 'facets') {
                       /*
                        * The page's own sort and filter state, as SearchTap has
@@ -4257,9 +4292,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 injectInto('home', changeQtyScript(key, quantity))
               }
               onCheckout={() => {
-                // Checkout stays entirely on the website.
-                setShowCart(false);
-                showPage(`${ZIGLY_ORIGIN}/checkout`);
+                /*
+                 * Exactly what Buy Now does: press the store's own Shiprocket
+                 * checkout from the page already loaded, and navigate nowhere.
+                 *
+                 * Two things were wrong before. It first opened
+                 * ZIGLY_ORIGIN + '/checkout', which is Shopify's own
+                 * contact-information step -- not this store's checkout at all.
+                 * It then opened the site's /cart page and clicked the
+                 * Shiprocket-looking control there, which turned out to be a
+                 * cart-drawer trigger: the customer got a page, then a sidebar,
+                 * then Shiprocket, to reach what Buy Now reaches directly.
+                 *
+                 * There is no URL to send anyone to -- Shiprocket's entry point
+                 * is signed and cart-scoped -- but there is no need to navigate
+                 * either. Shiprocket's own script is what starts the flow, and
+                 * the cart is an overlay over a live WebView, so that script is
+                 * already there with the session behind it. See
+                 * ../webview/cartBridge.
+                 */
+                injectInto(
+                  showing ? showing.key : 'home',
+                  CART_CHECKOUT_SCRIPT,
+                );
               }}
               onOpenItem={url => {
                 setShowCart(false);
