@@ -281,7 +281,7 @@ html body {
   display: flex;
   /* See "Breed circles" below: the air between circles is set there, in one
      place, because the width and the gap have to be chosen together. */
-  gap: 26px;
+  gap: 40px;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x proximity;
@@ -1220,14 +1220,25 @@ body.zigly-listing .st-main-content-wrap {
       so the width comes down and the gap goes up (the gap itself is set on the
       wrapper above, since the two only make sense together).
 
-      24% + 26px still shows three circles and a peek of the fourth on a 360px
-      screen, so nothing is lost from view: the same list, smaller discs, and
-      roughly double the space between them. The label under each circle is the
-      reason the width does not go lower -- "Labrador Retriever" needs room to
-      wrap to two lines without hyphenating. */
+      The width has since come down twice: 33% -> 24% (three across, 26px gap)
+      -> 19.2%, another 20% off the disc. The reclaimed space is not left as
+      slack, it goes into the gap, which rises 26px -> 40px to match. 19.2% then
+      read a touch too small against the labels, so it comes back up 4% to 20%
+      -- the extra width is taken out of the peek, not out of the gap, which
+      stays at 40px. On a 360px screen that is a 72px disc with 40px of air, so
+      three circles and a peek of the fourth still sit in view -- the same list,
+      smaller discs, further apart.
+
+      Percent widths rather than calc() thirds now: the slide no longer has to
+      divide the viewport evenly, since the rail is a free scroller and the
+      fourth circle is meant to be half-visible. The label under each circle is
+      what keeps the width from going lower still -- "Labrador Retriever" needs
+      room to wrap to two lines without hyphenating, so the caption is allowed
+      to run wider than the disc it sits under. */
 [id^="zigly-breed-"] .swiper-slide {
- flex: 0 0 calc((100% - 52px) / 3) !important;
-max-width: calc((100% - 52px) / 3) !important;
+  flex: 0 0 20% !important;
+  max-width: 20% !important;
+  min-width: 68px !important;
 }
 [id^="zigly-breed-"] .home-category-list-image-wrapper,
 [id^="zigly-breed-"] .category-list-image {
@@ -1238,6 +1249,20 @@ max-width: calc((100% - 52px) / 3) !important;
 [id^="zigly-breed-"] .home-category-list-card img {
   width: 100% !important;
   height: auto !important;
+}
+/* The disc shrank; the breed name did not. Rather than let "Labrador
+   Retriever" break into three lines inside a 69px slide, the caption is
+   allowed to spill into half the gap on either side -- it stays centred under
+   its own circle and still clears its neighbours' text. */
+[id^="zigly-breed-"] .home-category-list-card .category-list-content,
+[id^="zigly-breed-"] .home-category-list-card p,
+[id^="zigly-breed-"] .home-category-list-card h4,
+[id^="zigly-breed-"] .home-category-list-card a > span {
+  width: calc(100% + 32px) !important;
+  max-width: none !important;
+  margin-left: -16px !important;
+  margin-right: -16px !important;
+  text-align: center !important;
 }
 
 /* 2. Section headings rendered light grey and small; the reference has them
