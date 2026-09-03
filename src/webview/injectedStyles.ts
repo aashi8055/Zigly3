@@ -146,11 +146,15 @@ html body {
 .zigly-hp__grid::-webkit-scrollbar {
   display: none;
 }
-/* Just under half the viewport, so the next card peeks and the rail reads as
-   scrollable without a visible scrollbar. */
+/* Wider than the half-viewport the other rails use. Three lines came out of
+   this card -- brand, the "% Off" chip and the checkout-offers line (see the
+   block below) -- so the card is short enough now that a 46% width made it read
+   as a tall column of whitespace. 56% keeps the next card peeking, which is what
+   tells the customer the rail scrolls, and gives the two lines that remain --
+   the title and the price row -- room to sit on one line each. */
 .zigly-hp__grid > * {
-  flex: 0 0 46%;
-  max-width: 46%;
+  flex: 0 0 50%;
+  max-width: 50%;
   scroll-snap-align: start;
 }
 .zigly-hp__note {
@@ -1336,6 +1340,45 @@ body.zigly-listing .quick-add {
   display: block !important;
   margin-top: auto !important;
 }
+/* ...except in Hot Picks, where the button sits straight under the price.
+   margin-top:auto pins the button to the FOOT of the card, which is right when
+   the cards are stretched to a shared height -- it stops a two-line title next
+   to a one-line title staggering the buttons across the rail. But this rail's
+   cards lost three rows (see the trim block below), and auto absorbed every
+   pixel they freed: the card kept its old height and opened a band of empty
+   space between the price and the button instead of getting shorter.
+
+   The stagger that margin-top:auto exists to prevent is dealt with the other
+   way here, by align-items:start on the rail -- each card is then only as tall
+   as its own content, so there is no leftover space for auto to take. The
+   buttons no longer line up across the rail, which is the trade: a card with a
+   two-line title is one line taller than its neighbour. That is the correct
+   reading of "just below the price" -- the button follows the price on every
+   card rather than every button sitting at a shared floor.
+
+   The bestsellers rail opts out on the same terms: it is the same card, trimmed
+   by the same rules, scrolled the same way, and leaving auto on it would put
+   back exactly the gap the trim just took out.
+
+   The listing grid opts out too. That was a judgement call the other way at
+   first -- the grid is two columns down a page, cards sit side by side in rows
+   the eye compares directly, and an unpinned button gives each row a ragged
+   bottom edge, which is a worse trade there than in a rail you scroll past. It
+   was asked for anyway, explicitly and for every surface, so the gap wins over
+   the alignment and all three now read the same.
+
+   The grid needed the !important the rails did not. The theme's own rule is
+   .product-card-wrapper .quick-add { margin-top: auto !important }, and the
+   opt-out here was a plain margin-top:0 -- equal specificity, but !important
+   takes it, so the grid alone stayed pinned while the rails moved. The rails
+   were never really winning that fight either; they were escaping it, because
+   align-items:flex-start on the rail leaves no free space for auto to consume.
+   The grid has no such escape, so it wins the rule outright. */
+#zigly-hot-picks .quick-add,
+[id^="zigly-x-"] .quick-add,
+body.zigly-listing .quick-add {
+  margin-top: 0 !important;
+}
 #zigly-hot-picks .atc-wrapper,
 [id^="zigly-x-"] .atc-wrapper,
 body.zigly-listing .atc-wrapper {
@@ -1398,17 +1441,243 @@ body.zigly-listing .quick-add__submit *,
 [id^="zigly-x-"] .quick-add__submit * {
   color: #ED2427 !important;
 }
-/* Cards are a column with the button pinned to the bottom edge, so a two-line
-   title next to a one-line title does not stagger the buttons in a rail. */
-#zigly-hot-picks .card-wrapper,
-[id^="zigly-x-"] .card-wrapper {
-  height: 100%;
+/* Each rail card is as tall as its own content, not as tall as the tallest card
+   beside it. Without this the flex default (stretch) gives every card the full
+   row height and the button drops to the bottom of it again, whatever its own
+   margin says -- which is how the gap came back the first time.
+
+   Both rails, not the listing grid: see the margin-top note above for why the
+   grid keeps its shared floor. */
+.zigly-hp__grid,
+.zigly-bs__rail {
+  align-items: flex-start;
 }
+
+/* ------------------------------------------------------------------
+   Product cards: three lines fewer, and the height they were taking.
+
+   The theme's card stacks six things under the photo. Read off the live
+   collection page on 2026-09-03 (/collections/hot-picks-squeaker-toys), in
+   the order it draws them:
+
+     .product--brand--wrapper          "Zigly Lifestyle" -- the vendor, and the
+                                       same vendor on every card in the rail, so
+                                       it distinguishes nothing here.
+     .card__heading                    the product name. STAYS.
+     .card--variant--main-wrapper      the size chips, already hidden above.
+     .discount-container               a standalone "15% Off" chip on its own
+                                       line, above the price.
+     .custom_price__container          the struck-through compare-at and the
+                                       real price. STAYS.
+     .metafield__richtext_value_tag    "Enjoy offers on Checkout!"
+
+   The three named below are hidden. Nothing that carries a number the customer
+   buys on is touched: the compare-at price is still struck through beside the
+   sale price, so the saving is still on the card -- it is the second, redundant
+   statement of that same saving that goes.
+
+   Hidden, not removed, and hidden HERE rather than in ./hotPicks: the cards are
+   Zigly's own markup imported whole, and a script that deleted nodes out of them
+   would be this app editing the store's product card. A display:none leaves the
+   element in place for the theme's own scripts -- updateInfoFunc rewrites the
+   discount chip's text when a variant changes -- and it applies on the first
+   paint, so nothing flashes in and out as the rail loads.
+
+   All three surfaces that draw this card: the Hot Picks rail, the bestsellers
+   rail and the listing grid. They render the same markup from the same
+   collection pages -- /collections/all?sort_by=best-selling was read on
+   2026-09-03 and carries product--brand--wrapper, discount-container and
+   metafield__richtext_value_tag on all 21 of its cards, identical to the Hot
+   Picks source -- so a card that reads one way in a rail and another way in the
+   grid would be the inconsistency, not the fix.
+
+   NOT the product page's own recommendations, which are left alone: those cards
+   sit under a heading of their own on a page the customer has already committed
+   to, where the brand line and the offers note still say something.
+   ------------------------------------------------------------------ */
+#zigly-hot-picks .card-wrapper .product--brand--wrapper,
+#zigly-hot-picks .card-wrapper .discount-container,
+#zigly-hot-picks .card-wrapper .metafield__richtext_value_tag,
+[id^="zigly-x-"] .card-wrapper .product--brand--wrapper,
+[id^="zigly-x-"] .card-wrapper .discount-container,
+[id^="zigly-x-"] .card-wrapper .metafield__richtext_value_tag,
+body.zigly-listing .card-wrapper .product--brand--wrapper,
+body.zigly-listing .card-wrapper .discount-container,
+body.zigly-listing .card-wrapper .metafield__richtext_value_tag {
+  display: none !important;
+}
+/* The gaps those three left behind. The theme spaces the card's rows with
+   margins on each row, so hiding a row takes its text but not the margin above
+   the row that follows -- the card kept most of its old height and the title
+   floated in the middle of it. These pull the two rows that remain back
+   together, which is the "smaller height" half of the change. */
 #zigly-hot-picks .card-wrapper .product--below-content,
-[id^="zigly-x-"] .card-wrapper .product--below-content {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
+[id^="zigly-x-"] .card-wrapper .product--below-content,
+body.zigly-listing .card-wrapper .product--below-content {
+  padding-top: 6px !important;
+}
+#zigly-hot-picks .card-wrapper .card__heading,
+[id^="zigly-x-"] .card-wrapper .card__heading,
+body.zigly-listing .card-wrapper .card__heading {
+  margin: 0 0 4px !important;
+}
+#zigly-hot-picks .card-wrapper .price,
+[id^="zigly-x-"] .card-wrapper .price,
+body.zigly-listing .card-wrapper .price {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+#zigly-hot-picks .card-wrapper .custom_price__container,
+[id^="zigly-x-"] .card-wrapper .custom_price__container,
+body.zigly-listing .card-wrapper .custom_price__container {
+  margin: 0 !important;
+}
+
+/* ------------------------------------------------------------------
+   The gap that was never between the price and the button.
+
+   Hiding the four rows above closed the space they occupied and the button
+   still did not sit under the price. The reason is that the remaining gap was
+   never BETWEEN the two elements -- it was inside the price block, reserved by
+   the theme, and no amount of margin-trimming on the button could reach it.
+
+   Three rules do it, all read out of product-card.aio.min.css on 2026-09-03:
+
+     .only-price-align--wrapper   min-height: 38px
+     .custom_price__container     min-height: 27px; margin-top: 0.5rem
+     .quick-add                   margin: 0; margin-top: auto !important
+
+   The first is the bulk of it. The row holding "Rs 649  Rs 551" is held open to
+   38px while the text in it needs about 20 -- so the price sits at the top of a
+   box with roughly 18px of reserved emptiness under it, and the button, sitting
+   correctly flush against that box, is pushed down by all of it. The second
+   adds a 27px floor and a 0.5rem top margin of its own; the earlier rule here
+   set margin:0 on that container but said nothing about min-height, which is
+   why it only ever got part of the way.
+
+   The third is why the listing grid in particular refused to move: the theme
+   flags its margin-top:auto !important, and the opt-out written earlier was a
+   plain margin-top:0. Same specificity, but !important beats it, so on the grid
+   the button stayed pinned to the card's foot. It is restated below with
+   !important of its own.
+
+   min-height:0 rather than a height: the rows still size to whatever is in
+   them, they are simply no longer held open to a floor taller than their
+   content. A card whose price wraps to two lines still gets two lines.
+   ------------------------------------------------------------------ */
+#zigly-hot-picks .card-wrapper .only-price-align--wrapper,
+[id^="zigly-x-"] .card-wrapper .only-price-align--wrapper,
+body.zigly-listing .card-wrapper .only-price-align--wrapper {
+  min-height: 0 !important;
+  align-items: center !important;
+}
+#zigly-hot-picks .card-wrapper .custom_price__container,
+[id^="zigly-x-"] .card-wrapper .custom_price__container,
+body.zigly-listing .card-wrapper .custom_price__container {
+  min-height: 0 !important;
+  margin-top: 0 !important;
+}
+/* The compare-at price carries line-height:2.1, which is what makes the struck
+   price taller than the sale price beside it and pads the row from within. */
+#zigly-hot-picks .card-wrapper .price .compare-at-price,
+[id^="zigly-x-"] .card-wrapper .price .compare-at-price,
+body.zigly-listing .card-wrapper .price .compare-at-price {
+  line-height: 1.2 !important;
+}
+
+/* ------------------------------------------------------------------
+   The rest of it: the price block's reserved height.
+
+   The min-heights above were the small half. These two are the gap, and they
+   are why trimming margins kept moving the button by a pixel or two at a time
+   when the space left was tens of pixels. Both from product-card.aio.min.css,
+   read 2026-09-03:
+
+     .product-card-wrapper .card .price > *   height: 75px; min-height: 75px
+     .price__regular                          min-height: 80px
+
+   A fixed HEIGHT, not a floor -- so unlike everything else touched here it does
+   not shrink when the rows inside it are hidden. The theme reserves that space
+   because on its own pages the block can hold a membership-price panel, a
+   discount wrapper and a sold-out notice stacked under the price; it sizes for
+   the fullest case so cards line up in a grid. Our card shows one line of price
+   in it, and the other ~55px was empty space the button sat below.
+
+   That empty space is also why the price looked bottom-aligned in its box: the
+   same rule sets justify-content:flex-end, pushing the one row it contains to
+   the foot of the 75px. With the height released that no longer applies to
+   anything, but it is reset alongside so the row cannot end up hanging.
+
+   height:auto rather than a smaller number: nothing here should assert what a
+   price row measures -- it should measure its own contents, whatever the card
+   turns out to hold.
+   ------------------------------------------------------------------ */
+#zigly-hot-picks .card-wrapper .price > *,
+[id^="zigly-x-"] .card-wrapper .price > *,
+body.zigly-listing .card-wrapper .price > * {
+  height: auto !important;
+  min-height: 0 !important;
+  justify-content: flex-start !important;
+}
+#zigly-hot-picks .card-wrapper .price__regular,
+#zigly-hot-picks .card-wrapper .price__container,
+[id^="zigly-x-"] .card-wrapper .price__regular,
+[id^="zigly-x-"] .card-wrapper .price__container,
+body.zigly-listing .card-wrapper .price__regular,
+body.zigly-listing .card-wrapper .price__container {
+  height: auto !important;
+  min-height: 0 !important;
+}
+/* The button's own margin is set once, further down with the delivery row it
+   belongs to -- not restated here. Two rules for one property in one file is
+   how a value drifts: this block set 0, that one still said 0.5px, and because
+   it comes later in the file it silently won. */
+
+/* ------------------------------------------------------------------
+   Product cards: Add to Bag hard up against the price.
+
+   Two things sat in that gap, and only one of them was a margin.
+
+   The element first. Between the price and the button the theme draws
+   .estimate-delivery--date-wrapper -- a delivery-van icon and
+   <span id="product-card--delivery-date">, which on the served collection page
+   (read 2026-09-03) is EMPTY. The theme fills it from a script that runs on its
+   own pages and never runs against cards transplanted into this rail, so what
+   the card actually shows is a van icon with no date beside it: a row of height
+   with nothing in it and nothing coming. Hidden, like the other three -- and
+   for the same reason left in the DOM rather than removed, in case that script
+   ever does reach it.
+
+   That the span is empty is not a quirk of the transplant -- it is how Shopify
+   serves the page. All 21 delivery spans on
+   /collections/all?sort_by=best-selling were read on 2026-09-03 and every one
+   of them is empty in the HTML, so the listing grid draws the same dateless van
+   the rails do, on a page we do not transplant anything into. Hidden on all
+   three surfaces for that reason.
+
+   Then the margin: the shared fill rule above gives every Add to Bag
+   margin:8px 0 0. With the delivery row gone that margin is the last of the
+   gap, so it drops to a hairline -- the button carries a pale fill, and a value
+   this small reads as the button sitting directly under the price while still
+   keeping the two from merging into one block.
+   ------------------------------------------------------------------ */
+#zigly-hot-picks .card-wrapper .estimate-delivery--date-wrapper,
+[id^="zigly-x-"] .card-wrapper .estimate-delivery--date-wrapper,
+body.zigly-listing .card-wrapper .estimate-delivery--date-wrapper {
+  display: none !important;
+}
+#zigly-hot-picks .quick-add__submit,
+[id^="zigly-x-"] .quick-add__submit,
+body.zigly-listing .quick-add__submit {
+  margin-top: 0 !important;
+}
+/* .card-information wraps the price and the delivery row; with the row gone its
+   own bottom padding is the last thing holding the button off. */
+#zigly-hot-picks .card-wrapper .card-information,
+[id^="zigly-x-"] .card-wrapper .card-information,
+body.zigly-listing .card-wrapper .card-information {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
 }
 
 /* ------------------------------------------------------------------
