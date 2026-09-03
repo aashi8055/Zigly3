@@ -80,6 +80,16 @@ interface Props {
   cart: CartData | null;
   onChangeQty: (key: string, quantity: number) => void;
   onCheckout: () => void;
+  /**
+   * Checkout has been asked for and Shiprocket has not painted yet.
+   *
+   * This screen deliberately stays up for that second rather than coming off
+   * on the tap. The cart is an overlay over a live WebView, so uncovering it
+   * early shows the customer the dashboard underneath until Shiprocket's own
+   * screen arrives -- a page they did not ask for, flashing between the two
+   * they did. Held here, the only thing that changes is this bar.
+   */
+  checkoutPending?: boolean;
   onOpenItem: (url: string) => void;
   /** Leaves the empty cart for the dashboard. */
   onContinueShopping: () => void;
@@ -120,6 +130,7 @@ const CartScreen = ({
   cart,
   onChangeQty,
   onCheckout,
+  checkoutPending = false,
   onOpenItem,
   onContinueShopping,
 }: Props) => {
@@ -330,12 +341,34 @@ const CartScreen = ({
         </View>
         <Pressable
           onPress={onCheckout}
+          /*
+           * Not tappable twice. Shiprocket's flow takes about a second to
+           * appear, and a second tap in that window starts it again -- which
+           * is how a customer ends up with two checkout sessions over one
+           * cart.
+           */
+          disabled={checkoutPending}
           accessibilityRole="button"
+          accessibilityState={{disabled: checkoutPending, busy: checkoutPending}}
           accessibilityLabel={`Checkout, ${cart.itemCount} items, ${money(
             cart.totalPrice,
           )}`}
-          style={({pressed}) => [styles.checkout, pressed && styles.pressed]}>
-          <Text style={styles.checkoutText}>Checkout</Text>
+          style={({pressed}) => [
+            styles.checkout,
+            pressed && styles.pressed,
+            checkoutPending && styles.checkoutPending,
+          ]}>
+          {checkoutPending ? (
+            /*
+              The bar is the only thing that moves while the flow opens. A
+              spinner here rather than a cover over the whole screen: the cart
+              behind it is still true, still theirs, and blanking it would put
+              back the missing second this is here to fill.
+            */
+            <ActivityIndicator size="small" color={COLORS.red} />
+          ) : (
+            <Text style={styles.checkoutText}>Checkout</Text>
+          )}
         </Pressable>
       </View>
     </View>
@@ -532,6 +565,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pressed: {opacity: 0.85},
+  /*
+   * Held, not greyed out. The button keeps its ground and its height -- the
+   * spinner swaps in for the word at the same size -- so the bar does not
+   * change shape at the moment the customer is waiting on it.
+   */
+  checkoutPending: {opacity: 0.9},
   checkoutText: {
     fontFamily: FONT_FAMILY,
     color: COLORS.red,

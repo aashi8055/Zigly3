@@ -276,17 +276,143 @@ export const CART_CHECKOUT_SCRIPT = `
     return fallback;
   }
 
+  /**
+   * Shiprocket's own UI, once it is actually on screen.
+   *
+   * This is the difference between "the flow has been asked to start" and
+   * "there is something to look at", and the gap between them is about a
+   * second -- the signed, cart-scoped session Shiprocket opens is a network
+   * round trip, not a local render. Reporting the first as though it were the
+   * second is what made the dashboard flash: the native cart came off on the
+   * call, so for that second the customer was looking at the page the cart had
+   * been covering.
+   *
+   * Matched on what Shiprocket actually mounts, widest net first, and every
+   * candidate is size-checked -- their embed leaves a zero-height container in
+   * the document from page load, so mere presence proves nothing. A thing has
+   * appeared when it occupies most of the viewport, which a checkout does and
+   * a stray wrapper does not.
+   */
+  var CHECKOUT_SELECTORS = [
+    'iframe[src*="shiprocket"]',
+    'iframe[src*="fastrr"]',
+    'iframe[id*="fastrr"]',
+    'iframe[id*="shiprocket"]',
+    '[class*="fastrr"] iframe',
+    '[id*="fastrr-checkout"]',
+    '[class*="shiprocket-checkout"]',
+    '[id*="shiprocket-checkout"]'
+  ];
+
+  function checkoutVisible() {
+    var vh = window.innerHeight || 0;
+    var vw = window.innerWidth || 0;
+    if (!vh || !vw) { return false; }
+    for (var i = 0; i < CHECKOUT_SELECTORS.length; i++) {
+      /*
+       * Per selector, and never fatal. One selector that the engine will not
+       * parse, or one node with no box to measure, must not take the whole
+       * check down with it -- the failure mode of that is reporting the
+       * checkout unavailable when it is opening perfectly well, which is
+       * exactly the class of bug this file's history is made of.
+       */
+      try {
+        var nodes = document.querySelectorAll(CHECKOUT_SELECTORS[i]);
+        for (var j = 0; j < nodes.length; j++) {
+          if (typeof nodes[j].getBoundingClientRect !== 'function') { continue; }
+          var box = nodes[j].getBoundingClientRect();
+          // Most of the viewport, not merely non-zero: see above for the
+          // zero-height container this is here to reject.
+          if (box.height > vh * 0.5 && box.width > vw * 0.5) {
+            return true;
+          }
+        }
+      } catch (e) {}
+    }
+    return false;
+  }
+
+  /**
+   * How long to wait for that paint before reporting anyway.
+   *
+   * The cap is not optional. If Shiprocket's embed ever changes what it
+   * mounts, none of the selectors above match and the customer would otherwise
+   * be held behind the native cart indefinitely, staring at a Checkout button
+   * that appears to have done nothing. On that path the app falls back to
+   * exactly the old behaviour, flash included, which is the right way to be
+   * wrong. The app's own release (CHECKOUT_HOLD_CAP_MS in
+   * ../screens/ZiglyWebViewScreen) sits just past this, so this always gets to
+   * answer first.
+   */
+  var PAINT_WAIT_MS = 4000;
+
+  /**
+   * Report once: when Shiprocket has painted, or when waiting longer would
+   * cost the customer more than the flash does.
+   */
+  function reportWhenVisible(via) {
+    /**
+     * The clock, or nothing.
+     *
+     * A page without Date is not one this ships to, but a wait whose start
+     * time silently reads 0 would report back the instant it began -- and a
+     * wait with no deadline at all would never end. So the absence is
+     * answered explicitly, below, rather than arithmetically.
+     */
+    var now = function () {
+      // Only Date.now is asked about. Testing Date itself for 'function' was
+      // too tight: what this needs is the clock, not the constructor.
+      try {
+        return typeof Date.now === 'function' ? Date.now() : null;
+      } catch (e) {
+        return null;
+      }
+    };
+    var started = now();
+    var done = false;
+
+    function finish(painted) {
+      if (done) { return; }
+      done = true;
+      send({tag: 'cart-checkout-started', via: via, painted: !!painted});
+    }
+
+    function poll() {
+      if (done) { return; }
+      if (checkoutVisible()) { finish(true); return; }
+      var t = now();
+      // No clock means no wait: report and let the app uncover, rather than
+      // polling forever with nothing able to stop it.
+      if (t === null || started === null) { finish(false); return; }
+      if (t - started > PAINT_WAIT_MS) { finish(false); return; }
+      /*
+       * rAF rather than a fixed interval: the frame Shiprocket paints on is
+       * the frame this wants to answer on, and anything coarser adds its own
+       * delay on top of the one being removed. If it is not there to schedule
+       * with, report now -- the checkout HAS been started, and the only thing
+       * this wait ever buys is a tidier hand-off.
+       */
+      if (typeof window.requestAnimationFrame !== 'function') {
+        finish(false);
+        return;
+      }
+      window.requestAnimationFrame(poll);
+    }
+
+    poll();
+  }
+
   try {
     var called = callGlobal();
     if (called) {
-      send({tag: 'cart-checkout-started', via: called});
+      reportWhenVisible(called);
       return;
     }
 
     var btn = findControl();
     if (btn) {
       btn.click();
-      send({tag: 'cart-checkout-started', via: 'control'});
+      reportWhenVisible('control');
       return;
     }
 
