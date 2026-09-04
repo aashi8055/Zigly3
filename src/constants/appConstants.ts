@@ -230,8 +230,23 @@ export const BUTTON_FILL = '#FDE8E8';
  */
 export const LISTING_PATHS = ['/collections/', '/search'];
 
-/** Minimum time the splash stays up, so it never flashes. */
-export const SPLASH_MIN_MS = 900;
+/**
+ * Minimum time the splash stays up, so it never flashes.
+ *
+ * 900 was chosen when the dashboard could not possibly be ready that soon, so
+ * the floor was free -- it was never the thing being waited on. It is now: the
+ * delayed restyle passes no longer re-ship the whole payload (see
+ * RESTYLE_REPEAT) and the ready test no longer waits for two below-the-fold
+ * sections (see readySignal), so on a warm cache the dashboard can report
+ * itself assembled well inside a second, and a 900ms floor would be the entire
+ * remaining launch time.
+ *
+ * 400 keeps what the floor is actually for -- a fast launch still reads as a
+ * deliberate brand moment rather than a frame of white -- without being the
+ * bottleneck. It is a floor, not a target: on a cold launch the dashboard is
+ * still what decides, and this number does nothing.
+ */
+export const SPLASH_MIN_MS = 400;
 
 /**
  * Hard cap on the splash.

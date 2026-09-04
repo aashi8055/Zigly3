@@ -74,14 +74,45 @@ header[data-hide-header-in-app] details[open] + .menu-drawer__overlay {
 `;
 
 /**
- * How long the paint gate may hold the page back on its own.
+ * How long the paint gate may hold an INNER page back on its own.
  *
  * The gate is lifted by the app's own stylesheet the moment that lands, so this
- * is only the failure case: an injection that never ran. Kept under
- * PAGE_COVER_CAP_MS so the app's cover is still over the page when the gate
- * gives up, rather than the customer watching a bare website appear.
+ * is only the failure case: an injection that never ran. It must stay under the
+ * app's own cover deadline, so that when the gate gives up there is still
+ * something over the page rather than the customer watching a bare website
+ * appear. For an inner page that deadline is PAGE_COVER_CAP_MS (4200), and 2500
+ * sits comfortably inside it.
+ *
+ * See PAINT_GATE_HOME_MAX_MS for why the dashboard cannot share this number.
  */
 export const PAINT_GATE_MAX_MS = 2500;
+
+/**
+ * The same deadline, for the dashboard -- and the bug that came of not having
+ * one.
+ *
+ * ONE CONSTANT WAS SERVING TWO PAGES WITH DIFFERENT DEADLINES. 2500 was chosen
+ * against PAGE_COVER_CAP_MS (4200), which is the cover over an INNER page. The
+ * dashboard is not covered on that clock: its splash runs to SPLASH_MAX_MS
+ * (7000) and its cover to HOME_COVER_MAX_MS (9000). So on a slow first launch --
+ * cold cache, no learned section ids, nothing warm -- the gate lifted at 2.5s
+ * and the document became the raw mobile website roughly four seconds before
+ * anything else was ready to take over from it. That is the "shows the webview
+ * for 1s on first open" report.
+ *
+ * Raising the single constant to 6000 was the first attempt and it was wrong in
+ * the other direction: __tests__/revealBudget.test.ts caught it immediately,
+ * because 6000 is past the 4200 cover an inner page actually has, which would
+ * have created the very inversion that file exists to prevent -- on every inner
+ * page, to fix the dashboard. Hence two numbers.
+ *
+ * 6000 is inside both of the dashboard's own deadlines with a margin for the
+ * signal to cross the bridge. The real fix for the WAIT is not this constant --
+ * it is that the dashboard is ready far sooner now (see RESTYLE_REPEAT in
+ * ./injectedStyles and homeReady in ./readySignal). This only makes sure the
+ * failure case fails behind a cover instead of in front of one.
+ */
+export const PAINT_GATE_HOME_MAX_MS = 6000;
 
 /** The style node that holds the page back. Removed by the app's own CSS. */
 export const PAINT_GATE_ID = 'zigly-paint-gate';
@@ -226,10 +257,19 @@ export const EARLY_HEADER_CSS = `
       // document. Skipped if the gate has already been lifted by then.
       document.addEventListener('DOMContentLoaded', install, {once: true});
 
-      // The deadline. A page whose injection never ran must still be shown.
+      /*
+       * The deadline. A page whose injection never ran must still be shown.
+       *
+       * Per destination, because the app's own cover over this page is per
+       * destination: the dashboard is behind a splash to 7s and a cover to 9s,
+       * an inner page behind a cover to 4.2s. Giving up before the cover that
+       * is meant to catch this is how the raw site reaches the screen -- see
+       * PAINT_GATE_HOME_MAX_MS.
+       */
+      var gateHome = p === '' || p === '/' || p === '/index';
       setTimeout(function () {
         ${LIFT_PAINT_GATE}
-      }, ${PAINT_GATE_MAX_MS});
+      }, gateHome ? ${PAINT_GATE_HOME_MAX_MS} : ${PAINT_GATE_MAX_MS});
     }
   } catch (e) {}
 })();

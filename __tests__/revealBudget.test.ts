@@ -34,7 +34,10 @@ import {
   SPLASH_READY_GRACE_MS,
 } from '../src/constants/appConstants';
 import {PAGE_COVER_CAP_MS} from '../src/components/PageCover';
-import {PAINT_GATE_MAX_MS} from '../src/webview/headerBridge';
+import {
+  PAINT_GATE_HOME_MAX_MS,
+  PAINT_GATE_MAX_MS,
+} from '../src/webview/headerBridge';
 import {READY_SIGNAL_SCRIPT} from '../src/webview/readySignal';
 
 /**
@@ -145,10 +148,44 @@ describe('an inner page answers before its cover gives up', () => {
 });
 
 describe('the document-level gate sits inside the native one', () => {
-  it('lifts before the cover it is underneath', () => {
+  /*
+   * There are two of these, and there had to be. The gate is the page holding
+   * ITSELF invisible until the app's stylesheet lands, and its self-lift is the
+   * failure case -- an injection that never ran. So it must give up while the
+   * app's own cover is still there to catch it, and the app's cover is a
+   * DIFFERENT deadline per destination: 4200 over an inner page, 7000/9000 over
+   * the dashboard.
+   *
+   * One constant served both for a long time, set for the inner page, and on the
+   * dashboard it gave up roughly four seconds early -- the raw mobile website on
+   * screen on a slow first launch. Raising that one constant to 6000 then broke
+   * the inner page instead, which is what these two assertions now pin down from
+   * both sides.
+   */
+  it('lifts before the cover over an inner page', () => {
     // Already asserted in paintGate.test.ts; repeated here so this file is a
     // complete statement of the budget rather than most of one.
     expect(PAINT_GATE_MAX_MS).toBeLessThan(PAGE_COVER_CAP_MS);
+  });
+
+  it('lifts before the splash over the dashboard', () => {
+    /*
+     * The dashboard's gate races the splash, not the inner-page cover. The
+     * splash is what the customer is looking at, so the gate must not give up
+     * while it is still up -- and SPLASH_MAX_MS is the later of the two splash
+     * deadlines, so clearing it clears the grace too.
+     */
+    expect(PAINT_GATE_HOME_MAX_MS).toBeLessThan(SPLASH_MAX_MS);
+  });
+
+  it('leaves the dashboard gate a margin, not a photo finish', () => {
+    expect(SPLASH_MAX_MS - PAINT_GATE_HOME_MAX_MS).toBeGreaterThanOrEqual(500);
+  });
+
+  it('gives the dashboard the later of the two gates', () => {
+    // The whole point of splitting them. If these ever come back level, the
+    // dashboard has silently inherited the inner page's deadline again.
+    expect(PAINT_GATE_HOME_MAX_MS).toBeGreaterThan(PAINT_GATE_MAX_MS);
   });
 });
 
@@ -215,20 +252,35 @@ describe('the whole budget, in order', () => {
      */
     const ladder = [
       ['splash floor', SPLASH_MIN_MS],
-      ['paint gate self-lift', PAINT_GATE_MAX_MS],
+      ['inner page gate self-lift', PAINT_GATE_MAX_MS],
       ['inner page answers', INNER_MS()],
-      ['cover cap', PAGE_COVER_CAP_MS],
+      ['inner page cover cap', PAGE_COVER_CAP_MS],
       ['dashboard answers', HOME_MS()],
+      ['dashboard gate self-lift', PAINT_GATE_HOME_MAX_MS],
       ['splash grace', SPLASH_READY_GRACE_MS],
       ['splash hard cap', SPLASH_MAX_MS],
       ['dashboard cover hard cap', HOME_COVER_MAX_MS],
       ['dashboard watcher hard stop', HOME_STOP_MS()],
     ] as const;
 
+    /*
+     * Compared as numbers, not by looking each value back up by name.
+     *
+     * The original form mapped the sorted values back to names with
+     * `ladder.find(([, v]) => v === ms)`, which returns the FIRST entry holding
+     * that value -- so two gates that legitimately share a millisecond (the
+     * dashboard's gate self-lift and the splash grace are both 6000) resolved to
+     * the same name twice and the assertion failed on a budget that was in fact
+     * correctly ordered. Non-decreasing is the property actually wanted: ties
+     * are fine, an inversion is not.
+     */
     const values = ladder.map(([, ms]) => ms);
-    const sorted = [...values].sort((a, b) => a - b);
-    expect(ladder.map(([name]) => name)).toEqual(
-      sorted.map(ms => ladder.find(([, v]) => v === ms)![0]),
-    );
+    const inversions = ladder
+      .slice(1)
+      .map(([name, ms], i) =>
+        ms < values[i] ? `${name} (${ms}) sits before ${ladder[i][0]} (${values[i]})` : null,
+      )
+      .filter(Boolean);
+    expect(inversions).toEqual([]);
   });
 });

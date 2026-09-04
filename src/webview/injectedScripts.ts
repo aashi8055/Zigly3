@@ -8,6 +8,13 @@
  *   - never throw: a failed selector is a warning, not a broken store
  */
 import {MOBILE_CSS, buildStyleInjection} from './injectedStyles';
+
+/**
+ * The cheap repeat pass, re-exported so the screen has one place to import
+ * injections from. See RESTYLE_REPEAT in ./injectedStyles for why the delayed
+ * passes send this instead of the whole bundle.
+ */
+export {RESTYLE_REPEAT} from './injectedStyles';
 import {HOME_LAYOUT_SCRIPT} from './homeLayout';
 import {PAGE_CACHE_SCRIPT} from './pageCache';
 import {BANNER_CAROUSEL_SCRIPT} from './bannerCarousel';
