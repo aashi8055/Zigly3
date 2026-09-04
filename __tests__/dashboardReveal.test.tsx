@@ -30,6 +30,7 @@ import {coverVariantFor} from '../src/screens/ZiglyWebViewScreen';
 import {READY_SIGNAL_SCRIPT} from '../src/webview/readySignal';
 import {HOME_LAYOUT_SCRIPT} from '../src/webview/homeLayout';
 import {EXTRA_SECTIONS_SCRIPT} from '../src/webview/extraSections';
+import {MOBILE_CSS} from '../src/webview/injectedStyles';
 import {START_URL, ZIGLY_ORIGIN} from '../src/constants/appConstants';
 
 const trees: ReactTestRenderer.ReactTestRenderer[] = [];
@@ -139,8 +140,40 @@ describe('the signal waits for the app’s own work', () => {
     expect(READY_SIGNAL_SCRIPT).toContain('if (!settled(cats)) { return false; }');
   });
 
-  it('waits for the coupon strip, the one transplant above the fold', () => {
-    expect(READY_SIGNAL_SCRIPT).toContain("getElementById('zigly-x-coupon')");
+  it('no longer waits for the coupon strip, which is below the fold', () => {
+    /*
+     * This assertion is the inverse of what it used to be, and the reversal is
+     * the point.
+     *
+     * The strip was described here as "the one transplant above the fold". It is
+     * not: it sits below the banner, and the breed rail below that, so holding
+     * the splash for either meant holding it for content the customer cannot see
+     * at the moment it lifts. On a cold first launch that was seconds of white
+     * screen bought for nothing.
+     *
+     * The shift that waiting used to hide is now prevented properly -- both
+     * slots reserve their height in ../src/webview/injectedStyles, so the
+     * sections land into space already held and nothing moves. See homeReady in
+     * ../src/webview/readySignal.
+     */
+    expect(READY_SIGNAL_SCRIPT).not.toContain("getElementById('zigly-x-coupon')");
+    expect(READY_SIGNAL_SCRIPT).not.toContain('zigly-breed-dogs');
+  });
+
+  it('still waits for everything that IS above the fold', () => {
+    // The banner and the category rail, which are what the reveal exposes.
+    expect(READY_SIGNAL_SCRIPT).toContain('homepage_banner');
+    expect(READY_SIGNAL_SCRIPT).toContain('home_category_section');
+  });
+
+  it('reserves the height of the two slots it stopped waiting for', () => {
+    /*
+     * The other half of that trade, and it must not be dropped independently:
+     * revealing before these land is only safe because the space is held. If
+     * these rules go, the sections shove the dashboard down under the thumb.
+     */
+    expect(MOBILE_CSS).toContain('#zigly-x-coupon:not([data-state="ready"])');
+    expect(MOBILE_CSS).toContain('[id^="zigly-breed-"]:not([data-state="ready"])');
   });
 
   it('treats an absent slot as settled, not as pending', () => {

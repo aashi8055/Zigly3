@@ -272,6 +272,35 @@ html body {
 }
 
 /* ------------------------------------------------------------------
+   Reserved height for the two dashboard slots that land after the reveal.
+
+   The splash now lifts on the above-the-fold test alone (see readySignal.ts),
+   so the coupon strip and the breed rails arrive into a dashboard the customer
+   is already looking at. Holding space for them is what makes that safe: an
+   empty slot with no height means the strip landing shoves everything below it
+   down, and a shift under the thumb reads as the page still building -- which
+   is what waiting for them used to hide.
+
+   Sized to what each one actually renders, so the space is neither a visible
+   hole before nor a jump after:
+
+     coupon strip   one row of coupon cards
+     breed rail     a 22px heading, a disc at 20vw, and a two-line caption
+
+   min-height, not height: if Zigly changes either section the slot grows to
+   whatever arrives rather than clipping it. And both are dropped once the
+   section is in -- data-state="ready" is set by the placing module -- so a
+   section that renders SHORTER than the reservation does not leave a gap under
+   itself either.
+   ------------------------------------------------------------------ */
+#zigly-x-coupon:not([data-state="ready"]) {
+  min-height: 96px;
+}
+[id^="zigly-breed-"]:not([data-state="ready"]) {
+  min-height: calc(20vw + 92px);
+}
+
+/* ------------------------------------------------------------------
    Breed Ready Picks rails (see breedSection.ts).
 
    Their Swiper is deliberately not initialised: it runs in loop mode and clones
@@ -2344,6 +2373,65 @@ export const buildStyleInjection = (css: string): string => `
       console.warn('[ZiglyWebView] style injection failed:', e);
     }
   }
+})();
+true;
+`;
+
+/**
+ * The repeat pass: re-assert this app's presentation without re-shipping it.
+ *
+ * WHY THIS EXISTS. `applyStyles` re-injects on RESTYLE_DELAYS because the page
+ * keeps loading images and third-party scripts well after onLoadEnd, and a late
+ * arrival can restyle the header after a single pass has run. That reasoning is
+ * sound and this keeps it.
+ *
+ * What it does not keep is the cost. The repeat used to be the WHOLE payload --
+ * 543 KB, of which 98 KB is MOBILE_CSS -- so the six delayed passes crossed the
+ * bridge with 3.2 MB of JavaScript whose only job was to find its own work
+ * already done and return. Every section builder in that bundle is idempotent
+ * and no-ops on pass two (the seven-pass tests across this repo are what prove
+ * it); the stylesheet compares equal and returns; the ready watcher is behind
+ * its own global. So the repeat was paying full parse cost for nothing.
+ *
+ * This payload asserts the two things that genuinely can be undone by a late
+ * script, and nothing else:
+ *
+ *   1. The stylesheet node is still present, still last in <head>, and still
+ *      ours. Checked by id -- the 98 KB of CSS is NOT re-sent. A theme script
+ *      that appended its own <style> after ours wins on equal specificity, so
+ *      moving our node back to the end is the actual repair.
+ *   2. The paint gate is lifted. Belt and braces: if the full payload's own
+ *      lift was missed, this is a second chance at it, and a page held
+ *      invisible is the one failure worse than a page held unstyled.
+ *
+ * If the stylesheet is missing entirely -- a full navigation discarded it and
+ * the main payload has not landed yet -- this reports so, and `applyStyles`
+ * sends the real thing. It never tries to rebuild the stylesheet from nothing.
+ */
+export const RESTYLE_REPEAT = `
+(function () {
+  try {
+    var ID = 'zigly-app-styles';
+    var node = document.getElementById(ID);
+    var head = document.head || document.documentElement;
+
+    if (node && head && node.parentNode === head) {
+      // Ours is not last: a script appended a <style> after it, which beats us
+      // on equal specificity. Moving rather than rewriting -- the CSS text is
+      // already correct, it is the cascade position that regressed.
+      if (head.lastChild !== node) { head.appendChild(node); }
+    } else if (!node) {
+      // Nothing of ours on this document. Tell the app so it sends the payload
+      // that can actually build it; do not attempt a partial here.
+      try {
+        window.ReactNativeWebView.postMessage(
+          JSON.stringify({tag: 'restyle-missing'})
+        );
+      } catch (e) {}
+    }
+
+    ${LIFT_PAINT_GATE}
+  } catch (e) {}
 })();
 true;
 `;

@@ -21,12 +21,13 @@
  */
 import {
   EARLY_HEADER_CSS,
+  PAINT_GATE_HOME_MAX_MS,
   PAINT_GATE_ID,
   PAINT_GATE_MAX_MS,
 } from '../src/webview/headerBridge';
 import {MOBILE_CSS, buildStyleInjection} from '../src/webview/injectedStyles';
 import {PAGE_COVER_CAP_MS} from '../src/components/PageCover';
-import {COLORS} from '../src/constants/appConstants';
+import {COLORS, SPLASH_MAX_MS} from '../src/constants/appConstants';
 
 describe('installing the gate', () => {
   it('hides the document rather than removing it', () => {
@@ -113,13 +114,35 @@ describe('lifting the gate', () => {
   });
 
   it('lifts itself if the injection never ran', () => {
-    expect(EARLY_HEADER_CSS).toContain(`}, ${PAINT_GATE_MAX_MS});`);
+    /*
+     * Two deadlines, chosen by path at runtime: the dashboard sits behind a
+     * splash to 7s while an inner page is only covered to 4.2s, so one number
+     * cannot serve both. See PAINT_GATE_HOME_MAX_MS in
+     * ../src/webview/headerBridge for the bug that came of it trying to.
+     */
+    expect(EARLY_HEADER_CSS).toContain(
+      `}, gateHome ? ${PAINT_GATE_HOME_MAX_MS} : ${PAINT_GATE_MAX_MS});`,
+    );
+  });
+
+  it('picks its deadline off the path, not off the app', () => {
+    // The page decides, because the gate is the page's own. If this selector
+    // ever drifts from the one the ready watcher uses, the dashboard would take
+    // the inner page's deadline again without any test failing.
+    expect(EARLY_HEADER_CSS).toContain(
+      "var gateHome = p === '' || p === '/' || p === '/index';",
+    );
   });
 
   it('gives up before the app’s cover does', () => {
     // Otherwise the gate hands the customer a bare website at the very end of
     // the cover -- which is the thing the cover was raised to hide.
     expect(PAINT_GATE_MAX_MS).toBeLessThan(PAGE_COVER_CAP_MS);
+  });
+
+  it('gives up before the splash over the dashboard does', () => {
+    // The dashboard's copy of the assertion above. Its cover is the splash.
+    expect(PAINT_GATE_HOME_MAX_MS).toBeLessThan(SPLASH_MAX_MS);
   });
 });
 

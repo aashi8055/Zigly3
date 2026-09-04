@@ -166,20 +166,33 @@ ${LISTING_TEST_JS}
      */
     if (!settled(cats)) { return false; }
 
-    // The first breed rail is the first transplant the user sees.
-    var breeds = document.getElementById('zigly-breed-dogs');
-    if (breeds && breeds.getAttribute('data-state') !== 'ready') { return false; }
-
     /*
-     * The coupon strip, which sits directly below the banner.
+     * ABOVE THE FOLD IS THE WHOLE TEST, AND THAT IS DELIBERATE.
      *
-     * The only eagerly-loaded transplant (see ../webview/extraSections), so it
-     * is the only one of that set that lands inside the first screen. Its slot is
-     * reserved with no height, so it arriving after the reveal pushed everything
-     * below it down -- a shift the customer reads as the page still building.
+     * This used to wait for the dog breed rail and the coupon strip as well.
+     * Both are correct things to want and neither is above the fold: the strip
+     * sits below the banner and the rail below that, so the splash was being
+     * held for content the customer cannot see at the moment it lifts. On a
+     * cold first launch that was seconds of white screen bought for nothing.
+     *
+     * What is above the fold is the native header, the banner and the category
+     * circles -- and the circles are tested for BEING THE RAIL THE APP KEEPS
+     * (settled, above), which is the check that actually prevents a visible
+     * swap. That is the guarantee worth holding the splash for; the rest is
+     * guaranteeing that content further down has arrived before showing content
+     * further up.
+     *
+     * The shift this used to prevent is now prevented properly. The original
+     * comment here was right that the coupon slot reserves no height, so a
+     * strip arriving after the reveal pushed everything below it down. Waiting
+     * for it hid that shift by not revealing until it had happened; the slots
+     * now carry a reserved min-height instead (see the zigly-x-coupon and
+     * zigly-breed rules in ./injectedStyles), so the strip lands INTO space
+     * already held for it and nothing moves either way.
+     *
+     * If a future section lands above the fold, it belongs in this function.
+     * Nothing below the fold does.
      */
-    if (!settled(document.getElementById('zigly-x-coupon'))) { return false; }
-
     return true;
   }
 

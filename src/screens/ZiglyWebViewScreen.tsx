@@ -76,7 +76,7 @@ import {
   parseUrl,
   showsSortFilterBar,
 } from '../utils/urlUtils';
-import {getInjectionForUrl} from '../webview/injectedScripts';
+import {RESTYLE_REPEAT, getInjectionForUrl} from '../webview/injectedScripts';
 import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../webview/prefetch';
 import {
   loadSectionIds,
@@ -1312,12 +1312,30 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // phrases is the whole list.
         injectInto(target, REPORT_SEARCH_PLACEHOLDERS);
       }
-      // Re-apply on a short schedule. The page keeps loading images and
-      // third-party scripts well after onLoadEnd, and those late arrivals can
-      // restyle the header after a single pass. The script is idempotent, so
-      // repeating it is safe and cheap.
+      // The full payload, once. Every module in it is idempotent and every one
+      // of them no-ops on a second run, so a second full pass buys nothing.
+      injectInto(target, script);
+      /*
+       * Re-assert on a short schedule -- with RESTYLE_REPEAT, not `script`.
+       *
+       * The page keeps loading images and third-party scripts well after
+       * onLoadEnd, and a late arrival can append a <style> after ours and win on
+       * equal specificity. That is the real regression these passes exist to
+       * repair, and RESTYLE_REPEAT repairs exactly it.
+       *
+       * What it does not do is re-ship the bundle. `script` is 543 KB, of which
+       * 98 KB is MOBILE_CSS, and sending it six more times put 3.2 MB of
+       * JavaScript across the bridge per page load for passes whose entire
+       * effect was to find their work already done and return -- on the one
+       * thread that also has to assemble the sections `dashboard-ready` is
+       * waiting for. That parse cost was a direct tax on time-to-dashboard.
+       *
+       * If a pass finds no stylesheet of ours at all it reports
+       * 'restyle-missing' and the handler re-sends the real payload, so the
+       * one case that genuinely needs the bundle still gets it.
+       */
       RESTYLE_DELAYS.forEach(ms => {
-        setTimeout(() => injectInto(target, script), ms);
+        setTimeout(() => injectInto(target, RESTYLE_REPEAT), ms);
       });
     },
     [injectInto],
@@ -3746,6 +3764,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 saveSectionIds(data.ids, sectionIds.current).then(merged => {
                   sectionIds.current = merged;
                 });
+              } else if (data && data.tag === 'restyle-missing') {
+                /*
+                 * A repeat pass found no stylesheet of ours on the document.
+                 *
+                 * The delayed passes send RESTYLE_REPEAT, which asserts the
+                 * cascade position of a stylesheet that is already there and
+                 * deliberately cannot build one -- it does not carry the CSS.
+                 * So the one case that needs the full payload asks for it, and
+                 * this is the only path that re-sends 543 KB after load end.
+                 */
+                warn('stylesheet missing on home; re-sending payload');
+                const full = getInjectionForUrl(START_URL);
+                if (full) {
+                  injectInto('home', full);
+                }
               } else if (data && data.tag === 'cart-count') {
                 setCartCount(typeof data.n === 'number' ? data.n : 0);
               } else if (data && data.tag === 'menu') {
@@ -4277,6 +4310,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       // Shopping pages carry the band too; see the dashboard's
                       // handler above.
                       openSearch();
+                    } else if (data && data.tag === 'restyle-missing') {
+                      // As on the dashboard: the repeat pass cannot build a
+                      // stylesheet, so the layer asks for the real payload.
+                      // Keyed off this layer's own url, because the payload is
+                      // skipped outright on checkout.
+                      const full = getInjectionForUrl(layer.source);
+                      if (full) {
+                        injectInto(layer.key, full);
+                      }
                     } else if (data && data.tag === 'cart-count') {
                       setCartCount(typeof data.n === 'number' ? data.n : 0);
                     } else if (
