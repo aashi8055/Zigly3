@@ -1,8 +1,9 @@
 /**
  * The two glyphs that are paths rather than geometry.
  *
- * The heart is the most-seen icon in the app -- the bottom bar, the header, the
- * account screen and every wishlist tile -- and it is not ours: the path is
+ * The heart is the most-seen icon in the app -- the bottom bar's wishlist tab,
+ * the header, the account screen and every wishlist tile -- and it is not ours:
+ * the path is
  * lifted verbatim from the `swym-add-to-wishlist` button Zigly's theme renders
  * on every product card. So what is defended is that it stays *theirs*, drawn
  * once, in both states. There had been three copies of the old stacked-View
@@ -15,6 +16,7 @@
  */
 import React from 'react';
 import ReactTestRenderer, {type ReactTestInstance} from 'react-test-renderer';
+import {Image} from 'react-native';
 import {Path} from 'react-native-svg';
 import {BasketIcon, HeartOutline, HeartShape} from '../src/components/glyphs';
 import NativeHeader from '../src/components/NativeHeader';
@@ -147,17 +149,30 @@ describe('there is one heart, not four', () => {
     expect(drawn).toHaveLength(3);
   });
 
-  it('the bottom bar draws both states from the same path', () => {
+  it('the bottom bar draws its heart from that path', () => {
     const drawn = paths(
       render(<BottomNav active="wishlist" onSelect={() => {}} />).root,
     );
-    // The brand mark on the home tab, and the wishlist tab.
-    expect(drawn.length).toBeGreaterThanOrEqual(2);
-    for (const heart of drawn) {
-      expect(heart.d).toBe(ZIGLY_HEART);
+    // The wishlist tab, and only it. The home tab used to draw a second,
+    // filled copy of this path as the brand mark; it now carries Zigly's own
+    // artwork instead, so a heart reappearing here is the stacked-View
+    // construction creeping back rather than a tab legitimately drawing one.
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].d).toBe(ZIGLY_HEART);
+    // Outlined: nothing is saved in this render.
+    expect(drawn[0].fill).toBe('none');
+  });
+
+  it('the home and account tabs are artwork, not tinted glyphs', () => {
+    // Both are brand images with colours of their own, so neither may be
+    // recoloured by the active/idle tint the other three tabs take.
+    const bar = render(<BottomNav active="home" onSelect={() => {}} />).root;
+    const sources = bar
+      .findAllByType(Image, {deep: true})
+      .map(n => n.props.source);
+    expect(sources).toHaveLength(2);
+    for (const source of sources) {
+      expect(source).toBeTruthy();
     }
-    // One filled (the red brand mark), one outlined (the tab).
-    expect(drawn.some(h => h.fill !== 'none')).toBe(true);
-    expect(drawn.some(h => h.fill === 'none')).toBe(true);
   });
 });

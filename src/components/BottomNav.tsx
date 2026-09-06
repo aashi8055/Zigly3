@@ -21,19 +21,28 @@
  * Zigly's decision; only Wishlist and Account are native screens, because both
  * of those already exist natively in this app.
  *
- * Icons are geometry, like everywhere else here -- see ./glyphs.
+ * Icons are geometry, like everywhere else here -- see ./glyphs -- except
+ * the two that carry brand artwork: Zigly's heart mark and the account
+ * avatar are supplied images, and are the only tabs that do not take the
+ * active/idle tint.
  */
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { COLORS, FONT_FAMILY, TABS } from '../constants/appConstants';
 import type { TabKey } from '../constants/appConstants';
-import {
-  GridIcon,
-  HeartOutline,
-  HeartShape,
-  PawIcon,
-  PersonIcon,
-} from './glyphs';
+import { GridIcon, HeartOutline, PawIcon } from './glyphs';
+
+/**
+ * The two tabs that carry artwork rather than geometry.
+ *
+ * Both files are the supplied art cropped to its own opaque bounds and padded
+ * to a square, so the framing lives in the asset rather than in a per-call-site
+ * nudge. Cropping is what makes them fit: as supplied, the heart occupied
+ * 272x195 of a 574x434 canvas and the avatar 262x262 of 640x390, so dropping
+ * either in whole would have drawn a small icon adrift in its own empty margin.
+ */
+const HOME_ART = require('../assets/nav-home-heart.png');
+const ACCOUNT_ART = require('../assets/nav-account.png');
 
 interface Props {
   /** Which tab is lit, or null when the user is somewhere no tab describes. */
@@ -58,9 +67,11 @@ const IDLE = '#5A6472';
 const TabIcon = ({ tab, color }: { tab: TabKey; color: string }) => {
   switch (tab) {
     case 'home':
-      // The brand's own mark is the red heart; it stays red on both states,
-      // as the reference app has it.
-      return <HeartShape size={22} color={COLORS.red} />;
+      // The brand's own mark. Artwork, not a tinted glyph, so it keeps its own
+      // colours on both states -- as the reference app has it.
+      return (
+        <Image source={HOME_ART} style={styles.art} resizeMode="contain" />
+      );
     case 'collections':
       return <GridIcon size={21} color={color} />;
     case 'breeds':
@@ -68,7 +79,15 @@ const TabIcon = ({ tab, color }: { tab: TabKey; color: string }) => {
     case 'wishlist':
       return <HeartOutline size={22} color={color} />;
     default:
-      return <PersonIcon size={23} color={color} />;
+      // The avatar is a full-bleed disc: it is round to its own edges, so the
+      // box is clipped to a circle rather than left square on the bar.
+      return (
+        <Image
+          source={ACCOUNT_ART}
+          style={[styles.art, styles.avatar]}
+          resizeMode="cover"
+        />
+      );
   }
 };
 
@@ -134,6 +153,10 @@ const styles = StyleSheet.create({
     paddingBottom: 7,
     gap: 4,
   },
+  /* The artwork tabs. 23 square matches the glyphs' own optical size, so the
+     five icons sit on one line and the labels below them stay level. */
+  art: { width: 23, height: 23 },
+  avatar: { borderRadius: 11.5 },
   /* Wraps the glyph only, so the badge has something glyph-sized to sit on.
      No size of its own: the icons state their own, and a box here would either
      clip one or pad the row. */

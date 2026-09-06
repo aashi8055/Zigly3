@@ -37,6 +37,7 @@ import {
   Alert,
   AppState,
   BackHandler,
+  Keyboard,
   Linking,
   Pressable,
   StyleSheet,
@@ -1551,6 +1552,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   const closeSearch = useCallback(() => {
+    /*
+     * The keyboard goes with the screen that raised it.
+     *
+     * Unmounting the TextInput does not lower it: the input is gone before the
+     * OS is told focus was surrendered, so the keyboard stays up over whatever
+     * this closes onto -- a product page, a collection, the dashboard -- until
+     * the customer presses back. Dismissed here rather than in each caller
+     * because every way out of search funnels through this one function:
+     * submitting, tapping a suggestion, the back arrow and the tab bar.
+     */
+    Keyboard.dismiss();
     setSearchOpen(false);
     // Cleared on the way out: reopening to a stale query and its results would
     // look like the app had remembered a search the user abandoned.
@@ -2610,10 +2622,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const handleHeaderBackPress = useCallback(() => {
     if (searchOpen) {
       closeSearch();
+    } else if (showCart) {
+      // Over the wishlist when both are open -- see the hardware handler.
+      closeCart();
     } else if (wishlistOpen) {
       closeWishlist();
-    } else if (showCart) {
-      closeCart();
     } else if (!stepBack() && !stepBackAccount() && canGoBackRef.current) {
       webRef.current?.goBack();
     }
@@ -2930,12 +2943,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         closeSearch();
         return true;
       }
-      if (wishlistOpenRef.current) {
-        closeWishlist();
-        return true;
-      }
+      /*
+       * The cart before the wishlist, because the cart is drawn over it.
+       *
+       * The cart icon is on the wishlist screen's own header, so the two can be
+       * open at once, and Back has to take the top one off first. Answering the
+       * wishlist here would close the screen *underneath* the cart and leave the
+       * cart standing -- which reads as Back having jumped to the cart.
+       */
       if (showCartRef.current) {
         closeCart();
+        return true;
+      }
+      if (wishlistOpenRef.current) {
+        closeWishlist();
         return true;
       }
       // Page layers first, then the account section: a page opened from inside
@@ -3445,11 +3466,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const activeTab: TabKey | null = (() => {
     // Overlays first: the wishlist opened from the account screen is still the
     // wishlist tab, not the account tab.
-    if (wishlistOpen) {
-      return 'wishlist';
-    }
+    //
+    // The cart is tested before it, because it is drawn over it: the cart can
+    // be opened from the wishlist's own header, and while it is up the screen
+    // on show is one no tab describes -- leaving Wishlist lit would point at
+    // the screen underneath.
     if (searchOpen || showCart) {
       return null;
+    }
+    if (wishlistOpen) {
+      return 'wishlist';
     }
     if (accountTop !== null && showing === null) {
       return 'account';
@@ -4447,7 +4473,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         })}
 
         {showCart ? (
-          <View style={styles.pageLayer}>
+          /*
+           * Above the wishlist, which is rendered after this and would
+           * otherwise paint over it.
+           *
+           * The wishlist screen carries the cart icon in its own header, so the
+           * cart can be opened while the wishlist is still open, and the cart is
+           * then the newer screen. Ordered by zIndex rather than by moving this
+           * block below the wishlist's: every other layer here is in mount
+           * order, and this is the one pair whose paint order differs from it.
+           */
+          <View style={[styles.pageLayer, styles.cartLayer]}>
             <CartScreen
               cart={cart}
               onChangeQty={(key, quantity) =>
@@ -4698,6 +4734,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: COLORS.ground,
   },
+  /* See the cart layer in the tree above: opened from the wishlist's header, so
+     it has to sit over a sibling that is rendered after it. */
+  cartLayer: {zIndex: 1, elevation: 1},
   /**
    * How a kept-alive page is hidden: parked off screen, not display:none.
    *
