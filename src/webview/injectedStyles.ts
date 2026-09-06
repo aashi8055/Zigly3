@@ -14,6 +14,7 @@
 import {HEADER_DRAWER_CSS, LIFT_PAINT_GATE} from './headerBridge';
 import {BREED_PAGE_CSS} from './breedPage';
 import {SEARCH_BAND_CSS} from './searchBandSection';
+import {PRODUCT_CARD_CSS} from './productCard';
 
 export const MOBILE_CSS = `
 ${HEADER_DRAWER_CSS}
@@ -1014,98 +1015,8 @@ body.zigly-product .pdp-container .swym-button.swym-add-to-wishlist {
   right: calc(2rem - 3px);
 }
 
-/* ------------------------------------------------------------------
-   SearchTap's OWN grid, which is what a filtered listing shows.
-
-   The moment a filter or a sort is applied, SearchTap empties .searchtap-temp
-   and renders the results itself -- so the customer is looking at a different
-   card component from the one they were looking at a second earlier. Same
-   products, same prices, different card. That is the join this block closes:
-   the filtered grid is made to read as the grid it replaced.
-
-   It is not a rebuild, and it is mostly not even new rules. SearchTap's card
-   carries the theme's own class names on the parts that matter --
-   product-card-wrapper, card-wrapper, quick-add__submit, button--secondary,
-   atc-wrapper, mobile-compact-variant-display -- so the listing-card block
-   above already reaches it: the compact chip is hidden, the floating Add to Bag is
-   unpinned and stretched, the card clips its own contents. What is left is the
-   handful of things SearchTap draws that the theme does not, read out of its
-   ProductCard render on 2026-08-23:
-
-     .st-product          a bordered, rounded, padded white card. The theme's
-                          sits on the page with no edge of its own.
-     .st-review           the rating, absolutely positioned as a white chip
-                          over the foot of the image. The theme puts it in the
-                          flow, under the image, which is where the reference
-                          app has it.
-     .st-swatches         a row of size chips. The theme's equivalent is the
-                          variant picker, which the block above hides for the
-                          same reason: the reference app shows a plain
-                          full-width Add to Bag.
-     .st-product-price    price and Add to Bag side by side in one row. The
-                          theme stacks them, price then button.
-
-   Presentation only, as everywhere else here. Every control keeps its
-   listeners: the Add to Bag is still SearchTap's button adding through the
-   site's own cart, and the swatches are hidden rather than removed so its own
-   scripts still find them.
-   ------------------------------------------------------------------ */
-body.zigly-listing .st-product {
-  border: 0 !important;
-  border-radius: 0 !important;
-  padding: 0 !important;
-  background: transparent !important;
-}
-/*
-   The size chips, for the reason the theme's variant picker is hidden above:
-   the reference app shows a plain full-width Add to Bag and no picker.
-
-   NOT the brand line, and not the title's weight. Both were on the list until
-   the theme's own card was read back: it renders product--brand--wrapper with
-   the same brand and the same veg/non-veg mark, and its title is fw-700. They
-   are already the same on both cards, and "matching" them would have been this
-   block introducing the difference it exists to remove.
- */
-body.zigly-listing .st-swatches {
-  display: none !important;
-}
-/* The rating, back into the flow under the image and out of its chip. */
-body.zigly-listing .st-review {
-  position: static !important;
-  inset: auto !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  border-radius: 0 !important;
-  padding: 8px 0 0 !important;
-  letter-spacing: normal !important;
-}
-/*
-   Price above, Add to Bag below and full width.
-
-   column-reverse rather than a reorder, because SearchTap puts the button
-   first in the DOM and the price second -- reversing the visual order of the
-   two is the whole change, and it needs no knowledge of how many children
-   there are.
- */
-body.zigly-listing .st-product-price {
-  flex-direction: column-reverse !important;
-  flex-wrap: nowrap !important;
-  align-items: stretch !important;
-  gap: 10px !important;
-}
-/* The wrapper the button sits in is a red pill floating at the corner of the
-   card. Unpinned by the block above; its own fill and radius come off here, so
-   what shows is the theme's button underneath. */
-body.zigly-listing .atc-wrapper.st-atc {
-  background: transparent !important;
-  border-radius: 0 !important;
-}
-/* SearchTap's results row is inset by a negative margin meant for a page with
-   wider gutters than this one. At -15px a side it hangs off a phone screen. */
-body.zigly-listing .st-main-content-wrap {
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-}
+/* The product card, including SearchTap's, is generated -- see the
+   PRODUCT_CARD_CSS splice below and ./productCard.ts. */
 
 /* ------------------------------------------------------------------
    The site's bottom navigation: hidden, because the app now draws its own.
@@ -1524,190 +1435,14 @@ body.zigly-listing .quick-add__submit *,
    sit under a heading of their own on a page the customer has already committed
    to, where the brand line and the offers note still say something.
    ------------------------------------------------------------------ */
-#zigly-hot-picks .card-wrapper .product--brand--wrapper,
-#zigly-hot-picks .card-wrapper .discount-container,
-#zigly-hot-picks .card-wrapper .metafield__richtext_value_tag,
-[id^="zigly-x-"] .card-wrapper .product--brand--wrapper,
-[id^="zigly-x-"] .card-wrapper .discount-container,
-[id^="zigly-x-"] .card-wrapper .metafield__richtext_value_tag,
-body.zigly-listing .card-wrapper .product--brand--wrapper,
-body.zigly-listing .card-wrapper .discount-container,
-body.zigly-listing .card-wrapper .metafield__richtext_value_tag {
-  display: none !important;
-}
-/* The gaps those three left behind. The theme spaces the card's rows with
-   margins on each row, so hiding a row takes its text but not the margin above
-   the row that follows -- the card kept most of its old height and the title
-   floated in the middle of it. These pull the two rows that remain back
-   together, which is the "smaller height" half of the change. */
-#zigly-hot-picks .card-wrapper .product--below-content,
-[id^="zigly-x-"] .card-wrapper .product--below-content,
-body.zigly-listing .card-wrapper .product--below-content {
-  padding-top: 6px !important;
-}
-#zigly-hot-picks .card-wrapper .card__heading,
-[id^="zigly-x-"] .card-wrapper .card__heading,
-body.zigly-listing .card-wrapper .card__heading {
-  margin: 0 0 4px !important;
-}
-#zigly-hot-picks .card-wrapper .price,
-[id^="zigly-x-"] .card-wrapper .price,
-body.zigly-listing .card-wrapper .price {
-  margin: 0 !important;
-  padding: 0 !important;
-}
-#zigly-hot-picks .card-wrapper .custom_price__container,
-[id^="zigly-x-"] .card-wrapper .custom_price__container,
-body.zigly-listing .card-wrapper .custom_price__container {
-  margin: 0 !important;
-}
+/* The rules themselves are generated -- see ./productCard.ts, spliced in as
+   PRODUCT_CARD_CSS below. They were three hand-written copies of each selector
+   here, one per surface, and a fourth surface was missing from all of them:
+   SearchTap's card, which replaces the theme's the instant a sort or a filter
+   is applied. The measurements above are why each rule exists; that file is
+   where they are now applied, to every surface and to both cards at once. */
 
-/* ------------------------------------------------------------------
-   The gap that was never between the price and the button.
-
-   Hiding the four rows above closed the space they occupied and the button
-   still did not sit under the price. The reason is that the remaining gap was
-   never BETWEEN the two elements -- it was inside the price block, reserved by
-   the theme, and no amount of margin-trimming on the button could reach it.
-
-   Three rules do it, all read out of product-card.aio.min.css on 2026-09-03:
-
-     .only-price-align--wrapper   min-height: 38px
-     .custom_price__container     min-height: 27px; margin-top: 0.5rem
-     .quick-add                   margin: 0; margin-top: auto !important
-
-   The first is the bulk of it. The row holding "Rs 649  Rs 551" is held open to
-   38px while the text in it needs about 20 -- so the price sits at the top of a
-   box with roughly 18px of reserved emptiness under it, and the button, sitting
-   correctly flush against that box, is pushed down by all of it. The second
-   adds a 27px floor and a 0.5rem top margin of its own; the earlier rule here
-   set margin:0 on that container but said nothing about min-height, which is
-   why it only ever got part of the way.
-
-   The third is why the listing grid in particular refused to move: the theme
-   flags its margin-top:auto !important, and the opt-out written earlier was a
-   plain margin-top:0. Same specificity, but !important beats it, so on the grid
-   the button stayed pinned to the card's foot. It is restated below with
-   !important of its own.
-
-   min-height:0 rather than a height: the rows still size to whatever is in
-   them, they are simply no longer held open to a floor taller than their
-   content. A card whose price wraps to two lines still gets two lines.
-   ------------------------------------------------------------------ */
-#zigly-hot-picks .card-wrapper .only-price-align--wrapper,
-[id^="zigly-x-"] .card-wrapper .only-price-align--wrapper,
-body.zigly-listing .card-wrapper .only-price-align--wrapper {
-  min-height: 0 !important;
-  align-items: center !important;
-}
-#zigly-hot-picks .card-wrapper .custom_price__container,
-[id^="zigly-x-"] .card-wrapper .custom_price__container,
-body.zigly-listing .card-wrapper .custom_price__container {
-  min-height: 0 !important;
-  margin-top: 0 !important;
-}
-/* The compare-at price carries line-height:2.1, which is what makes the struck
-   price taller than the sale price beside it and pads the row from within. */
-#zigly-hot-picks .card-wrapper .price .compare-at-price,
-[id^="zigly-x-"] .card-wrapper .price .compare-at-price,
-body.zigly-listing .card-wrapper .price .compare-at-price {
-  line-height: 1.2 !important;
-}
-
-/* ------------------------------------------------------------------
-   The rest of it: the price block's reserved height.
-
-   The min-heights above were the small half. These two are the gap, and they
-   are why trimming margins kept moving the button by a pixel or two at a time
-   when the space left was tens of pixels. Both from product-card.aio.min.css,
-   read 2026-09-03:
-
-     .product-card-wrapper .card .price > *   height: 75px; min-height: 75px
-     .price__regular                          min-height: 80px
-
-   A fixed HEIGHT, not a floor -- so unlike everything else touched here it does
-   not shrink when the rows inside it are hidden. The theme reserves that space
-   because on its own pages the block can hold a membership-price panel, a
-   discount wrapper and a sold-out notice stacked under the price; it sizes for
-   the fullest case so cards line up in a grid. Our card shows one line of price
-   in it, and the other ~55px was empty space the button sat below.
-
-   That empty space is also why the price looked bottom-aligned in its box: the
-   same rule sets justify-content:flex-end, pushing the one row it contains to
-   the foot of the 75px. With the height released that no longer applies to
-   anything, but it is reset alongside so the row cannot end up hanging.
-
-   height:auto rather than a smaller number: nothing here should assert what a
-   price row measures -- it should measure its own contents, whatever the card
-   turns out to hold.
-   ------------------------------------------------------------------ */
-#zigly-hot-picks .card-wrapper .price > *,
-[id^="zigly-x-"] .card-wrapper .price > *,
-body.zigly-listing .card-wrapper .price > * {
-  height: auto !important;
-  min-height: 0 !important;
-  justify-content: flex-start !important;
-}
-#zigly-hot-picks .card-wrapper .price__regular,
-#zigly-hot-picks .card-wrapper .price__container,
-[id^="zigly-x-"] .card-wrapper .price__regular,
-[id^="zigly-x-"] .card-wrapper .price__container,
-body.zigly-listing .card-wrapper .price__regular,
-body.zigly-listing .card-wrapper .price__container {
-  height: auto !important;
-  min-height: 0 !important;
-}
-/* The button's own margin is set once, further down with the delivery row it
-   belongs to -- not restated here. Two rules for one property in one file is
-   how a value drifts: this block set 0, that one still said 0.5px, and because
-   it comes later in the file it silently won. */
-
-/* ------------------------------------------------------------------
-   Product cards: Add to Bag hard up against the price.
-
-   Two things sat in that gap, and only one of them was a margin.
-
-   The element first. Between the price and the button the theme draws
-   .estimate-delivery--date-wrapper -- a delivery-van icon and
-   <span id="product-card--delivery-date">, which on the served collection page
-   (read 2026-09-03) is EMPTY. The theme fills it from a script that runs on its
-   own pages and never runs against cards transplanted into this rail, so what
-   the card actually shows is a van icon with no date beside it: a row of height
-   with nothing in it and nothing coming. Hidden, like the other three -- and
-   for the same reason left in the DOM rather than removed, in case that script
-   ever does reach it.
-
-   That the span is empty is not a quirk of the transplant -- it is how Shopify
-   serves the page. All 21 delivery spans on
-   /collections/all?sort_by=best-selling were read on 2026-09-03 and every one
-   of them is empty in the HTML, so the listing grid draws the same dateless van
-   the rails do, on a page we do not transplant anything into. Hidden on all
-   three surfaces for that reason.
-
-   Then the margin: the shared fill rule above gives every Add to Bag
-   margin:8px 0 0. With the delivery row gone that margin is the last of the
-   gap, so it drops to a hairline -- the button carries a pale fill, and a value
-   this small reads as the button sitting directly under the price while still
-   keeping the two from merging into one block.
-   ------------------------------------------------------------------ */
-#zigly-hot-picks .card-wrapper .estimate-delivery--date-wrapper,
-[id^="zigly-x-"] .card-wrapper .estimate-delivery--date-wrapper,
-body.zigly-listing .card-wrapper .estimate-delivery--date-wrapper {
-  display: none !important;
-}
-#zigly-hot-picks .quick-add__submit,
-[id^="zigly-x-"] .quick-add__submit,
-body.zigly-listing .quick-add__submit {
-  margin-top: 0 !important;
-}
-/* .card-information wraps the price and the delivery row; with the row gone its
-   own bottom padding is the last thing holding the button off. */
-#zigly-hot-picks .card-wrapper .card-information,
-[id^="zigly-x-"] .card-wrapper .card-information,
-body.zigly-listing .card-wrapper .card-information {
-  margin-bottom: 0 !important;
-  padding-bottom: 0 !important;
-}
+${PRODUCT_CARD_CSS}
 
 /* ------------------------------------------------------------------
    Category circles: the reference app runs them straight under the search

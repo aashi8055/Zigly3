@@ -16,6 +16,7 @@ import {BANNER_CAROUSEL_SCRIPT} from '../src/webview/bannerCarousel';
 import {EARLY_HEADER_CSS} from '../src/webview/headerBridge';
 import {HOT_PICKS_SCRIPT} from '../src/webview/hotPicks';
 import {MOBILE_CSS} from '../src/webview/injectedStyles';
+import {CARD_SURFACES, PRODUCT_CARD_CSS} from '../src/webview/productCard';
 
 describe('getInjectionForUrl', () => {
   it.each([
@@ -999,35 +1000,64 @@ describe('getInjectionForUrl', () => {
        * A filter or a sort makes SearchTap empty .searchtap-temp and render the
        * results itself, so the customer gets a different card component for the
        * same products. These are the parts it draws differently.
+       *
+       * Matched on the selector rather than on one scope's spelling of it: the
+       * rules are generated across every surface now (src/webview/productCard.ts),
+       * so `body.zigly-listing` heads a four-line selector list rather than
+       * always sitting immediately before the brace.
        */
       const script = getInjectionForUrl(
         'https://zigly.com/collections/x',
       ) as string;
       // A bordered, rounded, padded white card, against a theme card with no
       // edge of its own.
-      expect(script).toContain('body.zigly-listing .st-product {');
+      expect(script).toContain('body.zigly-listing .st-product,');
       // The rating, out of its floating chip and back under the image.
-      expect(script).toContain('body.zigly-listing .st-review');
+      expect(script).toContain('.st-product .st-review');
       // Price above a full-width Add to Bag, rather than the two side by side.
-      expect(script).toContain('body.zigly-listing .st-product-price');
+      expect(script).toContain('.st-product .st-product-price');
       expect(script).toContain('flex-direction: column-reverse !important');
       // The red pill the button floats in, unfilled so the theme's own button
       // shows through it.
       expect(script).toContain('body.zigly-listing .atc-wrapper.st-atc');
     });
 
-    it('leaves alone what the two cards already share', () => {
+    it('trims SearchTap’s card wherever it trims the theme’s', () => {
       /*
-       * The theme's card renders product--brand--wrapper -- the same brand and
-       * the same veg/non-veg mark SearchTap's does -- and its title is fw-700,
-       * as SearchTap's is. Restyling either would be this block introducing the
-       * difference it exists to remove, which is what the first draft did.
+       * This test used to assert the OPPOSITE -- that .st-brand-wrapper and
+       * .st-product-name were never named -- and the reasoning was sound when
+       * it was written: both cards rendered the brand line, so restyling one
+       * of them would have INTRODUCED the difference the block exists to
+       * remove.
+       *
+       * That premise expired. The card trim added later hides
+       * .product--brand--wrapper on the theme's card, and the two cards stopped
+       * sharing the row. The old assertion then held the inconsistency in
+       * place: the brand line was hidden before a sort and back the moment one
+       * was applied, on the same products, because SearchTap's card was the one
+       * surface the trim was forbidden to reach.
+       *
+       * The rule the two versions actually share is "the cards must match".
+       * What changed is which card is the reference. See src/webview/productCard.ts.
        */
       const script = getInjectionForUrl(
         'https://zigly.com/collections/x',
       ) as string;
-      expect(script).not.toContain('.st-brand-wrapper');
-      expect(script).not.toContain('.st-product-name');
+      // The brand row comes off both cards, or off neither.
+      expect(script).toContain('.product--brand--wrapper');
+      expect(script).toContain('.st-brand-wrapper');
+      /*
+       * The title's fixed 38px is released so a one-line title can shorten the
+       * card. That is a height, not a restyle -- the weight, size and colour of
+       * the title text are still SearchTap's, which is what the original note
+       * was right to protect. Asserted on the card block itself rather than on
+       * the whole payload, which carries font-weight for plenty of things that
+       * are not this card.
+       */
+      expect(PRODUCT_CARD_CSS).toContain('.st-product-name');
+      expect(PRODUCT_CARD_CSS).toContain('height: auto !important');
+      expect(PRODUCT_CARD_CSS).not.toContain('font-weight');
+      expect(PRODUCT_CARD_CSS).not.toContain('font-size');
     });
 
     it('does not reach a product page, where the same card also appears', () => {
@@ -1041,15 +1071,35 @@ describe('getInjectionForUrl', () => {
         'https://zigly.com/products/x',
       ) as string;
       for (const selector of [
-        '.st-product {',
-        '.st-review {',
-        '.st-product-price {',
-        '.st-swatches {',
+        '.st-product',
+        '.st-product .st-review',
+        '.st-product .st-product-price',
+        '.st-product .st-swatches',
       ]) {
-        expect(script).toContain(`body.zigly-listing ${selector}`);
-        // The same selector starting a line of its own would be unscoped. A
-        // newline in front is what proves it is not.
-        expect(script).not.toContain(`\n${selector}`);
+        // Present, and never on a line of its own: every occurrence carries one
+        // of the surface scopes in front of it. A selector starting a line
+        // would be unscoped, and would restyle SearchTap's autocomplete card
+        // here on the product page.
+        expect(script).toContain(selector);
+        expect(script).not.toContain(`\n${selector} {`);
+        expect(script).not.toContain(`\n${selector},`);
+      }
+      /*
+       * And every rule in the card block is scoped by one of them. The listing
+       * flag is set on listing paths only; the other three name sections this
+       * app builds on the dashboard, none of which exists on a product page.
+       */
+      for (const line of PRODUCT_CARD_CSS.split('\n')) {
+        const head = line.trim();
+        if (!head.endsWith(',') && !head.endsWith('{')) {
+          continue;
+        }
+        if (head.startsWith('/*') || head.startsWith('*')) {
+          continue;
+        }
+        expect(
+          CARD_SURFACES.some(scope => head.startsWith(scope)),
+        ).toBe(true);
       }
     });
 
