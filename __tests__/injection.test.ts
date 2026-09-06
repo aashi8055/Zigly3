@@ -1013,9 +1013,9 @@ describe('getInjectionForUrl', () => {
       // edge of its own.
       expect(script).toContain('body.zigly-listing .st-product,');
       // The rating, out of its floating chip and back under the image.
-      expect(script).toContain('.st-product .st-review');
+      expect(script).toContain('body.zigly-listing .st-review');
       // Price above a full-width Add to Bag, rather than the two side by side.
-      expect(script).toContain('.st-product .st-product-price');
+      expect(script).toContain('body.zigly-listing .st-product-price');
       expect(script).toContain('flex-direction: column-reverse !important');
       // The red pill the button floats in, unfilled so the theme's own button
       // shows through it.
@@ -1072,9 +1072,9 @@ describe('getInjectionForUrl', () => {
       ) as string;
       for (const selector of [
         '.st-product',
-        '.st-product .st-review',
-        '.st-product .st-product-price',
-        '.st-product .st-swatches',
+        '.st-review',
+        '.st-product-price',
+        '.st-swatches',
       ]) {
         // Present, and never on a line of its own: every occurrence carries one
         // of the surface scopes in front of it. A selector starting a line

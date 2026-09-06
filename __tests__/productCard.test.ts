@@ -97,6 +97,39 @@ describe('the product card, as one definition', () => {
     }
   });
 
+  it('never nests a SearchTap part under .st-product', () => {
+    /*
+     * The regression that shipped once and must not ship twice.
+     *
+     * `st-product` is NOT a wrapper. It is one class in a family of flat,
+     * sibling names -- st-product, st-product-name, st-product-price,
+     * st-product-details -- and the first version of this file read the shared
+     * prefix as a parent/child relationship. It generated
+     * `.st-product .st-review`, which needs an `.st-review` INSIDE an element
+     * classed `st-product`, and matched nothing on the real page.
+     *
+     * The damage was invisible from here: the CSS was syntactically valid, the
+     * generated string contained every class name these tests look for, and
+     * every assertion passed while the rules applied to nothing. It regressed
+     * three rules that had worked for weeks -- the rating stayed in its
+     * floating chip, price and button stayed side by side, the size chips came
+     * back -- and it took looking at the app to see it.
+     *
+     * So this asserts the SHAPE rather than the presence: no selector may put
+     * a second `.st-` class after `.st-product`. The scope in front is what
+     * keeps these rules off a product page, exactly as it did when they were
+     * written flat by hand.
+     */
+    for (const selector of selectors()) {
+      const at = selector.indexOf('.st-product');
+      if (at === -1) {
+        continue;
+      }
+      const rest = selector.slice(at + '.st-product'.length);
+      expect(rest).not.toContain(' .st-');
+    }
+  });
+
   it('releases the height each card reserves, in its own dialect', () => {
     /*
      * Hiding a row takes its text but not the space the card holds open for
@@ -224,7 +257,7 @@ describe('what the card block must not break', () => {
     const listing = getInjectionForUrl(
       'https://zigly.com/collections/x',
     ) as string;
-    expect(listing).toContain('.st-product .st-brand-wrapper');
+    expect(listing).toContain('body.zigly-listing .st-brand-wrapper');
     expect(listing).toContain('.card-wrapper .product--brand--wrapper');
   });
 

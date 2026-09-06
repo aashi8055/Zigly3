@@ -78,15 +78,36 @@ export const CARD_SURFACES = [
 ] as const;
 
 /**
- * The two card components, as the roots their parts hang off.
+ * The theme card's root, which its parts genuinely hang off.
  *
- * `.card-wrapper` is the theme's, and is also on SearchTap's root -- which is
- * exactly why the parts below have to be named per component rather than
- * assumed shared. `.st-product` is SearchTap's own, and appears nowhere in a
- * theme card, so a rule scoped to it can never reach one.
+ * `.card-wrapper` is on SearchTap's root too, which is exactly why the parts
+ * below are named per component rather than assumed shared: none of the theme's
+ * INNER class names exist inside a SearchTap card, so a descendant rule written
+ * here reaches the theme's card and only the theme's card.
  */
 const THEME_CARD = '.card-wrapper';
-const SEARCHTAP_CARD = '.st-product';
+
+/**
+ * SearchTap's parts are NOT nested, and that is the whole reason this comment
+ * exists rather than a `SEARCHTAP_CARD` constant beside THEME_CARD.
+ *
+ * `st-product` is not a wrapper containing `st-review` and `st-product-price`.
+ * It is one class in a family of flat, sibling class names -- `st-product`,
+ * `st-product-name`, `st-product-price`, `st-product-details` -- and the first
+ * draft of this file read the shared prefix as a parent/child relationship. It
+ * generated `.st-product .st-review`, which requires an `.st-review` INSIDE an
+ * element classed `st-product`, and matched nothing.
+ *
+ * That regressed rules which had worked for weeks: the rating stayed pinned in
+ * its floating chip, the price and button stayed side by side, the size chips
+ * came back. The CSS was valid, the tests passed on the generated string, and
+ * none of it applied. The rules this file replaced were all flat --
+ * `body.zigly-listing .st-review` -- and flat is how they are written here.
+ *
+ * The scope alone keeps them off a product page, which is the same protection
+ * the flat originals had. There is no card-root qualifier to add, because
+ * SearchTap does not give its card one that its parts sit inside.
+ */
 
 /**
  * One rule, on every surface, for every selector given.
@@ -111,12 +132,15 @@ const onThemeCard = (parts: string[], body: string): string =>
     body,
   );
 
-/** Same, for SearchTap's card only. */
+/**
+ * Same, for SearchTap's card -- flat, for the reason set out above.
+ *
+ * Kept as a named function rather than calling onEverySurface directly, so that
+ * every SearchTap rule reads as one at the call site and the note explaining
+ * why it is not nested has somewhere to point.
+ */
 const onSearchTapCard = (parts: string[], body: string): string =>
-  onEverySurface(
-    parts.map(part => `${SEARCHTAP_CARD} ${part}`),
-    body,
-  );
+  onEverySurface(parts, body);
 
 /**
  * The rows that come off both cards.
@@ -277,8 +301,8 @@ const searchTapFurnitureCss = (): string =>
   [
     /* A bordered, rounded, padded white card. The theme's sits on the page with
        no edge of its own. */
-    onEverySurface(
-      [SEARCHTAP_CARD],
+    onSearchTapCard(
+      ['.st-product'],
       '  border: 0 !important;\n  border-radius: 0 !important;\n  padding: 0 !important;\n  background: transparent !important;',
     ),
     /* Size chips, for the reason the theme's variant picker is hidden: the
