@@ -33,6 +33,25 @@
  */
 const VERIFY_DELAYS_MS = [500, 1000, 1800, 3000];
 
+/**
+ * The last moment this script can still report an add.
+ *
+ * Exported because the native side has to know it. The theme's cart drawer
+ * opens as soon as the click lands, so ./cartToast.ts reports the same add
+ * almost immediately, and this one confirms it up to three seconds later --
+ * two reports, one add. The screen coalesces them (see `reportCartAdded` in
+ * ../screens/ZiglyWebViewScreen.tsx), and the window it uses has to outlast
+ * this budget or the late confirmation replays a toast that has already been
+ * and gone.
+ *
+ * Derived from the delays rather than written beside them, so adding a retry
+ * above widens the window here instead of quietly escaping it.
+ */
+export const ADD_VERIFY_BUDGET_MS = VERIFY_DELAYS_MS.reduce(
+  (total, delay) => total + delay,
+  0,
+);
+
 export const PRODUCT_ADD_TO_BAG_SCRIPT = `
 (function () {
   function send(payload) {
@@ -87,7 +106,12 @@ export const PRODUCT_ADD_TO_BAG_SCRIPT = `
     readCount(function (after) {
       var baseline = haveBefore ? before : null;
       if (after !== null && (baseline === null || after > baseline)) {
-        send({tag: 'cart-added'});
+        // The count rides along on the add itself, as well as going out as
+        // its own message: the native side coalesces the several reports one
+        // add produces, and the number is what tells a repeat of this add
+        // apart from a real second one. See reportCartAdded in
+        // ../screens/ZiglyWebViewScreen.tsx.
+        send({tag: 'cart-added', n: after});
         send({tag: 'cart-count', n: after});
         return;
       }

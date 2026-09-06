@@ -159,6 +159,7 @@ import BottomNav from '../components/BottomNav';
 import SortFilterBar from '../components/SortFilterBar';
 import ProductActionBar from '../components/ProductActionBar';
 import {
+  ADD_VERIFY_BUDGET_MS,
   PRODUCT_ADD_TO_BAG_SCRIPT,
   PRODUCT_BUY_NOW_SCRIPT,
 } from '../webview/productActions';
@@ -436,6 +437,27 @@ const FRESH_LOGIN_MS = 6000;
 const CHECKOUT_HOLD_CAP_MS = 5000;
 
 /**
+ * How long after a toast another `cart-added` may still be the same add.
+ *
+ * One tap on Add to Bag produces up to three reports -- the drawer watcher, the
+ * /cart.js verify behind it, and on a wishlist line the add call's own reply --
+ * and the customer saw the toast once per report. See `reportCartAdded`.
+ *
+ * The floor is ADD_VERIFY_BUDGET_MS: ../webview/productActions retries its
+ * confirmation on a widening schedule and the last attempt can land that far
+ * after the click, well past the toast's own ~1.5s life. A window shorter than
+ * the budget would let exactly the slow-network case through -- which is the
+ * one that produced a second toast seconds after the first, with no visible
+ * cause. The margin over it covers the round trip that reply still has to make.
+ *
+ * This is a bound on the suspicion, NOT the test on its own. Seven seconds is
+ * long enough that a customer can genuinely add a second item inside it, and
+ * silencing that on time alone would trade a repeated toast for a missing one.
+ * The count is what actually decides -- see `reportCartAdded`.
+ */
+const CART_TOAST_COALESCE_MS = ADD_VERIFY_BUDGET_MS + 1000;
+
+/**
  * When to re-ask the site to confirm a login, until it does.
  *
  * A single re-probe was not enough. It was armed when the stale reply arrived
@@ -587,6 +609,45 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const listingSheetRef = useRef<'sort' | 'filter' | null>(null);
   /** Shown when the page reports an add; the site still owns the cart. */
   const [cartToast, setCartToast] = useState(false);
+  /**
+   * When the toast currently on screen was raised.
+   *
+   * One add reports itself more than once, and it is not a bug in any single
+   * reporter -- it is three honest reporters watching the same event:
+   *
+   *   ../webview/cartToast.ts     sees the theme's cart drawer open and closes
+   *                               it, which is the only signal available when
+   *                               the customer taps a card's own Add button.
+   *   ../webview/productActions.ts clicks that same theme button for the native
+   *                               sticky bar, then confirms by re-reading
+   *                               /cart.js at 500/1000/1800/3000ms.
+   *   ../webview/cartBridge.ts    adds a wishlist line through /cart/add.js and
+   *                               reports once the count comes back.
+   *
+   * So a native Add to Bag fires the drawer watcher AND the verify, and the
+   * customer saw the toast twice; a slow network pushed the verify past the
+   * toast's own 1480ms life, which is the third.
+   *
+   * Deduping here rather than in any of the three keeps every one of them
+   * honest: each still reports what it actually saw, `cart-count` still updates
+   * the badge from whichever arrives, and no reporter has to know another
+   * exists. This only decides whether a report raises a *second* toast for an
+   * add the customer has already been told about.
+   *
+   * A ref, not state: it is read and written inside a message handler and must
+   * carry the value written by the message before it, which a re-render has not
+   * necessarily delivered yet. Null until the first add of the session.
+   */
+  const cartToastAtRef = useRef<number | null>(null);
+  /**
+   * The cart count the toast on screen was raised for, once one is known.
+   *
+   * What tells a repeat apart from a real second add inside the same window --
+   * see `reportCartAdded`. Null means the toast was raised by a report that
+   * carried no count (the drawer watcher, which has only seen a drawer open);
+   * the first numbered report of that same add fills it in.
+   */
+  const cartToastCountRef = useRef<number | null>(null);
   /**
    * The native cart. Zigly's own /cart page carries none of the reference
    * app's wording, so that screen is native there too -- but every figure and
@@ -1747,6 +1808,73 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     injectInto('home', READ_CART_SCRIPT);
   }, [injectInto]);
 
+  /**
+   * One add, one toast.
+   *
+   * Every `cart-added` report from every WebView layer arrives here -- see
+   * cartToastAtRef above for why one add produces several. A report is treated
+   * as a repeat of the one just acknowledged, and dropped, only when BOTH hold:
+   *
+   *   - it lands within CART_TOAST_COALESCE_MS of the toast already raised, and
+   *   - it does not carry a cart count higher than that toast's.
+   *
+   * Time alone is not enough to decide this. The window has to outlast
+   * ../webview/productActions' retry budget, which makes it long enough for a
+   * customer to genuinely add a second item inside it -- and suppressing on
+   * time alone would answer "three toasts for one add" with "no toast for the
+   * second add", which is the worse of the two faults.
+   *
+   * The count is what actually separates them. A real second add always leaves
+   * the bag holding more than the first did; the same add confirmed twice
+   * reports the same number, or -- as the drawer watcher in
+   * ../webview/cartToast.ts does -- no number at all. So an unnumbered report
+   * inside the window is a duplicate, and a higher number is always a new add
+   * and always gets its toast.
+   *
+   * Dropping a toast drops nothing else: `cart-count` is handled on its own and
+   * always applied, so the badge stays exact whether or not the report it
+   * travelled with raised a toast. That is what keeps this from disturbing the
+   * flow -- it changes what the customer is *told*, never what the app knows.
+   */
+  const reportCartAdded = useCallback((count?: number) => {
+    const now = Date.now();
+    // `null` is "no toast has been raised yet", which is not the same as one
+    // raised at time zero. Compared explicitly rather than leaning on Date.now()
+    // being large: the first add of a session must always be announced.
+    const raisedAt = cartToastAtRef.current;
+    const withinWindow =
+      raisedAt !== null && now - raisedAt < CART_TOAST_COALESCE_MS;
+
+    if (withinWindow) {
+      const known = cartToastCountRef.current;
+      /*
+       * Inside the window, and this is the first report of this add that
+       * carries a number: adopt it as what the toast already on screen was
+       * for, and say nothing.
+       *
+       * The drawer watcher has no cart read to attach, so the usual order for
+       * a native Add to Bag is countless-then-numbered. Without this the
+       * number would be compared against "nothing known yet", look like an
+       * increase, and raise the second toast this exists to prevent.
+       */
+      if (known === null) {
+        if (typeof count === 'number') {
+          cartToastCountRef.current = count;
+        }
+        return;
+      }
+      // A number higher than the one the toast was raised for is a real second
+      // add, and gets its own toast. Anything else is this add again.
+      if (typeof count !== 'number' || count <= known) {
+        return;
+      }
+    }
+
+    cartToastAtRef.current = now;
+    cartToastCountRef.current = typeof count === 'number' ? count : null;
+    setCartToast(true);
+  }, []);
+
   /** The checkout hold's timer must not outlive the screen. */
   useEffect(
     () => () => {
@@ -2366,6 +2494,26 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const submitOtp = useCallback(
     (code: string) => {
+      /*
+       * The keyboard goes with the step that raised it.
+       *
+       * ../components/OtpScreen autofocuses its first box, so the keypad is up
+       * from the moment the screen arrives and it covers the lower half of the
+       * screen -- including the resend line, and including whatever the app
+       * shows next. Nothing lowered it: a verdict takes a second or two to come
+       * back, and the screen the app moves to on success unmounts the boxes
+       * rather than blurring them, which does not tell the OS focus was
+       * surrendered. So the keypad stayed up over the account screen until the
+       * customer pressed Back.
+       *
+       * Dismissed here, on the submit itself, for the reason closeSearch does
+       * it in one place: this is the single point every submit passes through
+       * -- the Submit button and an autofilled code both arrive here -- and the
+       * keypad has no further use once the code is on its way. If the code is
+       * wrong the error is drawn under the boxes, which is now visible rather
+       * than behind the keypad, and tapping a box brings the keypad back.
+       */
+      Keyboard.dismiss();
       setLoginError(null);
       setLoginBusy(true);
       // A verdict is now outstanding, so the widget tearing its verify step
@@ -2421,6 +2569,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // watchdog fires twenty-five seconds later.
     clearSendWatchdog();
     setLoginBusy(false);
+    /*
+     * And the keypad the OTP boxes raised goes with them.
+     *
+     * submitOtp lowers it on the way forward; this is the way back. The three
+     * routes out of the OTP step -- the link on it, the header's back arrow and
+     * Android's hardware Back -- all land here, which is why this effect exists
+     * at all, and an unmounted TextInput does not lower a keyboard on its own.
+     */
+    Keyboard.dismiss();
 
     const phase = loginPhaseRef.current;
     if (phase === 'otp' || phase === 'details') {
@@ -3871,7 +4028,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   );
                 }
               } else if (data && data.tag === 'cart-added') {
-                setCartToast(true);
+                reportCartAdded(typeof data.n === 'number' ? data.n : undefined);
               } else if (data && data.tag === 'cart-checkout-started') {
                 /*
                  * Shiprocket is on the page below now, so the overlay comes
@@ -4331,7 +4488,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   try {
                     const data = JSON.parse(nativeEvent.data);
                     if (data && data.tag === 'cart-added') {
-                      setCartToast(true);
+                      reportCartAdded(
+                        typeof data.n === 'number' ? data.n : undefined,
+                      );
                     } else if (data && data.tag === BAND_TAP_TAG) {
                       // Shopping pages carry the band too; see the dashboard's
                       // handler above.

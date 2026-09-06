@@ -119,8 +119,17 @@ export const addToCartScript = (
       return fetch('/cart.js', {credentials: 'same-origin'})
         .then(function (c) { return c.ok ? c.json() : null; })
         .then(function (cart) {
-          send({tag: 'cart-added'});
-          if (cart) { send({tag: 'cart-count', n: cart.item_count || 0}); }
+          // The count travels on the add as well as in its own message, so
+          // the native side can tell this add apart from a repeat report of
+          // it -- see reportCartAdded in ../screens/ZiglyWebViewScreen.tsx.
+          // A cart that could not be read sends the add unnumbered rather
+          // than claiming a count it does not have.
+          if (cart) {
+            send({tag: 'cart-added', n: cart.item_count || 0});
+            send({tag: 'cart-count', n: cart.item_count || 0});
+          } else {
+            send({tag: 'cart-added'});
+          }
         });
     })
     .catch(function () { send({tag: 'cart-add-failed'}); });
