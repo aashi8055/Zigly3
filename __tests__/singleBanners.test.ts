@@ -1,7 +1,8 @@
 /**
- * The three `custom-single-banner` instances.
+ * The dashboard's full-width banners: three `custom-single-banner` instances
+ * and the two halves of `redesign-custom-double-banner`.
  *
- * Small sections with three ways to get them wrong, all of which produce
+ * Small sections with four ways to get them wrong, all of which produce
  * something that looks plausible:
  *
  * 1. TAKE THE DESKTOP CROP. Each banner carries both a 1680x324 and a 600x210
@@ -19,11 +20,18 @@
  *    are EMPTY on all three instances, so that branch never renders. A rebuild
  *    that implemented it would draw an empty heading and a red button labelled
  *    nothing.
+ *
+ * 4. GIVE THEM ALL ONE SHAPE. The single-banner crops are 600x210 and the
+ *    double banner's are 1350x535, so a hardcoded ratio letterboxes one pair
+ *    or crops the other -- and a crop takes the lettering with it, since these
+ *    banners' words are inside the picture.
  */
 import {
   DASHBOARD_BANNERS,
   FURPRO_BANNER,
+  GIFT_CARD_BANNER,
   LOGOS_BANNER,
+  PAWTY_BANNER,
   VET_CARE_BANNER,
 } from '../src/native/singleBanners';
 import {matchesKey} from '../src/native/tileIcons';
@@ -146,18 +154,84 @@ describe('the three are kept apart', () => {
 
 describe('what the dashboard draws', () => {
   /**
-   * Two of the three. Furpro is declared but not placed: extraSections seeds
-   * its id and no entry uses it, so the app does not show it while the dog
-   * page does. Asserted so its absence stays a decision rather than becoming
-   * something that looks missed.
+   * Four blocks in dashboard order: Vet Care under the price tiles, the two
+   * halves of the double banner, and the brand-claims strip last.
+   *
+   * Furpro is declared but not placed: extraSections seeds its id and no entry
+   * uses it, so the app does not show it while the dog page does. Asserted so
+   * its absence stays a decision rather than becoming something that looks
+   * missed.
    */
-  it('draws the Vet Care banner and the brand-claims strip, in that order', () => {
-    expect(DASHBOARD_BANNERS).toHaveLength(2);
-    expect(DASHBOARD_BANNERS[0]).toBe(VET_CARE_BANNER);
-    expect(DASHBOARD_BANNERS[1]).toBe(LOGOS_BANNER);
+  it('draws four banners, in dashboard order', () => {
+    expect(DASHBOARD_BANNERS).toEqual([
+      VET_CARE_BANNER,
+      PAWTY_BANNER,
+      GIFT_CARD_BANNER,
+      LOGOS_BANNER,
+    ]);
   });
 
   it('does not draw the Furpro banner', () => {
     expect(DASHBOARD_BANNERS).not.toContain(FURPRO_BANNER);
+  });
+});
+
+describe('the double banner is one section drawn as two blocks', () => {
+  /**
+   * `redesign-custom-double-banner` carries both banners in numbered settings
+   * and drops both to `width: 100%` below 749px, so on a phone they stack --
+   * which is why they are two entries here rather than one side-by-side block.
+   */
+  it('shares one section and one store between the two halves', () => {
+    expect(PAWTY_BANNER.sectionId).toBe(GIFT_CARD_BANNER.sectionId);
+    expect(PAWTY_BANNER.storeKey).toBe(GIFT_CARD_BANNER.storeKey);
+    expect(PAWTY_BANNER.fragment).toBe('redesign_custom_double_banner');
+  });
+
+  /** Different artwork, so one fetch fills both without either overwriting. */
+  it('gives each half its own artwork', () => {
+    expect(PAWTY_BANNER.tiles[0].key).not.toBe(GIFT_CARD_BANNER.tiles[0].key);
+    expect(PAWTY_BANNER.tiles[0].key).toContain('Birthday_Dog');
+    expect(GIFT_CARD_BANNER.tiles[0].key).toContain('GiftCard');
+  });
+
+  /**
+   * THE PLACEHOLDER THAT IS STILL DRAWN. The gift-card artwork is literally
+   * named `…Coming-Soon.png` and its link is the bare collections LIST rather
+   * than a collection. Zigly ship it that way; suppressing it would be this app
+   * deciding a merchant's placement was a mistake. Asserted so it is not
+   * "fixed" away, and so the odd link is not read as a bug.
+   */
+  it('keeps Zigly’s coming-soon gift-card block as they ship it', () => {
+    expect(GIFT_CARD_BANNER.tiles[0].key).toContain('Coming-Soon');
+    expect(GIFT_CARD_BANNER.tiles[0].path).toBe('/collections');
+  });
+
+  it('sends the Paw-ty banner to the birthday collection', () => {
+    expect(PAWTY_BANNER.tiles[0].path).toBe('/collections/birthday-dog');
+  });
+});
+
+describe('each banner carries its own aspect ratio', () => {
+  /**
+   * One hardcoded ratio would letterbox one pair or crop the other, and the
+   * crop would take the lettering with it -- these banners' words are inside
+   * the picture.
+   */
+  it('uses 20:7 for the custom-single-banner crops', () => {
+    for (const banner of [VET_CARE_BANNER, LOGOS_BANNER, FURPRO_BANNER]) {
+      expect(banner.ratio).toBeCloseTo(600 / 210, 5);
+    }
+  });
+
+  it('uses the double banner’s own 1350x535', () => {
+    for (const banner of [PAWTY_BANNER, GIFT_CARD_BANNER]) {
+      expect(banner.ratio).toBeCloseTo(1350 / 535, 5);
+    }
+  });
+
+  /** The two shapes must actually differ, or the field buys nothing. */
+  it('does not give every banner the same shape', () => {
+    expect(VET_CARE_BANNER.ratio).not.toBeCloseTo(PAWTY_BANNER.ratio, 2);
   });
 });

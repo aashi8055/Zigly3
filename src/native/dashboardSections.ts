@@ -394,30 +394,50 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
   {
     key: 'double-banner',
     title: null,
-    source: 'section',
+    source: 'theme',
     fragment: 'redesign_custom_double_banner',
-    native: false,
+    native: true,
   },
+  /**
+   * "Pet Parenting Made Easy" -- the article cards.
+   *
+   * THE ONLY NATIVE SECTION FED BY PARSED HTML, and `source: 'section'` here is
+   * a permission rather than a preference. Verified 2026-09-09 that BOTH public
+   * Storefront tokens are denied blog content:
+   *
+   *   Access denied for blog field.
+   *   Required access: `unauthenticated_read_content` access scope.
+   *
+   * The theme's blocks carry only article handles and its `new-article-card`
+   * snippet resolves each to a title, cover, date and two metafields at render
+   * time -- none of which can be fetched as data with the credentials the site
+   * ships. So this section reads the rendered markup, which is Zigly's own and
+   * therefore cannot drift, at the cost of a parse that a theme change to the
+   * card's class names would break.
+   *
+   * Granting the scope would remove all of that, and it is not this app's
+   * decision to make. ./tips carries the full note.
+   */
   {
     key: 'tips',
     title: 'Pet Parenting Made Easy',
     source: 'section',
     fragment: 'helpful_tips',
-    native: false,
+    native: true,
   },
   {
     key: 'video',
     title: null,
-    source: 'section',
+    source: 'theme',
     fragment: 'custom_video_text_banner',
-    native: false,
+    native: true,
   },
   {
     key: 'community',
     title: 'Real Pets. Real Stories. Real Community.',
-    source: 'section',
+    source: 'theme',
     fragment: 'about_our_communities',
-    native: false,
+    native: true,
   },
   /**
    * The rail that closes the dashboard.

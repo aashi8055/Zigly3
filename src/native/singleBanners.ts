@@ -1,12 +1,14 @@
 /**
- * The three single banners: Furpro, Vet Care and the brand-claims strip.
+ * The dashboard's full-width banners: Vet Care, the double banner's two halves,
+ * the brand-claims strip -- and Furpro, which the dashboard does not draw.
  *
- * Sections thirteen and twenty-three of the dashboard, plus one the dashboard
- * does not use -- all three instances of the theme's `custom-single-banner`,
- * declared together because they are the same shape and three copies of the
- * same handling is how they drift.
+ * Sections thirteen, eighteen and twenty-three. Three are instances of the
+ * theme's `custom-single-banner`; the other two are the two halves of
+ * `redesign-custom-double-banner`, which stacks on a phone and therefore reads
+ * as two of these. They are declared together because they are the same shape
+ * to a customer, and separate copies of the same handling is how they drift.
  *
- * A SINGLE BANNER IS AN IMAGE AND A LINK, and nothing else on this store.
+ * A BANNER HERE IS AN IMAGE AND A LINK, and nothing else on this store.
  * `sections/custom-single-banner.liquid` supports a heading, a description and
  * a button over the artwork, but all three settings are EMPTY on all three
  * instances -- `banner_heading: ""`, `banner_description: ""`,
@@ -48,7 +50,21 @@ export type SingleBanner = {
   readonly fragment: string;
   /** The one tile: its artwork key, its link and its accessibility name. */
   readonly tiles: readonly Tile[];
+  /**
+   * The artwork's own aspect ratio, width over height.
+   *
+   * Carried per banner rather than fixed in the component, because these are
+   * not all the same shape: the `custom-single-banner` mobile crops are 600x210
+   * (20:7) while the double banner's are 1350x535 (nearly 5:2). A single
+   * hardcoded ratio would letterbox one set or crop the other, and the crop
+   * would take the lettering with it -- these banners' words are inside the
+   * picture.
+   */
+  readonly ratio: number;
 };
+
+/** 600x210, the `custom-single-banner` mobile crop. */
+const SINGLE_RATIO = 600 / 210;
 
 const banner = (
   storeKey: string,
@@ -61,6 +77,7 @@ const banner = (
   sectionId: DOG + section,
   fragment: 'custom_single_banner',
   tiles: [{label, path, key}],
+  ratio: SINGLE_RATIO,
 });
 
 /**
@@ -115,8 +132,66 @@ export const FURPRO_BANNER = banner(
   '600X210_Furpro_mobile.png',
 );
 
-/** The two the dashboard draws, in dashboard order. */
+/**
+ * The double banner — "Let's Paw-ty!" and the gift-card block.
+ *
+ * ONE theme section (`redesign_custom_double_banner_FqtJbt`) carrying TWO
+ * banners in numbered settings: `background_image_url_1` / `_2`,
+ * `button_link_1` / `_2`. Its own stylesheet drops both to `width: 100%` below
+ * 749px, so on a phone they stack and read as two blocks one after the other --
+ * which is what ../webview/extraSections records and how the dashboard order
+ * lists them.
+ *
+ * So they are declared as two banners here, sharing one section id and one
+ * store: a single fetch resolves both, and ./tileIcons' merge-on-save means
+ * neither overwrites the other. That is why these two are the only banners
+ * whose `storeKey` and `sectionId` are shared.
+ *
+ * The artwork is 1350x535 -- landscape, and much wider than the 600x210 of the
+ * single banners, so ./SingleBanner takes its ratio from the tile rather than
+ * assuming one.
+ *
+ * THE SECOND BANNER IS A PLACEHOLDER AND IT IS STILL DRAWN. Its artwork is
+ * literally named `GiftCard_1350X535_Coming-Soon.png` and its link is the bare
+ * `shopify://collections` -- the collections list, not a collection. Zigly ship
+ * it that way and the app shows what the site shows; suppressing it would be
+ * this app deciding a merchant's placement was a mistake. Recorded so it is not
+ * read as a bug on first sight.
+ */
+export const PAWTY_BANNER: SingleBanner = {
+  storeKey: 'zigly.singleBanner.double.v1',
+  sectionId: DOG + 'redesign_custom_double_banner_FqtJbt',
+  fragment: 'redesign_custom_double_banner',
+  tiles: [
+    {
+      label: "Let's Paw-ty! Birthday shop",
+      path: '/collections/birthday-dog',
+      key: 'Birthday_Dog_1350X535_8042bd77-c0d9-4d63-b574-55a5f0167d05.png',
+    },
+  ],
+  // 1350x535, the double banner's own crop.
+  ratio: 1350 / 535,
+};
+
+export const GIFT_CARD_BANNER: SingleBanner = {
+  storeKey: 'zigly.singleBanner.double.v1',
+  sectionId: DOG + 'redesign_custom_double_banner_FqtJbt',
+  fragment: 'redesign_custom_double_banner',
+  tiles: [
+    {
+      label: 'Gift cards, coming soon',
+      // The theme's own `shopify://collections` -- the collections LIST.
+      path: '/collections',
+      key: 'GiftCard_1350X535_Coming-Soon.png',
+    },
+  ],
+  ratio: 1350 / 535,
+};
+
+/** The four the dashboard draws, in dashboard order. */
 export const DASHBOARD_BANNERS: readonly SingleBanner[] = [
   VET_CARE_BANNER,
+  PAWTY_BANNER,
+  GIFT_CARD_BANNER,
   LOGOS_BANNER,
 ];

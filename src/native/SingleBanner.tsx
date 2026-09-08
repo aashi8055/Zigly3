@@ -1,9 +1,10 @@
 /**
  * One full-width banner: an image, and usually a link.
  *
- * Draws the theme's `custom-single-banner` instances -- the Vet Care banner
- * (section thirteen) and the brand-claims strip that closes the dashboard.
- * ./singleBanners carries the data and why these are images and nothing else.
+ * Draws four of the dashboard's blocks -- the Vet Care banner (section
+ * thirteen), the two halves of the double banner (section eighteen), and the
+ * brand-claims strip that closes the page. ./singleBanners carries the data and
+ * why these are images and nothing else.
  *
  * A BANNER WITH NO LINK IS NOT A CONTROL. The brand-claims strip's
  * `button_link` is empty in the theme: it is a row of claim icons, a statement
@@ -20,10 +21,12 @@
  * these are full-bleed too -- which is a deliberate departure from this
  * section's own `border-radius: 10px`.
  *
- * THE ASPECT RATIO IS THE ARTWORK'S. The mobile crops are 600x210, so 20:7.
- * Stated as a ratio rather than a fixed height so the banner is the same shape
- * on every screen width, and `cover` then trims a sliver rather than
- * letterboxing.
+ * THE ASPECT RATIO COMES FROM THE BANNER, NOT FROM HERE. The
+ * `custom-single-banner` mobile crops are 600x210 (20:7) and the double
+ * banner's are 1350x535 (nearly 5:2), so one hardcoded ratio would letterbox
+ * one pair or crop the other -- and the crop would take the lettering with it,
+ * since these banners' words are inside the picture. A ratio rather than a
+ * fixed height, so a banner is the same shape at every screen width.
  *
  * NO LABEL TO FALL BACK ON, so an unresolved banner draws nothing at all
  * rather than a blank strip -- ./OfferRail carries that argument, and it is why
@@ -41,9 +44,6 @@ import {
   type TileRail,
 } from './tileIcons';
 import {useSectionData} from './useSectionData';
-
-/** 600x210, the mobile crop's own ratio. */
-const RATIO = 600 / 210;
 
 const EMPTY_ICONS: IconMap = {};
 
@@ -63,12 +63,14 @@ const SingleBanner = ({banner, onOpen}: Props) => {
 
   const pulse = usePulse(loading);
   const tile = banner.tiles[0];
+  // The artwork's own shape, per banner -- see `ratio` in ./singleBanners.
+  const ratio = banner.ratio;
   const image = tile ? icons[tile.key] : undefined;
 
   if (loading) {
     return (
       <View style={styles.root}>
-        <Block pulse={pulse} style={styles.placeholder} />
+        <Block pulse={pulse} style={[styles.placeholder, {aspectRatio: ratio}]} />
       </View>
     );
   }
@@ -89,7 +91,7 @@ const SingleBanner = ({banner, onOpen}: Props) => {
       <View style={styles.root}>
         <Image
           source={{uri: image}}
-          style={styles.image}
+          style={[styles.image, {aspectRatio: ratio}]}
           resizeMode="cover"
           accessibilityRole="image"
           accessibilityLabel={tile.label}
@@ -110,7 +112,7 @@ const SingleBanner = ({banner, onOpen}: Props) => {
         {({pressed}) => (
           <Image
             source={{uri: image}}
-            style={[styles.image, pressed && styles.pressed]}
+            style={[styles.image, {aspectRatio: ratio}, pressed && styles.pressed]}
             // `cover`: the crop is cut for this ratio, so this trims a sliver
             // rather than letterboxing the banner against the page.
             resizeMode="cover"
@@ -130,7 +132,6 @@ const styles = StyleSheet.create({
   },
   image: {
     width: '100%',
-    aspectRatio: RATIO,
   },
   pressed: {
     opacity: 0.86,
@@ -147,7 +148,6 @@ const styles = StyleSheet.create({
    */
   placeholder: {
     width: '100%',
-    aspectRatio: RATIO,
     borderRadius: 0,
   },
 });
