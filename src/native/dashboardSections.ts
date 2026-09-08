@@ -149,13 +149,32 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     native: true,
   },
   // --- Remaining ------------------------------------------------------------
-  /** Placed by ../webview/hotPicks, anchored after the cats rail. */
+  /**
+   * "Hot Picks of The Week", with a New Arrivals tab. Placed by
+   * ../webview/hotPicks, anchored after the cats rail.
+   *
+   * TWO CORRECTIONS TO WHAT THIS ENTRY FIRST SAID, both found when the section
+   * was actually built, and both the same mistake -- reading the manifest's
+   * first draft from a source the app had already abandoned.
+   *
+   * The title was "Hot Picks For Your Pet". The section is headed "Hot Picks of
+   * The Week", which is also its first tab's label; ../webview/hotPicks sets
+   * both to that string.
+   *
+   * The fragment was `home_arrival_section@dog`. That is the superseded source:
+   * the section used to be filled from the arrival rails on the pet pages, and
+   * ../webview/hotPicks records that this was "the wrong products under the
+   * right heading" because Zigly publish two collections for exactly this. It
+   * now reads /collections/hot-picks-squeaker-toys and /collections/hot-deals,
+   * so there is no section fragment behind it at all -- and the change dropped
+   * 894 KB of section HTML for two small queries.
+   */
   {
     key: 'hot-picks',
-    title: 'Hot Picks For Your Pet',
+    title: 'Hot Picks of The Week',
     source: 'graphql',
-    fragment: 'home_arrival_section@dog',
-    native: false,
+    fragment: null,
+    native: true,
   },
   /** Placed by ../webview/explorePicker, anchored after hot picks. */
   {

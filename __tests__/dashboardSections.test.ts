@@ -24,6 +24,25 @@ import {
 import {EXTRA_SECTIONS_SCRIPT} from '../src/webview/extraSections';
 
 /**
+ * The sections the app assembles rather than fetching whole, and why each one
+ * has no single section fragment to name.
+ *
+ * Kept as one list because two tests need it, and because the reasons differ --
+ * a rule like "graphql or frozen" would not hold: Everything For is
+ * section-sourced and still has nothing to name.
+ *
+ *   hot-picks    two of Zigly's own collections behind a tab. Its manifest
+ *                entry used to name `home_arrival_section@dog`, which is the
+ *                source ../src/webview/hotPicks abandoned as "the wrong
+ *                products under the right heading".
+ *   bestsellers  a GraphQL query against sort_by=best-selling.
+ *   everything   TWO fetched sections merged under tab labels no template has
+ *                (the dog page ships Puppy/Adult, the cat page Kitten/Cat).
+ *   instagram    frozen shortcodes; the one section not read from zigly.com.
+ */
+const ASSEMBLED = ['bestsellers', 'everything', 'hot-picks', 'instagram'];
+
+/**
  * The fragments ../src/webview/extraSections declares, in its own order.
  *
  * Read off the generated script rather than re-typing the array, so a section
@@ -108,12 +127,9 @@ describe('the manifest is the web dashboard, in the same order', () => {
 
     for (const section of DASHBOARD_SECTIONS) {
       if (section.fragment === null) {
-        // The three the app assembles rather than fetches whole: bestsellers
-        // (a GraphQL query), Instagram (frozen shortcodes), and Everything For
-        // (two fetched sections merged under relabelled tabs).
-        expect(['bestsellers', 'instagram', 'everything']).toContain(
-          section.key,
-        );
+        // The app assembles these rather than fetching a section whole; see
+        // ASSEMBLED below for what each one is and why.
+        expect(ASSEMBLED).toContain(section.key);
         continue;
       }
       const isKnown =
@@ -196,11 +212,7 @@ describe('the manifest is well formed', () => {
    */
   it('only allows a null fragment where the app assembles the section', () => {
     const assembled = DASHBOARD_SECTIONS.filter(s => s.fragment === null);
-    expect(assembled.map(s => s.key).sort()).toEqual([
-      'bestsellers',
-      'everything',
-      'instagram',
-    ]);
+    expect(assembled.map(s => s.key).sort()).toEqual(ASSEMBLED);
   });
 });
 
