@@ -31,9 +31,10 @@ first.
 - [ ] **Section heading, 17sp/700** — `TileRow`/`ProductRail`/`OfferRail`/
       `BrandRail` all state this separately. Check it does not read louder than
       the content, and that all four agree.
-- [ ] **Tab pills** — `ProductRail`, `ExploreSection`, `BrandRail` each draw
-      their own. Check the three look identical, and that the navy fill on the
-      selected one is legible.
+- [ ] **Tab pills** — `ProductRail`, `TabbedTileSection` and `BrandRail` each
+      draw their own. Check the three look identical, and that the navy fill on
+      the selected one is legible. (Explore and Everything For share
+      `TabbedTileSection`, so those two cannot disagree with each other.)
 
 ## 2. Per-section, most likely to be wrong
 
@@ -116,6 +117,14 @@ first.
       only dog products would mean the sort is being filtered somewhere.
 - [ ] **Bestsellers shows 12 cards** — the source page carries 22.
 
+- [ ] **Everything For: tabs say Dogs / Cats** — the app's own labels. If they
+      read Puppy/Adult or Kitten/Cat, the merge in `everything.ts` was lost.
+- [ ] **Everything For: 8 tiles under Dogs, 12 under Cats** — a short row means
+      a filename key no longer matches. The wet-dog-food-adult slot is absent on
+      purpose (it has a link and no artwork).
+- [ ] **Explore and Everything For look like the same component** — they are,
+      since `TabbedTileSection.tsx`. Only the tab wrapping differs (Explore
+      wraps, Everything does not).
 ## 3. Things only a real network shows
 
 - [ ] **First launch with no cache** — categories, breeds and Explore draw

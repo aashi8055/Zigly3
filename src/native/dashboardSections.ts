@@ -366,13 +366,30 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
    * tiles sit behind which label changes. A native version has to do the same
    * merge, which is why this is recorded here rather than looking like an
    * ordinary one-section fetch.
+   *
+   * TWO THINGS FOUND WHEN IT WAS BUILT.
+   *
+   * The Dogs tab is BOTH of the dog page's tabs together (Puppy + Adult) and
+   * the Cats tab is both of the cat page's (Kitten + Cat) -- so the merge is
+   * not tab-for-tab, and the two tabs a customer taps correspond to no single
+   * tab in either template.
+   *
+   * And one tile cannot be drawn at all: the dog page's Adult tab has a slot
+   * with a link (`shopify://collections/wet-dog-food-adult`) and no image. The
+   * theme's own loop skips it, these tiles carry no text, and a blank square
+   * that navigates is worse than one fewer tile -- so twenty of the
+   * twenty-one slots are drawn. ./everything records it so the absence is not
+   * read as an oversight.
+   *
+   * `theme`, because the tiles are block settings; only the artwork is
+   * learned, from both pages.
    */
   {
     key: 'everything',
     title: 'Everything For Your Pet',
-    source: 'section',
+    source: 'theme',
     fragment: null,
-    native: false,
+    native: true,
   },
   {
     key: 'double-banner',
