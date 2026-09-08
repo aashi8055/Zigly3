@@ -115,7 +115,6 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     native: true,
   },
 
-  // --- Remaining ------------------------------------------------------------
   /**
    * The two breed rails, dogs then cats.
    *
@@ -123,21 +122,33 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
    * Both source sections are titled "Breed Ready Picks"; the suffixes are the
    * app's own, added because the two are shown together here and the site never
    * shows them that way.
+   *
+   * `theme`, not `graphql`: these are breed *cards* -- artwork, a label and a
+   * page link, all of them theme blocks -- not product cards. No product data is
+   * involved. The artwork URLs are learned from the rendered section the way the
+   * category circles' are; see ./tileIcons.
+   *
+   * The two rails come from two different pages, which is not obvious and is
+   * forced by the theme: the dog page's section carries 25 enabled `dog_card`
+   * blocks AND 7 `cat_card` blocks that are all `disabled` with wrong URLs
+   * (Tabby pointing at Pedigree dog food). The cats therefore come from
+   * `/pages/cat`. ./breeds carries the full reading.
    */
   {
     key: 'breeds-dogs',
     title: 'Breed Ready Picks - Dogs',
-    source: 'graphql',
+    source: 'theme',
     fragment: 'home_shop_by_breed_section@dog',
-    native: false,
+    native: true,
   },
   {
     key: 'breeds-cats',
     title: 'Breed Ready Picks - Cats',
-    source: 'graphql',
+    source: 'theme',
     fragment: 'home_shop_by_breed_section@cat',
-    native: false,
+    native: true,
   },
+  // --- Remaining ------------------------------------------------------------
   /** Placed by ../webview/hotPicks, anchored after the cats rail. */
   {
     key: 'hot-picks',

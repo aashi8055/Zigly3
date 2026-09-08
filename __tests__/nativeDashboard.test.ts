@@ -23,12 +23,19 @@
  * little untidy in the ways real Shopify output is: mixed casing, attributes in
  * varying order, a lazy-loaded image whose `src` is a placeholder.
  */
+import {CATEGORIES, CATEGORY_RAIL} from '../src/native/categoryIcons';
 import {
-  CATEGORIES,
-  loadCategoryIcons,
-  parseIconUrls,
-  saveCategoryIcons,
-} from '../src/native/categoryIcons';
+  CAT_BREED_RAIL,
+  CAT_BREED_TITLE,
+  DOG_BREED_RAIL,
+  DOG_BREED_TITLE,
+} from '../src/native/breeds';
+import {
+  loadIcons,
+  matchesKey,
+  parseIcons,
+  saveIcons,
+} from '../src/native/tileIcons';
 import {
   loadBannerSlides,
   parseBannerSlides,
@@ -103,7 +110,7 @@ describe('reading the icons out of a rendered rail', () => {
     </div></div></div>`;
 
   it('finds an icon for every one of the eight blocks', () => {
-    const icons = parseIconUrls(RAIL);
+    const icons = parseIcons(RAIL, CATEGORIES);
     for (const item of CATEGORIES) {
       expect(icons[item.key]).toBeDefined();
     }
@@ -111,7 +118,7 @@ describe('reading the icons out of a rendered rail', () => {
 
   /** Shopify's most common form, and it is not a usable `Image` source. */
   it('makes protocol-relative URLs absolute', () => {
-    const icons = parseIconUrls(RAIL);
+    const icons = parseIcons(RAIL, CATEGORIES);
     expect(icons.Dog.startsWith('https://')).toBe(true);
     expect(icons.Dog).toContain('Dog_194aa273');
   });
@@ -122,14 +129,14 @@ describe('reading the icons out of a rendered rail', () => {
    * then drops -- so the circle would silently lose its picture.
    */
   it('falls back to srcset when src is a data placeholder', () => {
-    const icons = parseIconUrls(RAIL);
+    const icons = parseIcons(RAIL, CATEGORIES);
     expect(icons['Small-Pets']).toContain('Small-Pets_option-2');
     expect(icons['Small-Pets'].startsWith('https://')).toBe(true);
   });
 
   /** Attribute order and tag casing are Shopify's, not ours. */
   it('does not depend on attribute order or tag case', () => {
-    const icons = parseIconUrls(RAIL);
+    const icons = parseIcons(RAIL, CATEGORIES);
     expect(icons.Cat).toContain('Cat_1_de1ed9cd');
   });
 
@@ -148,7 +155,7 @@ describe('reading the icons out of a rendered rail', () => {
        <div class="home-category-list-card swiper-slide">
          <img src="${CDN}/Birds_new_block.png"><h5>Birds</h5></div>`,
     );
-    const icons = parseIconUrls(withExtra);
+    const icons = parseIcons(withExtra, CATEGORIES);
     expect(icons.Dog).toContain('Dog_194aa273');
     expect(icons.Cat).toContain('Cat_1_de1ed9cd');
     expect(icons.Grooming).toContain('Grooming_32a60d0f');
@@ -162,24 +169,25 @@ describe('reading the icons out of a rendered rail', () => {
    * same response.
    */
   it('matches a whole filename stem, not a prefix of a longer word', () => {
-    const icons = parseIconUrls(
+    const icons = parseIcons(
       `<img src="${CDN}/allergy-banner.png"><img src="${CDN}/Catalogue_hero.png">`,
+      CATEGORIES,
     );
     expect(icons.All).toBeUndefined();
     expect(icons.Cat).toBeUndefined();
   });
 
   it('returns nothing for markup with no images, rather than throwing', () => {
-    expect(parseIconUrls('<div>no images here</div>')).toEqual({});
-    expect(parseIconUrls('')).toEqual({});
+    expect(parseIcons('<div>no images here</div>', CATEGORIES)).toEqual({});
+    expect(parseIcons('', CATEGORIES)).toEqual({});
   });
 });
 
 describe('the icon store', () => {
   it('round-trips through storage', async () => {
-    const saved = await saveCategoryIcons({Dog: `${CDN}/Dog_x.png`});
+    const saved = await saveIcons(CATEGORY_RAIL, {Dog: `${CDN}/Dog_x.png`});
     expect(saved.Dog).toBe(`${CDN}/Dog_x.png`);
-    expect((await loadCategoryIcons()).Dog).toBe(`${CDN}/Dog_x.png`);
+    expect((await loadIcons(CATEGORY_RAIL)).Dog).toBe(`${CDN}/Dog_x.png`);
   });
 
   /**
@@ -187,8 +195,8 @@ describe('the icon store', () => {
    * had already found -- which is why icons merge and slides do not.
    */
   it('merges over what is already stored', async () => {
-    const known = await saveCategoryIcons({Cat: `${CDN}/Cat_a.png`});
-    const merged = await saveCategoryIcons({Grooming: `${CDN}/Grooming_b.png`}, known);
+    const known = await saveIcons(CATEGORY_RAIL, {Cat: `${CDN}/Cat_a.png`});
+    const merged = await saveIcons(CATEGORY_RAIL, {Grooming: `${CDN}/Grooming_b.png`}, known);
     expect(merged.Cat).toBe(`${CDN}/Cat_a.png`);
     expect(merged.Grooming).toBe(`${CDN}/Grooming_b.png`);
   });
@@ -198,7 +206,7 @@ describe('the icon store', () => {
    * string must not be able to decide what the app loads.
    */
   it('refuses anything that is not an https URL', async () => {
-    const saved = await saveCategoryIcons({
+    const saved = await saveIcons(CATEGORY_RAIL, {
       Dog: 'javascript:alert(1)',
       Cat: 'file:///etc/passwd',
       All: '/relative/path.png',
@@ -341,5 +349,143 @@ describe('the slide store', () => {
     // Kept as a slide, but not as a link.
     expect(saved[0].link).toBeNull();
     expect(saved[1].link).toBeNull();
+  });
+});
+
+describe('the breed rails', () => {
+  /**
+   * WHY THE CATS DO NOT COME FROM THE DOG PAGE, asserted rather than
+   * remembered.
+   *
+   * `templates/page.dog.json`'s breed section carries 32 blocks: 25 `dog_card`
+   * and 7 `cat_card`. Every one of the seven cat blocks is `"disabled": true`,
+   * and their URLs point at products and collections rather than breed pages --
+   * "Tabby" links to Pedigree *dog* food, "Maine Coon" to a test collection.
+   * Zigly disabled them for a reason, and a native rebuild that read the dog
+   * page's blocks wholesale would resurrect all seven.
+   *
+   * `templates/page.cat.json` carries the same section with 7 enabled cat
+   * blocks whose URLs are the real breed pages, which is where these come from.
+   */
+  it('takes 25 dogs from the dog page and 7 cats from the cat page', () => {
+    expect(DOG_BREED_RAIL.tiles).toHaveLength(25);
+    expect(CAT_BREED_RAIL.tiles).toHaveLength(7);
+  });
+
+  /** Every cat tile goes to a breed page, not to a product or a collection. */
+  it('sends every cat breed to its own breed page', () => {
+    for (const tile of CAT_BREED_RAIL.tiles) {
+      expect(tile.path.startsWith('/pages/')).toBe(true);
+    }
+    const tabby = CAT_BREED_RAIL.tiles.find(t => t.label === 'Tabby');
+    // The dog page's disabled Tabby block pointed here instead.
+    expect(tabby?.path).toBe('/pages/tabby');
+    expect(tabby?.path).not.toContain('pedigree');
+  });
+
+  it('sends every dog breed to a storefront page', () => {
+    for (const tile of DOG_BREED_RAIL.tiles) {
+      expect(tile.path.startsWith('/pages/')).toBe(true);
+      expect(tile.path).not.toContain('shopify://');
+    }
+  });
+
+  /**
+   * The two source sections share a heading, "Breed Ready Picks". The app is
+   * the only place they appear together, so the suffixes are its own -- and two
+   * identical headings back to back is the defect that returns if a rewrite
+   * takes titles from the theme.
+   */
+  it('disambiguates two rails the site titles identically', () => {
+    expect(DOG_BREED_TITLE).toBe('Breed Ready Picks - Dogs');
+    expect(CAT_BREED_TITLE).toBe('Breed Ready Picks - Cats');
+    expect(DOG_BREED_TITLE).not.toBe(CAT_BREED_TITLE);
+  });
+
+  /**
+   * A stem shared by two tiles would have both claim the first matching image.
+   * Worth asserting because the stems are irregular -- `Rott`, `Dashchund`,
+   * `dalmatin`, `French_Bull` -- and a plausible-looking tidy-up could collide
+   * two of them.
+   */
+  it('gives every tile a unique filename stem, per rail', () => {
+    for (const rail of [DOG_BREED_RAIL, CAT_BREED_RAIL, CATEGORY_RAIL]) {
+      const keys = rail.tiles.map(t => t.key);
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+
+  /** The two rails must not share a cache, or one would overwrite the other. */
+  it('keeps the two rails in separate stores', () => {
+    expect(DOG_BREED_RAIL.storeKey).not.toBe(CAT_BREED_RAIL.storeKey);
+    expect(DOG_BREED_RAIL.sectionId).not.toBe(CAT_BREED_RAIL.sectionId);
+  });
+
+  /**
+   * The theme's filenames are irregular and the stems are read from them, never
+   * derived from the label. These four are the ones a tidy-minded rewrite would
+   * "correct" and thereby break.
+   */
+  it('pairs artwork despite the theme spelling filenames its own way', () => {
+    const html = [
+      `<img src="${CDN}/Rott.png">`,
+      `<img src="${CDN}/Dashchund.png">`,
+      `<img src="${CDN}/dalmatin.png">`,
+      `<img src="${CDN}/French_Bull.png">`,
+      `<img src="${CDN}/German-Shephard_300X300_24cf0baa.png">`,
+    ].join('');
+    const icons = parseIcons(html, DOG_BREED_RAIL.tiles);
+    expect(icons.Rott).toContain('Rott.png');
+    expect(icons.Dashchund).toContain('Dashchund.png');
+    expect(icons.dalmatin).toContain('dalmatin.png');
+    expect(icons.French_Bull).toContain('French_Bull.png');
+    expect(icons['German-Shephard']).toContain('German-Shephard');
+  });
+
+  /**
+   * `Pug` must not claim a Puggle, and the lowercase `boxer` stem must still
+   * match a capitalised file. The separator rule is what makes both true.
+   */
+  it('does not let a short stem claim a longer breed name', () => {
+    const icons = parseIcons(
+      `<img src="${CDN}/Puggle_300X300.png"><img src="${CDN}/Boxer_1.png">`,
+      DOG_BREED_RAIL.tiles,
+    );
+    expect(icons.Pug).toBeUndefined();
+    expect(icons.boxer).toContain('Boxer_1.png');
+  });
+
+  it('stores and reloads a breed rail independently', async () => {
+    await saveIcons(DOG_BREED_RAIL, {Pug: `${CDN}/Pug_a.png`});
+    await saveIcons(CAT_BREED_RAIL, {Tabby: `${CDN}/Tabby_b.png`});
+    const dogs = await loadIcons(DOG_BREED_RAIL);
+    const cats = await loadIcons(CAT_BREED_RAIL);
+    expect(dogs.Pug).toContain('Pug_a.png');
+    expect(dogs.Tabby).toBeUndefined();
+    expect(cats.Tabby).toContain('Tabby_b.png');
+    expect(cats.Pug).toBeUndefined();
+  });
+});
+
+describe('stem matching, directly', () => {
+  it('accepts a stem followed by a separator or nothing', () => {
+    expect(matchesKey('https://x/Pug.png', 'Pug')).toBe(true);
+    expect(matchesKey('https://x/Pug_300.png', 'Pug')).toBe(true);
+    expect(matchesKey('https://x/Pug-300.png', 'Pug')).toBe(true);
+  });
+
+  it('rejects a stem that runs into more letters', () => {
+    expect(matchesKey('https://x/Puggle.png', 'Pug')).toBe(false);
+    expect(matchesKey('https://x/allergy.png', 'All')).toBe(false);
+  });
+
+  it('ignores case, because the theme does', () => {
+    expect(matchesKey('https://x/BOXER.png', 'boxer')).toBe(true);
+    expect(matchesKey('https://x/boxer.png', 'Boxer')).toBe(true);
+  });
+
+  /** A `?v=` cache stamp must not defeat the separator test. */
+  it('ignores a query string', () => {
+    expect(matchesKey('https://x/Pug.png?v=123', 'Pug')).toBe(true);
   });
 });
