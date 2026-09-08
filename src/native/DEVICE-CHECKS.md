@@ -125,6 +125,35 @@ first.
 - [ ] **Explore and Everything For look like the same component** — they are,
       since `TabbedTileSection.tsx`. Only the tab wrapping differs (Explore
       wraps, Everything does not).
+- [ ] **Instagram: 8 square cards, 46% wide** — `InstagramRail.tsx`. Matches
+      the `.zigly-ig` CSS measurement for measurement (14dp radius, 12dp gap,
+      `#EFEFEF` ground). Two and a bit cards on screen.
+- [ ] **Instagram: reel badge on 6 of 8** — 26dp at top/right 8dp,
+      `rgba(0,0,0,0.45)`, white play triangle. Photos get none. If all eight
+      carry one, `isVideo` was lost.
+- [ ] **Instagram: order is NOT grouped by type** — reels and photos
+      interleaved, as the account has them. A tidy "all reels first" is the
+      regression to watch for.
+- [ ] **Instagram tap opens the Instagram app** — `instagram.com` is in
+      `EXTERNAL_HOSTS`, so it should hand off, not open a login wall inside the
+      shopping session.
+- [ ] **Instagram works in airplane mode, first launch** — covers are bundled
+      JPEGs, so this section needs no network at all. Along with the price
+      tiles, it is one of only two that are fully present offline.
+- [ ] **Video block: poster, heading, paragraph on navy** — `VideoBlock.tsx`.
+      No play glyph unless an `onPlay` handler is wired (see the open decision
+      in that file). Check the white-on-navy paragraph is comfortable to read.
+- [ ] **Community cards stack, 2 of them** — `CommunityCards.tsx`. Logos are
+      `contain`ed, so check no wordmark is cut. Both "Know More" buttons should
+      leave the app.
+- [ ] **Article cards, 1.5 on screen** — `TipsRail.tsx`, the theme's own
+      `slidesPerView: 1.5`, so these are the widest cards on the dashboard.
+      Check titles clamp at two lines and the "View All" link sits on the
+      heading row.
+- [ ] **Article cards are the only section fed by parsed HTML** — if this one
+      is empty while others draw, the theme's article-card class names changed.
+      That is the fragility the blog-scope constraint forces.
+
 ## 3. Things only a real network shows
 
 - [ ] **First launch with no cache** — categories, breeds and Explore draw

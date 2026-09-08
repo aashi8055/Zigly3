@@ -452,15 +452,15 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     title: 'From Our Instagram',
     source: 'frozen',
     fragment: null,
-    native: false,
+    native: true,
   },
   /** The brand-claims logo strip. Last, so it sits directly above the footer. */
   {
     key: 'logos',
     title: null,
-    source: 'section',
+    source: 'theme',
     fragment: 'custom_single_banner#3',
-    native: false,
+    native: true,
   },
 ];
 
