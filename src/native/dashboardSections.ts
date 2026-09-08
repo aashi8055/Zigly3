@@ -241,12 +241,32 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     fragment: 'best_deals',
     native: true,
   },
+  /**
+   * "Top Pet Brands, One Spot!" -- two tabs of brand logos.
+   *
+   * `graphql`, and the only section so far whose content is neither theme
+   * settings nor products: its template entry carries ZERO blocks, because
+   * `home-shop-by-brand-section-dog.liquid` reads
+   * `shop.metaobjects.brand_navigation.values` instead. Verified live -- one
+   * metaobject, 24 brands across two tabs, resolvable in one query.
+   *
+   * THE FIELDS ARE PER-PET. The metaobject carries five variants of each list
+   * (no suffix, `_cat`, `_dog`, `_newpawrent`, `_smallpets`) and the Liquid
+   * picks by section type. The dashboard is the dog page, so `_dog` is right;
+   * the unsuffixed pair would be a different brand list under the same
+   * heading, and it would look entirely plausible.
+   *
+   * THREE SECTION TYPES SHARE THIS SECTION ID, with three headings: the
+   * homepage's "Shop By Brands", the dog page's "Top Pet Brands, One Spot!"
+   * and the cat page's "Top Pet Brands, One Place". ../webview/extraSections
+   * moves the dog page's onto the dashboard, so that is the heading.
+   */
   {
     key: 'brands',
     title: 'Top Pet Brands, One Spot!',
-    source: 'section',
+    source: 'graphql',
     fragment: 'home_shop_by_brand_section',
-    native: false,
+    native: true,
   },
   /** The six price tiles, laid out 2x3 rather than as a rail. */
   {
