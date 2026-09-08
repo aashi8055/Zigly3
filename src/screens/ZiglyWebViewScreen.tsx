@@ -42,6 +42,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
@@ -152,10 +153,12 @@ import {
   onDashboard,
   openPage,
   sameDocument,
+  sameListingResults,
   visibleLayer,
 } from '../navigation/pageStack';
 import type {PageStack} from '../navigation/pageStack';
 import BottomNav from '../components/BottomNav';
+import NativeDashboard from '../native/NativeDashboard';
 import SortFilterBar from '../components/SortFilterBar';
 import ProductActionBar from '../components/ProductActionBar';
 import {
@@ -555,16 +558,38 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /**
    * The dashboard itself has something to show.
    *
-   * The one thing standing between the splash and the raw WebView. The splash
-   * has its own failsafe timers and can retire before `dashboard-ready` fires
-   * -- a slow network must not trap the customer behind a still logo -- but
-   * that must not hand them the half-built mobile website either. So this is
-   * decoupled from the splash entirely: false until the real signal (or a
-   * load error, or its own longer failsafe below) says otherwise, and
-   * `PageCover` draws the dashboard's shape over the WebView for as long as it
-   * stays false. See HOME_COVER_MAX_MS in ../constants/appConstants.
+   * The one thing standing between the splash and an unpainted dashboard. The
+   * splash has its own failsafe timers and can retire before the dashboard is
+   * ready -- a slow network must not trap the customer behind a still logo --
+   * but that must not hand them a half-built screen either. So this is
+   * decoupled from the splash entirely: false until the dashboard says
+   * otherwise (or a load error, or its own longer failsafe below), and
+   * `PageCover` draws the dashboard's shape over it for as long as it stays
+   * false. See HOME_COVER_MAX_MS in ../constants/appConstants.
+   *
+   * WHAT SETS IT HAS CHANGED WITH THE NATIVE DASHBOARD. It used to wait on
+   * ../webview/readySignal reporting from inside the page that the
+   * transplanted sections had landed -- a real signal, because the page was
+   * assembling itself out of a dozen fetches and "loaded" meant nothing. The
+   * native dashboard has nothing to wait for: its sections are components, and
+   * the ones that fetch hold their own skeletons. So its first layout is the
+   * moment there is something real on screen, which is what
+   * `handleDashboardPainted` reports.
+   *
+   * The WebView's signal is still handled, and deliberately: it is harmless
+   * (both paths set the same flag) and it is what would reveal the dashboard
+   * again if the native list were ever taken back out.
    */
   const [homePainted, setHomePainted] = useState(false);
+
+  /**
+   * The screen's width, for the dashboard sections that size against it.
+   *
+   * From `useWindowDimensions` rather than `Dimensions.get`, so a rotation or
+   * a fold re-renders the sections that measure themselves -- the Instagram
+   * rail's snap interval and the article cards' 1.5-cards-on-screen width.
+   */
+  const {width: windowWidth} = useWindowDimensions();
   /**
    * A profile edit, laid over what the site rendered.
    *
@@ -1138,6 +1163,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /** This layer has something to show; PageCover comes off it. */
   const markPainted = useCallback((key: number) => {
     setPaintedLayers(prev => (prev.includes(key) ? prev : [...prev, key]));
+  }, []);
+
+  /**
+   * The native dashboard has laid out; its cover comes off.
+   *
+   * Fires on every layout, not just the first -- a rotation lays it out again
+   * -- so it is guarded rather than assumed to run once. `setHomePainted`
+   * would bail on an unchanged value anyway; the guard is here to say that
+   * repeat calls are expected.
+   *
+   * Layout rather than a data signal, deliberately. Waiting for content would
+   * mean waiting for whichever section fetches slowest, and there is no reason
+   * to: the category circles, breed rails, price tiles and Instagram are all
+   * complete from the app itself, so the first screenful is real before any
+   * request returns. The sections that do fetch hold their own skeletons.
+   */
+  const handleDashboardPainted = useCallback(() => {
+    setHomePainted(current => (current ? current : true));
   }, []);
 
   /**
@@ -1836,6 +1879,92 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * travelled with raised a toast. That is what keeps this from disturbing the
    * flow -- it changes what the customer is *told*, never what the app knows.
    */
+  /**
+   * What a product card on the page is actually made of.
+   *
+   * Read-only, and logged rather than acted on: this exists because every
+   * SearchTap rule in ../webview/productCard.ts is scoped to a class name
+   * transcribed by hand out of their bundle, and a wrong name produces valid
+   * CSS that matches nothing -- the card reverts to the raw site design the
+   * moment a sort is applied, and no string test can see it. See
+   * ../webview/cardProbe.ts.
+   *
+   * `listingFlag` is checked first on purpose. Every card rule hangs off
+   * `body.zigly-listing`, so if that is missing the class names are not the
+   * problem and nothing in productCard.ts could match whatever the card is.
+   */
+  const reportCardProbe = useCallback(
+    (data: {
+      url?: unknown;
+      listingFlag?: unknown;
+      styles?: unknown;
+      cardCount?: unknown;
+      cards?: unknown;
+    }) => {
+      const cards = Array.isArray(data.cards) ? data.cards : [];
+      if (data.listingFlag !== true) {
+        warn(
+          '[card-probe] no zigly-listing flag on',
+          String(data.url ?? ''),
+          '-- no card rule can match; see listingPage.ts',
+        );
+        return;
+      }
+      log(
+        '[card-probe]',
+        String(data.url ?? ''),
+        'cards:',
+        String(data.cardCount ?? 0),
+        'styles:',
+        JSON.stringify(data.styles ?? null),
+      );
+      cards.forEach((card, index) => {
+        const one = card as {
+          engine?: unknown;
+          parts?: Record<string, string>;
+          rootClasses?: unknown;
+          vocabulary?: unknown;
+        };
+        const parts = one.parts ?? {};
+        // The names that should have matched and did not. This list IS the
+        // answer when the card reverts: each entry is a rule doing nothing.
+        const absent = Object.keys(parts).filter(
+          name => parts[name] === 'absent',
+        );
+        log(
+          `[card-probe] card ${index} engine=${String(one.engine)}`,
+          'root:',
+          JSON.stringify(one.rootClasses ?? []),
+        );
+        const bearers = (one as {bearers?: Record<string, unknown>}).bearers;
+        if (bearers) {
+          // The rows that keep coming back, named by what actually carries
+          // them -- this IS the selector to write, when a guessed class name
+          // has already failed.
+          log(`[card-probe] card ${index} bearers:`, JSON.stringify(bearers));
+        }
+        const rating = (one as {rating?: unknown[]}).rating;
+        if (Array.isArray(rating)) {
+          // Empty means no rating markup in the card at all -- the one case
+          // that cannot be fixed with CSS. Anything listed, even 'hidden',
+          // means the rating is a restyle like every other row.
+          log(
+            `[card-probe] card ${index} rating markup:`,
+            rating.length ? JSON.stringify(rating) : 'NONE (cannot be restyled)',
+          );
+        }
+        if (absent.length) {
+          warn(`[card-probe] card ${index} parts NOT found:`, absent.join(' '));
+          log(
+            `[card-probe] card ${index} actual classes:`,
+            JSON.stringify(one.vocabulary ?? []),
+          );
+        }
+      });
+    },
+    [],
+  );
+
   const reportCartAdded = useCallback((count?: number) => {
     const now = Date.now();
     // `null` is "no toast has been raised yet", which is not the same as one
@@ -2833,6 +2962,67 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     [closeAccountSection, closeMenu, openAccountSection, showPage],
   );
 
+  /**
+   * A section of the native dashboard was tapped.
+   *
+   * The same rules `openFromMenu` applies, and for the same reason: a tap can
+   * be a storefront path, Zigly's own account route, or a host that leaves the
+   * app -- and which of those it is must be decided in one place. Three
+   * sections pass absolute URLs on purpose:
+   *
+   *   Zigly Coins        ziglyprime.erlpaas.com -- an INTERNAL host, kept
+   *                      in-app because that flow asks for a mobile number
+   *                      and broke when it was sent to a browser
+   *   community partners ziglyfoundation.com and an Instagram profile
+   *   Instagram rail     instagram.com, so it hands off to the Instagram app
+   *
+   * `classifyUrl` already knows all three, so this does not decide anything of
+   * its own -- it routes.
+   *
+   * Paths are made absolute first. The sections carry storefront paths
+   * (`/collections/dog-food`) because that is what the theme gives them, and
+   * `classifyUrl` needs a URL to read a host off.
+   */
+  const openFromDashboard = useCallback(
+    (target: string) => {
+      const url = target.startsWith('/') ? `${ZIGLY_ORIGIN}${target}` : target;
+      const action = classifyUrl(url);
+      if (action.kind === 'appIntent' || action.kind === 'external') {
+        Linking.openURL(action.url).catch(() =>
+          warn('could not open', action.url),
+        );
+        return;
+      }
+      if (isAccountUrl(url)) {
+        openAccountSection();
+        return;
+      }
+      closeAccountSection();
+      setWishlistOpen(false);
+      showPage(url);
+    },
+    [closeAccountSection, openAccountSection, showPage],
+  );
+
+  /**
+   * Add to Bag from a native product card.
+   *
+   * Through the dashboard WebView, exactly as the wishlist screen does: the app
+   * has one session and it lives in that cookie jar, so a native fetch would
+   * write to a different cart than the customer is shopping (DATA-SOURCES.md
+   * §7). The toast and the badge follow from the bridge's reply.
+   *
+   * Only ever called with a single-variant id -- ../native/ProductCard routes a
+   * product with choices to `openFromDashboard` instead, because
+   * ../webview/cartBridge must never be handed a guess.
+   */
+  const addFromDashboard = useCallback(
+    (variantId: number) => {
+      injectInto('home', addToCartScript(variantId));
+    },
+    [injectInto],
+  );
+
   const openAccountFromMenu = useCallback(() => {
     closeMenu();
     setWishlistOpen(false);
@@ -3804,20 +3994,27 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         cartCount={cartCount}
         wishlistCount={wishlistCount}
         /*
-         * Never. The band is a section of the page now -- see
-         * ../webview/searchBandSection -- and drawing the native one as well
-         * is exactly the bug that ended the previous approach: a collapsible
-         * bar above the WebView and the page's own band below it, with the
-         * space for each.
+         * ON THE DASHBOARD ONLY, and the reason changed with the native
+         * dashboard.
          *
-         * The prop and everything behind it stay, rather than being deleted
-         * with the call site. The header still owns the band's appearance, and
-         * SEARCH_BAND_H there is still what header.test.tsx holds the injected
-         * section's height to; more importantly a page whose injection has not
-         * landed has no band at all, and this is the one thing that could put
-         * it back. Turning it on is a one-word change.
+         * This was `false` everywhere. The band is a section of the *page*
+         * (../webview/searchBandSection), injected into the WebView, and
+         * drawing the native one as well was the bug that ended the previous
+         * approach: a collapsible bar above the WebView and the page's own
+         * band below it, with the space for each.
+         *
+         * That argument still holds for every page layer -- they are WebViews
+         * showing zigly.com, the injection lands, and the band is theirs. It
+         * no longer holds for the dashboard: the native list is drawn over the
+         * WebView, so the injected band is behind it and invisible. Without
+         * this the dashboard would have no search at all.
+         *
+         * The note that ended the old comment turned out to be exactly right:
+         * "a page whose injection has not landed has no band at all, and this
+         * is the one thing that could put it back. Turning it on is a one-word
+         * change."
          */
-        showSearch={false}
+        showSearch={onDashboard(stack) && !searchOpen && !showCart}
         // No wishlist on the dashboard -- that matches the reference too. The
         // cart screen is the other place it appears: the reference drops the
         // bag there (you are already in the bag) and shows the heart instead.
@@ -3840,7 +4037,22 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         // native band to collapse. The scroll listener that used to drive this
         // is gone too -- the band is a section of the page, so the page's own
         // scrolling is the whole mechanism.
-        searchCollapsed={false}
+        /*
+         * Folded away while the drawer is open.
+         *
+         * This mattered, was solved by not drawing the band at all, and matters
+         * again now that the dashboard draws it. The native band sits above the
+         * `body` view -- outside everything the drawer covers -- so an expanded
+         * band stands over the open drawer panel as a pale blue strip belonging
+         * to a screen nobody is looking at. `../../__tests__/menu.test.tsx`
+         * caught exactly that when `showSearch` was turned on for the
+         * dashboard, which is the whole reason that test exists.
+         *
+         * Collapsing rather than hiding, because the header animates the band's
+         * height: hiding it would drop the space in one frame while the drawer
+         * is sliding in.
+         */
+        searchCollapsed={menuOpen}
         searchPlaceholders={searchPlaceholders}
         searchTypeMs={searchTypeMs}
         showBack={
@@ -3947,6 +4159,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 saveSectionIds(data.ids, sectionIds.current).then(merged => {
                   sectionIds.current = merged;
                 });
+              } else if (data && data.tag === 'card-probe') {
+                reportCardProbe(data);
               } else if (data && data.tag === 'restyle-missing') {
                 /*
                  * A repeat pass found no stylesheet of ours on the document.
@@ -4146,12 +4360,49 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         />
 
         {/*
-          The dashboard's own shape, over its WebView until `homePainted` says
-          otherwise -- see the state declaration above for why that is not the
-          same moment the splash retires. `crossfade` is always false: on a
-          fresh launch there is nothing behind it worth dissolving over, and
-          the only other time this reloads is a retry after a failed load,
-          where there is nothing good behind it either.
+          THE DASHBOARD, NATIVE, drawn over the WebView that stays mounted
+          beneath it.
+
+          The WebView is not a fallback and is not going away: it is the app's
+          session. The cart cookie, the wishlist, the search suggestions and
+          every /cart/add.js post live in that jar -- DATA-SOURCES.md §7 opens
+          on exactly this -- so `addFromDashboard` reports a variant id into it
+          rather than fetching natively, and the counters this screen shows are
+          still read from it. What has changed is that nobody looks at it.
+
+          Absolutely positioned like a page layer, so the layers this screen
+          pushes still cover it and Back still returns here instantly with its
+          scroll intact.
+
+          `onPainted` takes over from the WebView's ready signal: the cover
+          used to wait on ../webview/readySignal reporting that the transplanted
+          sections had landed, and there is nothing to wait for now -- the
+          sections are components. The first layout is the moment there is
+          something real on screen.
+        */}
+        <View style={styles.pageLayer}>
+          <NativeDashboard
+            width={windowWidth}
+            onOpen={openFromDashboard}
+            onAdd={addFromDashboard}
+            /*
+             * No `onPlayVideo`. React Native has no <Video> and no media
+             * package is installed, so the promotional block draws its poster,
+             * heading and copy -- which is what the site shows before a tap
+             * too -- and shows no play glyph while this is undefined. See the
+             * note in ../native/VideoBlock for the two ways it could be wired.
+             */
+            onPainted={handleDashboardPainted}
+          />
+        </View>
+
+        {/*
+          The dashboard's own shape, over the native dashboard until
+          `homePainted` says otherwise -- see the state declaration above for
+          why that is not the same moment the splash retires. `crossfade` is
+          always false: on a fresh launch there is nothing behind it worth
+          dissolving over, and the only other time this reloads is a retry
+          after a failed load, where there is nothing good behind it either.
         */}
         <PageCover ready={homePainted} crossfade={false} variant="home" />
 
@@ -4445,8 +4696,24 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                    * The renderer dying is the fourth, and it is handled where it
                    * happens: there the page really is gone, so it re-covers.
                    */
+                  /*
+                   * And a fifth, which is why sameDocument is not the whole
+                   * test: SearchTap applies a sort or a filter by rewriting
+                   * the url -- a pushState, which Android reports here exactly
+                   * like a navigation. It is the same page, re-sorted, and the
+                   * customer is looking at it. Covering it would throw away the
+                   * results SearchTap holds in memory, and because a pushState
+                   * loads no document nothing would ever post `page-ready` to
+                   * lift the cover again -- so it would sit over the results
+                   * until the blanket deadline expired.
+                   */
                   const committed = committedUrls.current.get(layer.key);
-                  if (committed === undefined || !sameDocument(committed, url)) {
+                  const resorted =
+                    committed !== undefined && sameListingResults(committed, url);
+                  if (
+                    !resorted &&
+                    (committed === undefined || !sameDocument(committed, url))
+                  ) {
                     unmarkPainted(layer.key);
                   }
                 }}
@@ -4471,11 +4738,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   if (getInjectionForUrl(url) === null) {
                     markPainted(layer.key);
                   }
+                  /*
+                   * A sort or a filter is a pushState, and Android reports one
+                   * here as well as at onLoadStart -- but no document arrived,
+                   * so nothing this app injected has been unloaded and there is
+                   * nothing to install again. Re-running the whole payload
+                   * would push half a megabyte of JavaScript across the bridge
+                   * onto the one thread SearchTap is using to render the
+                   * re-sorted grid, and tear down and rebuild the search band
+                   * under the customer on every tap.
+                   *
+                   * Read before the committed url is overwritten below, which
+                   * is what it has to be compared against.
+                   */
+                  const previous = committedUrls.current.get(layer.key);
+                  const resorted =
+                    previous !== undefined && sameListingResults(previous, url);
                   // What the next onLoadStart is compared against. Set after the
                   // reveal decision above, never before: it is a record of what
                   // this layer is now showing.
                   committedUrls.current.set(layer.key, url);
-                  applyStyles(layer.key, url);
+                  if (!resorted) {
+                    applyStyles(layer.key, url);
+                  }
                 }}
                 onError={({nativeEvent}) => {
                   // Not promoted to the offline screen: the header's back arrow
@@ -4495,6 +4780,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       // Shopping pages carry the band too; see the dashboard's
                       // handler above.
                       openSearch();
+                    } else if (data && data.tag === 'card-probe') {
+                      reportCardProbe(data);
                     } else if (data && data.tag === 'restyle-missing') {
                       // As on the dashboard: the repeat pass cannot build a
                       // stylesheet, so the layer asks for the real payload.

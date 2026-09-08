@@ -177,9 +177,44 @@ first.
 - [ ] **A product with variants** — its card must say "View Options" and open
       the product page, never add a size nobody chose.
 
-## 4. Not yet wired
+## 4. Wired — what to check about the switch-over itself
 
-`ZiglyWebViewScreen.tsx` still renders the WebView dashboard. None of these
-components is mounted anywhere, by the "build all, then switch over" plan. The
-switch-over is its own piece of work and is where `dashboardSections.ts`'s
-`native` flags start being read.
+`ZiglyWebViewScreen.tsx` now draws `NativeDashboard` over the home WebView,
+which stays mounted as the app's session.
+
+- [ ] **The dashboard is native** — no part of it should be the website
+      assembling itself. If sections appear one at a time from the top, the
+      native list is not covering the WebView.
+- [ ] **The search band is there** — on the dashboard only. It is the NATIVE
+      band now (`showSearch={onDashboard(stack)}`), because the injected one is
+      behind the native list. A page layer still shows its own injected band.
+- [ ] **The band folds away when the drawer opens** — `searchCollapsed={menuOpen}`.
+      The band sits above `body`, outside what the drawer covers, so an
+      expanded band would stand over the open panel as a pale strip.
+      `menu.test.tsx` guards this; it caught the bug when `showSearch` was
+      turned on.
+- [ ] **Back from a page returns instantly, scroll intact** — the native
+      dashboard is an absolutely-positioned layer like the page layers, so it
+      is never unmounted.
+- [ ] **Add to Bag reaches the SAME cart** — add from a native rail, then open
+      the cart. The count must agree. This goes through `cartBridge` inside the
+      WebView on purpose; a native fetch would write to a second session.
+- [ ] **Cart and wishlist badges still update** — they are read from the
+      WebView, which nobody looks at any more. If they stop moving, the
+      counters lost their source.
+- [ ] **Account, wishlist, cart and search still draw over the dashboard** —
+      they are rendered after it in the tree, so they should.
+- [ ] **The splash hands over to the dashboard, not to a gap** — `homePainted`
+      is driven by the native list's first layout now, not by the WebView's
+      ready signal.
+
+### Known cost, deferred deliberately
+
+The home WebView still runs the twelve injected scripts that build the *old*
+dashboard — fetching and transplanting a couple of MB of section HTML for a
+screen nobody sees, seven times per load on `RESTYLE_DELAYS`. Suppressing them
+on the homepage is a ~5-line change in `injectedScripts.ts`, and it was tried:
+it breaks 55 existing tests that assert those scripts are present for the
+homepage URL. That is a separate change with its own test migration, not
+something to fold into the switch-over. The waste is real but invisible —
+it costs battery and data, not correctness.

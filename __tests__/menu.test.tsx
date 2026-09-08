@@ -453,17 +453,33 @@ describe('the hamburger', () => {
 
   it('leaves no search band standing above the drawer panel', () => {
     /*
-     * This used to need arranging: the native band was drawn above the WebView,
-     * outside anything the drawer covered, so it had to be folded away by hand
-     * (`searchCollapsed={searchCollapsed || menuOpen}`) or it stood over the
-     * panel as a pale blue strip belonging to a page nobody was looking at.
+     * THE DEFECT: the native band is drawn above the `body` view, outside
+     * everything the drawer covers, so an expanded band stands over the open
+     * drawer panel as a pale blue strip belonging to a screen nobody is
+     * looking at.
      *
-     * The band is a section of the page now -- ../src/webview/searchBandSection
-     * -- so it is inside the WebView the drawer draws over, and there is
-     * nothing left to fold. What is checked instead is that the native band is
-     * genuinely not drawn, because that is what makes the arranging
-     * unnecessary.
+     * This has been true, then not, then true again, and the history is worth
+     * keeping because the fix was removed once as dead code:
+     *
+     *   1. Originally the native band was drawn on every page and had to be
+     *      folded away by hand -- `searchCollapsed={searchCollapsed ||
+     *      menuOpen}`.
+     *   2. Then the band became a section of the page
+     *      (../src/webview/searchBandSection), inside the WebView the drawer
+     *      draws over, so `showSearch={false}` everywhere made the folding
+     *      unnecessary. This test asserted that literal.
+     *   3. Now the dashboard is native and drawn OVER that WebView, so the
+     *      injected band is invisible there and the native one is turned back
+     *      on for the dashboard alone. The defect is live again.
+     *
+     * So what is checked is the remedy rather than the absence: the band must
+     * collapse when the drawer opens. Asserting `showSearch={false}` would
+     * now fail for the right reason and pass for the wrong one.
      */
-    expect(src()).toContain('showSearch={false}');
+    const s = src();
+    expect(s).toContain('searchCollapsed={menuOpen}');
+    // And the band is only ever drawn on the dashboard -- a page layer's own
+    // injected band is still the one the customer sees there.
+    expect(s).toContain('showSearch={onDashboard(stack)');
   });
 });

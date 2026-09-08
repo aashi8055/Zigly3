@@ -1,7 +1,7 @@
 /**
  * "Find the Best Deals!" — six coloured price tiles in a 3x2 grid.
  *
- * Section twelve. ./priceTiles carries the data and why none of it is parsed;
+ * Section twelve. ./priceTilesData carries the data and why none of it is parsed;
  * this draws it.
  *
  * NO LOADING STATE, NO SKELETON, NO FETCH. The only section in the dashboard
@@ -37,7 +37,7 @@
 import React from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
-import {PRICE_TILES, PRICE_TILES_TITLE, type PriceTile} from './priceTiles';
+import {PRICE_TILES, PRICE_TILES_TITLE, type PriceTile} from './priceTilesData';
 
 const GUTTER = 12;
 
@@ -52,7 +52,7 @@ type Props = {
  * One tile.
  *
  * The background and text colour come from the block, not from
- * ../constants/appConstants -- see ./priceTiles on why this is the one place
+ * ../constants/appConstants -- see ./priceTilesData on why this is the one place
  * the app takes a colour from theme data.
  */
 const Tile = ({

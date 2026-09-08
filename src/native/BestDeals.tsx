@@ -48,7 +48,7 @@ import {
   BEST_DEALS_RAIL,
   BEST_DEALS_TILES,
   COINS_BANNER,
-} from './bestDeals';
+} from './bestDealsData';
 import {
   fetchIcons,
   loadIcons,
@@ -149,7 +149,7 @@ const BestDeals = ({onOpen}: Props) => {
           onPress={() => onOpen(COINS_BANNER.link)}
           accessibilityRole="link"
           // The banner shows no text of its own; the lettering is in the
-          // artwork. See ./bestDeals on why this is the only name available.
+          // artwork. See ./bestDealsData on why this is the only name available.
           accessibilityLabel={COINS_BANNER.label}
           style={styles.banner}
         >

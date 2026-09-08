@@ -28,7 +28,7 @@ import {
   BEST_DEALS_TILES,
   COINS_BANNER,
   COINS_LINK,
-} from '../src/native/bestDeals';
+} from '../src/native/bestDealsData';
 import {INTERNAL_HOSTS} from '../src/constants/appConstants';
 import {matchesKey} from '../src/native/tileIcons';
 

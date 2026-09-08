@@ -23,7 +23,7 @@
 import {
   PRICE_TILES,
   PRICE_TILES_TITLE,
-} from '../src/native/priceTiles';
+} from '../src/native/priceTilesData';
 
 describe('only the enabled blocks', () => {
   /**
