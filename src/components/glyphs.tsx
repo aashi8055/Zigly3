@@ -17,7 +17,7 @@
  */
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 
 interface Glyph {
   size?: number;
@@ -510,3 +510,32 @@ export const CloseIcon = ({ size = 18, color = '#1B1B1B' }: Glyph) => (
 const styles = StyleSheet.create({
   chevronDownBox: { alignItems: 'center', justifyContent: 'center' },
 });
+
+/**
+ * The offer tag on a coupon card.
+ *
+ * A luggage-tag outline with a punched hole -- the shape a discount is drawn as
+ * almost everywhere, so it needs no label to be understood. Zigly's own section
+ * puts an SVG here that arrives as part of the section's *settings*
+ * (`coupon_code_primary_svg`), not as a file in the theme, so unlike the heart
+ * there is no path of theirs to lift: it is only in the rendered output, which
+ * the native strip does not fetch. Drawn here instead, in the app's own navy.
+ *
+ * A real path rather than stacked Views, for the reason the heart is: the
+ * angled corner and the round hole are what make it read as a tag, and neither
+ * survives being approximated with borders.
+ */
+export const TagIcon = ({ size = 22, color = '#183761' }: Glyph) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24">
+    {/* The tag body: a rectangle with one corner cut to a point. */}
+    <Path
+      d="M13.4 2.6 21.4 10.6a2 2 0 0 1 0 2.8l-8 8a2 2 0 0 1-2.8 0L2.6 13.4A2 2 0 0 1 2 12V4a2 2 0 0 1 2-2h8a2 2 0 0 1 1.4.6Z"
+      fill="none"
+      stroke={color}
+      strokeWidth={1.6}
+      strokeLinejoin="round"
+    />
+    {/* The punched hole, up in the square corner. */}
+    <Circle cx={7.5} cy={7.5} r={1.6} fill={color} />
+  </Svg>
+);
