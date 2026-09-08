@@ -303,9 +303,9 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
   {
     key: 'vet-banner',
     title: null,
-    source: 'section',
+    source: 'theme',
     fragment: 'custom_single_banner#2',
-    native: false,
+    native: true,
   },
   {
     key: 'concern',

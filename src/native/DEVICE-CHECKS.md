@@ -69,6 +69,17 @@ first.
 - [ ] **Brand tabs show "Popular" / "Emerging"** — merchant labels, read live.
       If they read differently, the metaobject changed rather than the code
       breaking.
+- [ ] **Single banners, 20:7 full-bleed** — `SingleBanner.tsx`. The Vet Care
+      banner (under the price tiles) and the brand-claims strip (last section).
+      Edge to edge with square corners, matching the hero carousel — the
+      section's own 10px radius is dropped on purpose. Check neither reads as a
+      card floating in a gutter.
+- [ ] **Brand-claims strip is NOT tappable** — its `button_link` is empty in
+      the theme. Check it takes no press state and a screen reader calls it an
+      image, not a link.
+- [ ] **Furpro banner is absent** — the dog page shows it, the app does not
+      (extraSections seeds its id but places no entry). If it appears, that is
+      a regression, not a fix.
 - [ ] **Price tiles, three across** — `PriceTiles.tsx`. Six tiles, two rows,
       10dp gaps. Matches what `injectedStyles.ts` already forces today
       (`repeat(3, minmax(0, 1fr))`), not the theme's own rail. On a narrow
