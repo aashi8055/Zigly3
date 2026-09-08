@@ -90,7 +90,6 @@ export type DashboardSection = {
  * ./NativeDashboard -- nothing else, and nothing about the order moves.
  */
 export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
-  // --- Done -----------------------------------------------------------------
   {
     key: 'categories',
     // Its own heading is hidden: the reference app runs the circles straight
@@ -148,7 +147,6 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     fragment: 'home_shop_by_breed_section@cat',
     native: true,
   },
-  // --- Remaining ------------------------------------------------------------
   /**
    * "Hot Picks of The Week", with a New Arrivals tab. Placed by
    * ../webview/hotPicks, anchored after the cats rail.
@@ -204,16 +202,16 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
   {
     key: 'offers-food',
     title: 'Applod Food',
-    source: 'section',
+    source: 'theme',
     fragment: 'offer_section#1',
-    native: false,
+    native: true,
   },
   {
     key: 'offers-treats',
     title: 'Applod Treats',
-    source: 'section',
+    source: 'theme',
     fragment: 'offer_section#2',
-    native: false,
+    native: true,
   },
   /**
    * Zigly Coins and the discount offer tiles.
@@ -266,10 +264,26 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     fragment: 'shop_of_concern',
     native: false,
   },
+  /**
+   * "Zigly Style Steals" -- the third `offer-section`, seven tiles.
+   *
+   * BUILT BUT NOT YET MARKED NATIVE, deliberately, and this is the one entry
+   * where `native: false` does not mean "not written". ./offerRails carries its
+   * tiles as `STYLE_STEALS` and ./OfferRail draws it; it is the same component
+   * as Applod Food and Applod Treats above with a different tile list, and it
+   * was finished alongside them because declaring three copies of the same
+   * section separately is how they drift.
+   *
+   * It stays false because `native` has to stay a contiguous run from the top
+   * -- five web sections sit between it and Applod Treats -- and
+   * ../../__tests__/dashboardSections.test.ts enforces that so a partial
+   * switch-over remains possible at any point. Flipping this one alone would
+   * buy nothing and lose that guarantee. It flips when the five above it do.
+   */
   {
     key: 'offers-style',
     title: 'Zigly Style Steals',
-    source: 'section',
+    source: 'theme',
     fragment: 'offer_section#3',
     native: false,
   },
