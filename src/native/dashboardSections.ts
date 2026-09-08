@@ -219,14 +219,27 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
    * Named `best_deals` in the theme and it is NOT a product section -- it holds
    * the coins banner and the category offer tiles. ../webview/extraSections
    * records the same warning, because the name invites exactly the wrong
-   * assumption.
+   * assumption. Confirmed on reading it: one banner, six category blocks, not
+   * one product and not one price.
+   *
+   * Two things about it are unlike every section above:
+   *
+   * It is a GRID, not a rail -- the theme's own shape on a phone, which
+   * collapses to one column below 1000px and lays the six tiles out as
+   * `repeat(3, 1fr)`, dropping to `repeat(2, 1fr)` below 400px.
+   *
+   * And its banner LEAVES zigly.com: Zigly Prime on `ziglyprime.erlpaas.com`,
+   * which ../constants/appConstants deliberately lists as an INTERNAL host
+   * because that flow asks for a mobile number and sending it to the browser
+   * broke it. So this section is the first to hand up an absolute URL rather
+   * than a storefront path.
    */
   {
     key: 'coins',
     title: null,
-    source: 'section',
+    source: 'theme',
     fragment: 'best_deals',
-    native: false,
+    native: true,
   },
   {
     key: 'brands',
