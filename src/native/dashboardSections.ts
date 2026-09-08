@@ -176,13 +176,29 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     fragment: null,
     native: true,
   },
-  /** Placed by ../webview/explorePicker, anchored after hot picks. */
+  /**
+   * "Explore. Pick. Pamper." -- four tabs of category tiles. Placed by
+   * ../webview/explorePicker, anchored after hot picks.
+   *
+   * The title was "Explore More" in this manifest's first draft; the section's
+   * own `section_heading` setting on both source pages is
+   * "Explore. Pick. Pamper.", which is what ../webview/explorePicker renders.
+   *
+   * `theme`, because the tiles are tab-block settings read at build time -- and
+   * that is a deliberate departure from the web version, which has to parse the
+   * rendered section. That markup is malformed (each tile's link is closed by
+   * repeating the opening `<a href>` rather than with `</a>`), so a parser gets
+   * the wrong anchor about half the time. Only the artwork needs the network.
+   *
+   * Sourced from BOTH pet pages and merged: 32 tiles, 8 per tab, dog and cat
+   * interleaved. ./explore carries why the merge cannot de-duplicate by label.
+   */
   {
     key: 'explore',
-    title: 'Explore More',
-    source: 'section',
+    title: 'Explore. Pick. Pamper.',
+    source: 'theme',
     fragment: 'explore_product@dog',
-    native: false,
+    native: true,
   },
   // From here down, ../webview/extraSections' own declaration order.
   {

@@ -155,19 +155,39 @@ export const saveIcons = async (
 /**
  * Does this URL's filename belong to this tile?
  *
- * The stem must be followed by a separator or nothing, so `Pug` cannot claim
- * `Puggle_300X300.png` and `All` cannot claim `allergy-banner.png`, while
- * `Small-Pets` still matches `Small-Pets_option-2_1_39a67…`. Compared
- * case-insensitively because the theme's filenames are inconsistently cased --
- * `petparent_option_1_…` beside `Vet-Care_…`, `boxer.png` beside `Boxer`.
+ * TWO MATCHING MODES, and which one a rail needs is decided by whether its
+ * filenames are distinguishable by their leading word.
+ *
+ * A `key` containing a `.` is treated as a WHOLE FILENAME and must match
+ * exactly. That is what the Explore section requires: the dog and cat pages
+ * both ship `Meaty-Treats_650X765_<hash>.png`, `Plush-Toys_650X765_<hash>.png`
+ * and `Fresh-Food_650X765_<hash>.png`, differing only in the hash Shopify
+ * appended. A stem cannot tell those two tiles apart, and pairing the wrong one
+ * puts a cat photo on a dog collection -- so those tiles name their file in
+ * full.
+ *
+ * Otherwise the key is a STEM, and must be followed by a separator or nothing:
+ * `Pug` cannot claim `Puggle_300X300.png` and `All` cannot claim
+ * `allergy-banner.png`, while `Small-Pets` still matches
+ * `Small-Pets_option-2_1_39a67…`. This is what the category and breed rails
+ * use, because their filenames carry hashes that change on re-upload and a
+ * stem is the stable part.
+ *
+ * Both compare case-insensitively, because the theme's filenames are
+ * inconsistently cased -- `petparent_option_1_…` beside `Vet-Care_…`,
+ * `boxer.png` beside the label "Boxer".
  */
 export const matchesKey = (url: string, key: string): boolean => {
   const file = (url.split('?')[0].split('/').pop() || '').toLowerCase();
-  const stem = key.toLowerCase();
-  if (!file.startsWith(stem)) {
+  const wanted = key.toLowerCase();
+  // A key naming an extension is a full filename, not a stem.
+  if (wanted.includes('.')) {
+    return file === wanted;
+  }
+  if (!file.startsWith(wanted)) {
     return false;
   }
-  const next = file.charAt(stem.length);
+  const next = file.charAt(wanted.length);
   return next === '' || next === '_' || next === '-' || next === '.';
 };
 
