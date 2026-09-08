@@ -350,7 +350,7 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     title: 'Bestsellers',
     source: 'graphql',
     fragment: null,
-    native: false,
+    native: true,
   },
   /**
    * "Everything For", with Dogs and Cats tabs.

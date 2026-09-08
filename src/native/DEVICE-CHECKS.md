@@ -107,6 +107,14 @@ first.
 - [ ] **Joint Pain card opens `/collections/hip-joint`** — the label and the
       handle disagree on the site. If it 404s, someone derived the handle from
       the heading.
+- [ ] **Bestsellers really are best sellers** — `Bestsellers.tsx`. Compare the
+      first three cards against `zigly.com/collections/all?sort_by=best-selling`
+      in a browser. They should agree, and they should NOT be alphabetical
+      (unsorted opens on Acana; sorted opens on Applod / Royal Canin). This is
+      the check that keeps the heading honest.
+- [ ] **Bestsellers mixes dogs and cats** — store-wide on purpose. A rail of
+      only dog products would mean the sort is being filtered somewhere.
+- [ ] **Bestsellers shows 12 cards** — the source page carries 22.
 
 ## 3. Things only a real network shows
 

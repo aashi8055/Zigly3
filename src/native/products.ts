@@ -193,6 +193,23 @@ const COLLECTION_QUERY = `
   }
 `;
 
+/** Turn a list of product edges into cards, dropping any that cannot draw. */
+const collect = (
+  edges: {node?: ProductNode}[] | undefined,
+): Product[] => {
+  if (!Array.isArray(edges)) {
+    return [];
+  }
+  const out: Product[] = [];
+  for (const edge of edges) {
+    const product = parseProduct(edge?.node);
+    if (product) {
+      out.push(product);
+    }
+  }
+  return out;
+};
+
 /**
  * Read a collection's products.
  *
@@ -214,16 +231,52 @@ export const fetchCollectionProducts = async (
     {handle, first},
     signal,
   );
-  const edges = data?.collection?.products?.edges;
-  if (!Array.isArray(edges)) {
-    return [];
-  }
-  const out: Product[] = [];
-  for (const edge of edges) {
-    const product = parseProduct(edge?.node);
-    if (product) {
-      out.push(product);
+  return collect(data?.collection?.products?.edges);
+};
+
+/** Products from the whole store, sorted. */
+type StoreResponse = {
+  products?: {edges?: {node?: ProductNode}[]};
+};
+
+/**
+ * The store's best sellers.
+ *
+ * `sortKey: BEST_SELLING` on the `products` root, which is the Storefront
+ * API's equivalent of the `?sort_by=best-selling` the web version reads off
+ * `/collections/all`. Verified live 2026-09-08 that it returns the same shape
+ * of answer ../webview/bestsellers recorded on 2026-08-24: Applod and Royal
+ * Canin at the top rather than Acana alphabetically, so the sort genuinely
+ * reorders rather than being ignored.
+ *
+ * NOT `collection(handle: "all")`. That is Shopify's virtual all-products
+ * collection and the Storefront API does not expose it by handle -- asking for
+ * it returns null, which would look exactly like a section that failed to
+ * load. The `products` root is the documented way to read the whole catalogue.
+ *
+ * STORE-WIDE, DOGS AND CATS MIXED, AND NOTHING RE-SORTED.
+ * ../webview/bestsellers is explicit about why: "Splitting it evenly between
+ * the two pets would have been a curated mix wearing a bestseller label."
+ * Whatever Shopify says sells, in that order, is the only reading under which
+ * the heading is true.
+ */
+export const fetchBestSellers = async (
+  first: number,
+  signal?: AbortSignal,
+): Promise<Product[]> => {
+  const data = await storefront<StoreResponse>(
+    BEST_SELLING_QUERY,
+    {first},
+    signal,
+  );
+  return collect(data?.products?.edges);
+};
+
+const BEST_SELLING_QUERY = `
+  ${PRODUCT_FIELDS}
+  query BestSellers($first: Int!) {
+    products(first: $first, sortKey: BEST_SELLING) {
+      edges { node { ...CardProduct } }
     }
   }
-  return out;
-};
+`;
