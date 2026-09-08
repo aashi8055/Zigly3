@@ -268,13 +268,30 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     fragment: 'home_shop_by_brand_section',
     native: true,
   },
-  /** The six price tiles, laid out 2x3 rather than as a rail. */
+  /**
+   * The six price tiles, three across rather than as a rail.
+   *
+   * The ONE section in the dashboard that needs no network: every tile is a
+   * heading, a price string, a colour and a link, all theme block settings,
+   * with no artwork to resolve. Complete on the first frame of a first launch
+   * with no connection.
+   *
+   * Thirteen blocks in the theme, of which six are enabled. The seven disabled
+   * ones are visibly unfinished -- three say "Lorem Ipsum", one prices at
+   * "₹999.00" where the live ones use "₹999", and all seven link to "/" -- so
+   * a rebuild reading the block list wholesale would put placeholder copy on
+   * the dashboard.
+   *
+   * Three across, not the theme's rail: ../webview/injectedStyles already
+   * overrides the Swiper here with `grid-template-columns: repeat(3, minmax(0,
+   * 1fr))`, so that is what the customer's app shows today.
+   */
   {
     key: 'price-tiles',
     title: 'Find the Best Deals!',
-    source: 'section',
+    source: 'theme',
     fragment: 'shop_by_price',
-    native: false,
+    native: true,
   },
   /**
    * The Vet Care banner.
