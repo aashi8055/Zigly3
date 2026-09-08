@@ -310,9 +310,9 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
   {
     key: 'concern',
     title: 'Care by Concern',
-    source: 'section',
+    source: 'theme',
     fragment: 'shop_of_concern',
-    native: false,
+    native: true,
   },
   /**
    * "Zigly Style Steals" -- the third `offer-section`, seven tiles.
@@ -335,7 +335,7 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     title: 'Zigly Style Steals',
     source: 'theme',
     fragment: 'offer_section#3',
-    native: false,
+    native: true,
   },
   /**
    * Bestsellers.

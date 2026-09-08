@@ -91,6 +91,22 @@ first.
 - [ ] **Price tiles work offline** — the one section that needs no network at
       all. On a first-ever launch in airplane mode this must be fully present
       and tappable.
+- [ ] **Concern cards, 148dp** — `ConcernRail.tsx`. The theme shows 2.5 cards
+      (`calc(100% / 2.5) - 10px`); these are a little wider for the three lines
+      of text. Check "Weight Management" and "Skin & Coat Care" both wrap to two
+      lines without clipping, and that every card's button sits on the same
+      line (the subheading reserves two lines for exactly that).
+- [ ] **Concern card: whole card taps** — not just the button. The theme makes
+      only the button a link and `concernCards.ts` has to fix that on the web
+      side; here one `Pressable` wraps the card. Check tapping the photo and
+      the heading both work, and that the red button does not feel like a
+      second competing target.
+- [ ] **Deworming card opens a BLOG POST** — the only card that does not go to
+      a collection. It says "Shop Now" and lands on an article; that is Zigly's
+      choice, not a bug.
+- [ ] **Joint Pain card opens `/collections/hip-joint`** — the label and the
+      handle disagree on the site. If it 404s, someone derived the handle from
+      the heading.
 
 ## 3. Things only a real network shows
 
