@@ -55,6 +55,15 @@ const TICK_MS = 400;
  * the facets can be in place before it is attached.
  */
 const TRIES = 60;
+/**
+ * How long the warm-up waits between attempts.
+ *
+ * Long enough that SearchTap has a chance to answer one before the next is
+ * spent: without a gap every poll tick would fire an attempt and the whole
+ * budget would be gone within a couple of seconds, before the deferred bundle
+ * had hydrated at all.
+ */
+const WARM_GAP_MS = 1200;
 
 export const FACET_BRIDGE_SCRIPT = `
 (function () {
@@ -254,6 +263,27 @@ ${LISTING_TEST_JS}
       var shown = pill ? squash(pill.textContent) : '';
       if (shown && labels.indexOf(shown) !== -1) { active = shown; }
     }
+
+    /*
+     * And failing that, the store the buttons and the pill are both drawn
+     * from. This is the only source that exists before SearchTap has rendered
+     * either of them, which is exactly when the sheet is first drawn -- without
+     * it the sheet shows "Best selling" ticked on a collection the customer
+     * has already sorted. Read only, and still filtered against the labels we
+     * know, so a value we cannot offer cannot become a tick on nothing.
+     *
+     * piniaStores() is declared further down; function declarations hoist, so
+     * this call is safe wherever the two sit relative to each other.
+     */
+    if (!active) {
+      var stores = piniaStores();
+      for (var s = 0; s < stores.length; s++) {
+        var held = stores[s].sortingValue;
+        if (typeof held !== 'string') { continue; }
+        var value = squash(held);
+        if (value && labels.indexOf(value) !== -1) { active = value; break; }
+      }
+    }
     return {options: labels, label: active};
   }
 
@@ -310,19 +340,220 @@ ${LISTING_TEST_JS}
    * Runs while the app's cover is still over the page, so even the request is
    * spent before the customer sees the screen.
    */
-  var warmed = false;
+  /*
+   * How many times the warm-up may be spent before giving up.
+   *
+   * More than once, deliberately. This used to latch after a single click, and
+   * that assumed the click landed on a mounted Vue component -- but SearchTap
+   * is a deferred script that hydrates <initial-toolbox-bar> some time after
+   * the poll below starts, and a click dispatched at a pill whose component is
+   * not listening yet is simply lost. There was then no second attempt: one
+   * lost click meant no fetch, no facets, and a filter sheet that opened empty
+   * for the life of the page.
+   *
+   * So the warm-up now retries until the facets actually arrive, which is the
+   * only evidence that the click did anything. Bounded, so a page that will
+   * never produce facets is not clicked at for ever.
+   */
+  var WARM_TRIES = 10;
+  var warmClicks = 0;
+  var warmedAt = 0;
+
+  /** The facets are here. Nothing left to ask for. */
+  function warmDone() {
+    return !!document.querySelector('.st-widget .st-widget-title');
+  }
+
+  /**
+   * SearchTap's own Pinia store, reached through the Vue app it is provided to.
+   *
+   * WHY THE STORE AND NOT A PILL. There are TWO .filter_h pills in this bundle
+   * and they do different things. One is onClick: isFilterOpen = true, which
+   * only opens the drawer -- it never fetches. The other is
+   * onClick: openFilter(), and openFilter is the one that matters:
+   *
+   *     openFilter() {
+   *       this.filterArray.length > 0 ? (open the drawer)
+   *                                   : (setMobileFilter(true),
+   *                                      checkFilterArrayLength(5000))
+   *     }
+   *
+   * setMobileFilter(true) flips the store's showMobileFilter, and the watcher
+   * on it is what calls init() -- the fetch. Clicking blind takes whichever
+   * pill querySelector finds first, which on a collection page is the one that
+   * only opens a drawer. That is why the filter sheet said "No filters for
+   * this listing" on every listing page.
+   *
+   * HOW IT IS REACHED. Vue 3 leaves the app on its mount element as
+   * '__vue_app__', and Pinia is handed to it by 'app.provide(key, pinia)' --
+   * so it lives in 'app._context.provides'. The catch, read out of the bundle
+   * on 2026-09-06, is the key:
+   *
+   *     let Ol; const jl = t => Ol = t, Rl = Symbol();
+   *     install(t) { jl(r), r._a = t, t.provide(Rl, r), ... }
+   *
+   * 'Rl = Symbol()'. Pinia is provided under a SYMBOL, and 'provides' is an
+   * 'Object.create(null)' carrying nothing else -- so a 'for (var key in ...)'
+   * walk, like Object.keys, does not enumerate it at all and would run zero
+   * times on every real page. Reflect.ownKeys is the one enumeration that
+   * returns string AND symbol keys, which is why it is used here. Guarded, and
+   * the click path below still backs this up, because reaching into a
+   * framework's internals is exactly the thing that stops working when they
+   * upgrade Vue.
+   */
+  function piniaStores() {
+    var out = [];
+    var seen = false;
+
+    function collect(pinia) {
+      if (!pinia || !pinia._s || typeof pinia._s.forEach !== 'function') {
+        return;
+      }
+      seen = true;
+      pinia._s.forEach(function (store) {
+        if (store) { out.push(store); }
+      });
+    }
+
+    function fromApp(app) {
+      if (!app || !app._context) { return; }
+      /*
+       * The globalProperties route first: Pinia's install also does
+       * 'config.globalProperties.$pinia = pinia', and that is a plain STRING
+       * key -- immune to the whole symbol problem above.
+       */
+      var config = app._context.config;
+      if (config && config.globalProperties) {
+        collect(config.globalProperties.$pinia);
+        if (seen) { return; }
+      }
+      var provides = app._context.provides;
+      if (!provides) { return; }
+      var keys = typeof Reflect !== 'undefined' && Reflect.ownKeys
+        ? Reflect.ownKeys(provides)
+        : Object.keys(provides);
+      for (var k = 0; k < keys.length; k++) {
+        collect(provides[keys[k]]);
+      }
+    }
+
+    try {
+      /*
+       * The mount element, which is where Vue 3 leaves __vue_app__ -- and only
+       * there, on the exact element handed to app.mount(). The bundle ends in
+       * .mount('#collectionmodalcontainer'), which is NOT a child of <body>:
+       * the served HTML nests it inside the theme's section wrapper. So the id
+       * is named rather than swept for.
+       */
+      var hosts = document.querySelectorAll(
+        '#collectionmodalcontainer, #searchModalContainer, searchtap'
+      );
+      for (var h = 0; h < hosts.length; h++) {
+        fromApp(hosts[h].__vue_app__);
+        if (seen) { return out; }
+      }
+
+      /*
+       * Failing that, the app is found rather than guessed at: climb from
+       * something SearchTap definitely rendered. This is what survives them
+       * renaming the container, which a fixed list of ids would not.
+       */
+      var anchor = document.querySelector(
+        'initial-search-filters, initial-toolbox-bar, .st-widget, .st-collection-content'
+      );
+      for (var up = 0; anchor && up < 12; up++) {
+        if (anchor.__vue_app__) {
+          fromApp(anchor.__vue_app__);
+          if (seen) { return out; }
+        }
+        anchor = anchor.parentNode;
+      }
+
+      /*
+       * And last, a sweep for whatever is carrying the app. Only reached when
+       * both of the cheap routes missed, so the cost lands on a page that has
+       * already failed twice rather than on every poll of a healthy one.
+       */
+      var all = document.querySelectorAll('div, searchtap, section, main');
+      for (var a = 0; a < all.length; a++) {
+        if (!all[a].__vue_app__) { continue; }
+        fromApp(all[a].__vue_app__);
+        if (seen) { return out; }
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  /**
+   * Run 'fn' against the first store that carries 'name' as a function.
+   *
+   * By name rather than by store id: 'sidebarContent' is what the bundle calls
+   * it today, and an action that exists is better evidence than a label.
+   */
+  function withStore(name, fn) {
+    var stores = piniaStores();
+    for (var i = 0; i < stores.length; i++) {
+      if (typeof stores[i][name] !== 'function') { continue; }
+      try { fn(stores[i]); return true; } catch (e) {}
+    }
+    return false;
+  }
+
+  /** Ask SearchTap for its facets: the state change its own pill makes. */
+  function storeWarm() {
+    if (withStore('setMobileFilter', function (store) {
+      store.setMobileFilter(true);
+    })) {
+      return true;
+    }
+    // No action of that name; the raw flag is the same watcher's input.
+    var stores = piniaStores();
+    for (var i = 0; i < stores.length; i++) {
+      if (!('showMobileFilter' in stores[i])) { continue; }
+      try { stores[i].showMobileFilter = true; return true; } catch (e) {}
+    }
+    return false;
+  }
+
+  /**
+   * Every pill that might be the one that fetches, clicked.
+   *
+   * All of them rather than the first: they are told apart only by a handler
+   * that cannot be read from the DOM, and clicking the drawer-opening one is
+   * harmless -- the drawer is put straight back down by closeSite().
+   */
+  function clickWarm() {
+    var pills = document.querySelectorAll(
+      '.filter_h, .mobile-toggle-filter, .st-filter-btn'
+    );
+    var clicked = false;
+    for (var i = 0; i < pills.length; i++) {
+      try { pills[i].click(); clicked = true; } catch (e) {}
+    }
+    return clicked;
+  }
+
   function warm() {
-    if (warmed) { return; }
     // Already rendered -- a search page fetches its own facets with its
     // results, so there is nothing to ask for.
-    if (document.querySelector('.st-widget .st-widget-title')) {
-      warmed = true;
-      return;
-    }
-    var pill = document.querySelector('.filter_h');
-    if (!pill) { return; }
-    warmed = true;
-    try { pill.click(); } catch (e) { return; }
+    if (warmDone()) { return; }
+    if (warmClicks >= WARM_TRIES) { return; }
+    /*
+     * Give the last attempt time to land before spending another. Without this
+     * every poll tick would fire one and the budget would be gone in seconds --
+     * before SearchTap had a chance to answer any of them.
+     */
+    var now = Date.now();
+    if (warmClicks > 0 && now - warmedAt < ${WARM_GAP_MS}) { return; }
+    warmedAt = now;
+
+    // The store first: it is the state change the real pill makes.
+    var asked = storeWarm();
+    // And the pills, which is the path that survives a Vue upgrade.
+    if (clickWarm()) { asked = true; }
+    if (!asked) { return; }
+
+    warmClicks++;
     closeSite();
     setTimeout(closeSite, 700);
     setTimeout(closeSite, 2500);
@@ -354,7 +585,7 @@ ${LISTING_TEST_JS}
    */
   function toggle(index, title, label) {
     var box = find(index, title, label);
-    if (!box) { return false; }
+    if (!box) { return refuse(); }
     /*
      * Force the next report through even if nothing about the page changes.
      * The app shows a spinner until it hears back, and "nothing changed" is
@@ -362,11 +593,32 @@ ${LISTING_TEST_JS}
      * leave it spinning for ever.
      */
     last = '';
-    try { box.click(); } catch (e) { return false; }
+    try { box.click(); } catch (e) { return refuse(); }
     // The results and the counts are about to change; ask again shortly.
     setTimeout(report, 300);
     setTimeout(report, 1200);
     return true;
+  }
+
+  /**
+   * A tap this bridge could not deliver, reported rather than dropped.
+   *
+   * The app sets its spinner the moment a chip is tapped and clears it only on
+   * a facets message it accepts (see setFacetBusy in
+   * ../screens/ZiglyWebViewScreen.tsx). Every 'return false' below used to
+   * return before the forced report, so a tap that found no checkbox posted
+   * nothing at all and the Filters screen span for as long as the customer
+   * left it open -- with the chip drawn as applied for a filter that never was.
+   *
+   * So a refusal sends the page's CURRENT state: it clears the spinner and, in
+   * the same message, corrects the optimistic chip back to what SearchTap
+   * actually holds. 'last' is cleared first so report() cannot de-duplicate
+   * this against the state it last sent.
+   */
+  function refuse() {
+    last = '';
+    try { report(); } catch (e) {}
+    return false;
   }
 
   function find(index, title, label) {
@@ -397,20 +649,84 @@ ${LISTING_TEST_JS}
     return null;
   }
 
-  /** Apply a sort: SearchTap's own button, clicked. */
+  /**
+   * Apply a sort, through the same state change the site's own button makes.
+   *
+   * THE STORE FIRST, AND WHY. SearchTap's mobile sort button does not sort
+   * anything itself -- it emits, and the toolbar it sits in handles that emit
+   * with one line, read out of the bundle on 2026-09-06:
+   *
+   *     sortList(t) { kf().setSortingValue(t); setTimeout(...) }
+   *
+   * 'kf()' is the 'sidebarContent' store, and writing 'sortingValue' is what
+   * trips the watcher that does the work:
+   *
+   *     collectionSortingValue(t) {
+   *       t && "Best selling" !== t && (this.isSearchOpen ||
+   *         (this.checkAndOpenCollectionsPage(), ...), this.sortList(t))
+   *     }
+   *
+   * So the store write is not a shortcut past the button -- it IS what the
+   * button does, minus the button having to exist yet. The sort sheet is drawn
+   * from SEED_SORT_OPTIONS (see ../listing/facets) whenever the page reports
+   * none, so the customer can tap a sort before SearchTap has rendered a
+   * single button, and clicking alone would silently do nothing on exactly
+   * that tap -- which is the normal first tap on a collection page, because
+   * <initial-toolbox-bar> ships empty and its buttons are client-rendered.
+   *
+   * The button is still clicked when the store cannot be reached, which is the
+   * path that survives a Vue upgrade -- the same two-path shape as the warm-up.
+   */
   function sort(label) {
-    var buttons = sortButtons();
-    for (var i = 0; i < buttons.length; i++) {
-      if (squash(buttons[i].getAttribute('value')) !== label) { continue; }
-      // As in toggle(): the app is waiting to hear back, so the next report
-      // must go out whether or not the page ends up looking different.
-      last = '';
-      try { buttons[i].click(); } catch (e) { return false; }
-      setTimeout(report, 300);
-      setTimeout(report, 1200);
-      return true;
+    /*
+     * Only a sort the site actually offers, and the seeded five count as
+     * offered until it has said otherwise -- see SEED_SORT_OPTIONS in
+     * ../listing/facets, which is what the sheet draws before SearchTap has
+     * rendered its buttons.
+     *
+     * The guard matters because SearchTap's own sortList does
+     * 'this.sort.find(s => s.label === this.sortLabel).field' with no fallback:
+     * a label it does not know is a TypeError inside its watcher, which would
+     * leave the store holding a sort the page can never act on -- and once it
+     * has thrown, later sorts and filters on that page stop working too.
+     */
+    var known = sorts().options;
+    if (known.length && known.indexOf(label) === -1) { return refuse(); }
+
+    // As in toggle(): the app is waiting to hear back, so the next report must
+    // go out whether or not the page ends up looking different.
+    last = '';
+
+    var asked = withStore('setSortingValue', function (store) {
+      store.setSortingValue(label);
+    });
+
+    /*
+     * "Best selling" is the site's default, and its watcher deliberately
+     * ignores it -- 't && "Best selling" !== t'. So restoring the default
+     * cannot go through the store, and the button is the only way back.
+     */
+    if (!asked || label === 'Best selling') {
+      var buttons = sortButtons();
+      for (var i = 0; i < buttons.length; i++) {
+        if (squash(buttons[i].getAttribute('value')) !== label) { continue; }
+        try { buttons[i].click(); asked = true; } catch (e) {}
+        break;
+      }
     }
-    return false;
+
+    if (!asked) { return refuse(); }
+    /*
+     * The results are about to change; ask again once they have. Three, not
+     * two: a store write trips a watcher that on a collection page hands the
+     * theme's server-rendered grid over to SearchTap before sorting it, which
+     * is a longer round trip than clicking a button on a grid SearchTap
+     * already owns.
+     */
+    setTimeout(report, 300);
+    setTimeout(report, 1200);
+    setTimeout(report, 2500);
+    return true;
   }
 
   window.__ziglyFacets = {

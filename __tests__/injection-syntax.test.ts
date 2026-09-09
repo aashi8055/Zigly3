@@ -26,8 +26,10 @@ import {
 } from '../src/webview/cartBridge';
 import {
   REPORT_WISHLIST_COUNT,
+  REPORT_WISHLIST_HANDLES,
   WISHLIST_SCRIPT,
   removeFromWishlistScript,
+  toggleWishlistScript,
 } from '../src/webview/wishlistBridge';
 import {
   ACCOUNT_PROBE,
@@ -49,11 +51,6 @@ import {
 } from '../src/webview/otpDriver';
 import {PASSWORD_RESTYLE} from '../src/webview/passwordRestyle';
 import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../src/webview/prefetch';
-import {
-  buildSectionPrewarmScript,
-  SECTION_WARM_SCRIPT,
-} from '../src/webview/sectionPrewarm';
-import {seedSectionIdsScript} from '../src/webview/sectionIdStore';
 import {
   applySortScript,
   FACET_BRIDGE_SCRIPT,
@@ -130,6 +127,7 @@ describe('every separately injected payload is valid too', () => {
     ['READ_CART_SCRIPT', READ_CART_SCRIPT],
     ['WISHLIST_SCRIPT', WISHLIST_SCRIPT],
     ['REPORT_WISHLIST_COUNT', REPORT_WISHLIST_COUNT],
+    ['REPORT_WISHLIST_HANDLES', REPORT_WISHLIST_HANDLES],
     ['ACCOUNT_PROBE', ACCOUNT_PROBE],
     ['ADDRESSES_PROBE', ADDRESSES_PROBE],
     ['COUNTRIES_PROBE', COUNTRIES_PROBE],
@@ -152,18 +150,6 @@ describe('every separately injected payload is valid too', () => {
     ['PASSWORD_RESTYLE', PASSWORD_RESTYLE],
     ['PREFETCH_SCRIPT', PREFETCH_SCRIPT],
     ['PAGE_PREFETCH_SCRIPT', PAGE_PREFETCH_SCRIPT],
-    ['SECTION_WARM_SCRIPT', SECTION_WARM_SCRIPT],
-    // Both shapes the prewarm is built in: seeds alone for the payload compiled
-    // into the first navigation, and with a learned id laid over the top for the
-    // copy re-injected on onLoadStart.
-    ['buildSectionPrewarmScript', buildSectionPrewarmScript()],
-    [
-      'buildSectionPrewarmScript(learned)',
-      buildSectionPrewarmScript({"/|coupon_slider": "a'b\\c"}),
-    ],
-    // Section ids are Shopify-generated, but this payload is built from a map
-    // read back off disk, so it is quoted rather than trusted.
-    ['seedSectionIdsScript', seedSectionIdsScript({"a'b": "c\\d"})],
     ['FACET_BRIDGE_SCRIPT', FACET_BRIDGE_SCRIPT],
     ['READ_FACETS_SCRIPT', READ_FACETS_SCRIPT],
     // The parameterised ones, with a value that exercises the quoting: an

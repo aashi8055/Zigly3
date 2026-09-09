@@ -399,14 +399,18 @@ html body {
    FilterSheet -- and drives the site's engine through ./facetBridge. So there
    are two of everything on a listing page, and exactly one of them may be seen.
 
-   HIDDEN, NEVER REMOVED, and that is the whole design of this block rather than
+   MOVED, NEVER REMOVED, and that is the whole design of this block rather than
    an aside. Every one of these elements is still working: the checkboxes inside
    .st-sidebar are what a chip tap clicks, the buttons inside
-   .st-sorting-wrapper are what a sort tap clicks, and .filter_h is clicked once
-   per page to make SearchTap fetch its facets at all. display:none hides an
-   element from the customer while leaving it in the document, clickable and
-   re-renderable; removing it would break the app's own controls and start
-   SearchTap throwing on every change.
+   .st-sorting-wrapper are what a sort tap clicks, and the .filter_h pills are
+   clicked to make SearchTap fetch its facets at all. Taking them off-screen
+   hides them from the customer while leaving them in the document, laid out,
+   clickable and re-renderable; removing them would break the app's own controls
+   and start SearchTap throwing on every change.
+
+   (This used to say display:none, and to claim that nothing here is read. The
+   second half was false -- everything here is read or clicked -- and the rule
+   below sets out precisely what the first half did and did not break.)
 
    .st-sidebar is not listed: the theme already hides its wrapper below 767px
    (searchtap-collection-template.css), which is exactly why the checkboxes in
@@ -432,7 +436,73 @@ body.zigly-listing .filter_h,
 body.zigly-listing .mobilesearch,
 body.zigly-listing .mobilesearch-overlay,
 body.zigly-listing .st-sorting-wrapper,
+body.zigly-listing .st-collection-filter {
+  /*
+   * OFF-SCREEN, NOT display:none, and the distinction is deliberate.
+   *
+   * To be accurate about what this fixes: display:none did NOT break the sort
+   * or the filter. .click() dispatches straight at a node and never
+   * hit-tests, so a control in a display:none subtree is still found by
+   * querySelectorAll and still fires its Vue handler -- which is exactly what
+   * the note on .st-sidebar above relies on, and that element is hidden by
+   * the theme's own CSS while the bridge reads and clicks the checkboxes
+   * inside it every day.
+   *
+   * What was wrong was hiding the engine's own controls with the one property
+   * that would break them the moment anything here needed layout, under a
+   * comment claiming nothing reads them. Off-screen keeps them rendered, laid
+   * out and hit-testable while putting them where no customer can see them,
+   * for one consistent rule: nothing ./facetBridge drives is ever
+   * display:none. clip/clip-path is deliberately not used -- it would leave
+   * them in place for the customer.
+   */
+  position: absolute !important;
+  left: -10000px !important;
+  top: auto !important;
+  width: 1px !important;
+  height: 1px !important;
+  max-width: 1px !important;
+  max-height: 1px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  overflow: hidden !important;
+  z-index: -1 !important;
+  transform: none !important;
+}
+/* .st-overlay-active IS THE SORT DROPDOWN, not a dimming overlay.
+
+   This block used to call it one, and both halves of that were wrong. Read out
+   of searchtap.js on 2026-09-06, MobileSortingDropdown's render opens with:
+
+     Hi("div", {class: Q(["st-overlay-active", showMobileSort ? "st-sort-isOpen" : ""])}, [
+       Yi("div", {class: "st-sorting-wrapper ..."}, [ ... button[value] ... ])
+
+   So this class is the UNCONDITIONAL root of the whole dropdown, and every
+   sort button ./facetBridge reads and clicks is inside it. The dimming is a
+   ':before' on the same element, which is what made it look like an overlay.
+   position:fixed rather than absolute, because that is what it already is. */
 body.zigly-listing .st-overlay-active {
+  position: fixed !important;
+  left: -10000px !important;
+  top: auto !important;
+  bottom: auto !important;
+  right: auto !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  overflow: hidden !important;
+  z-index: -1 !important;
+  pointer-events: none !important;
+}
+/* Its dimming layer, which is the part that really was an overlay: the site
+   draws it as '.st-sort-isOpen.st-overlay-active:before', position:fixed and
+   inset 0. A fixed child is positioned against the viewport, not against its
+   off-screen parent, so without this it would still grey out the whole app.
+   Removed outright -- it is generated content, so there is nothing here to
+   read. */
+body.zigly-listing .st-overlay-active::before {
   display: none !important;
 }
 /* The drawer sets this on <body> while it is open. It does not open any more,
@@ -1319,9 +1389,46 @@ body.zigly-listing .quick-add {
 body.zigly-listing .quick-add {
   margin-top: 0 !important;
 }
-#zigly-hot-picks .atc-wrapper,
-[id^="zigly-x-"] .atc-wrapper,
-body.zigly-listing .atc-wrapper {
+/* :not(.st-atc), and that exclusion is the whole point of this note.
+
+   This rule hides the THEME's floating "+ Add" chip -- .atc-wrapper, positioned
+   absolute bottom-right over the image -- because the container un-hidden above
+   brings back the real Add to Bag and a card must not carry two add controls.
+
+   But SearchTap names ITS add control .atc-wrapper.st-atc, and that one is not
+   a duplicate of anything: it is the only add control its card has. A bare
+   .atc-wrapper matched it too, and since this is the only rule that sets
+   display on that element -- the .atc-wrapper.st-atc block in
+   ./productCard.ts sets position, width, margin and background, but never
+   display -- it won on being the only declaration in play. So SearchTap's grid
+   showed no Add to Bag at all, which is what a sorted collection looked like.
+   Verified against the live brand page on 2026-09-07.
+
+   Excluded here rather than re-shown in productCard.ts on purpose: two rules
+   setting display on one element from two files is exactly how this drifted
+   in the first place. One rule decides it, and it is this one. */
+#zigly-hot-picks .atc-wrapper:not(.st-atc),
+[id^="zigly-x-"] .atc-wrapper:not(.st-atc),
+body.zigly-listing .atc-wrapper:not(.st-atc) {
+  display: none !important;
+}
+/* The "+ Add" chip itself, by its own name.
+
+   .mobile-atc-main is the compact add control the theme draws INSTEAD of Add
+   to Bag on a phone, and it used to be hidden only as a side effect of the
+   bare .atc-wrapper rule above -- which is the wrapper it happens to sit in.
+   Narrowing that rule to :not(.st-atc) so SearchTap's real button could show
+   let this chip back onto the theme's card, and a sorted collection then drew
+   "+ Add" where the app's design has a full-width "Add to Bag" (photographed
+   2026-09-07).
+
+   Named explicitly now rather than caught incidentally. The two controls are
+   different elements with different jobs, so each one's visibility is decided
+   by a rule that names it -- the alternative is another fix to one of them
+   silently changing the other, which is precisely what happened here. */
+#zigly-hot-picks .mobile-atc-main,
+[id^="zigly-x-"] .mobile-atc-main,
+body.zigly-listing .mobile-atc-main {
   display: none !important;
 }
 /* Full-width, tall enough to be a real target, and in the app's one add-to-cart

@@ -509,3 +509,258 @@ export const REPORT_WISHLIST_COUNT = `
 })();
 true;
 `;
+
+/**
+ * Report WHICH products are saved, not just how many.
+ *
+ * REPORT_WISHLIST_COUNT above sends a number, which is all a badge needs. A
+ * native product card needs the set: its heart has to be filled or hollow
+ * before the customer touches it, and a count cannot answer "is this one of
+ * them". So this is the same reader with the same two sources in the same
+ * order, sending the handles themselves.
+ *
+ * WHY IT IS A SECOND SCRIPT RATHER THAN A FIELD ON THE FIRST. The count is
+ * reported from every page in the app -- it drives the header badge -- and it is
+ * deliberately tiny for that reason. The handle set is only wanted by the
+ * dashboard's product rails, and sending up to WISHLIST_LIMIT handles on every
+ * navigation of every inner page would be paying the dashboard's cost
+ * everywhere. Injected where it is needed instead.
+ *
+ * Bounded by WISHLIST_LIMIT for the same reason the priced read is: a runaway
+ * list must not become an unbounded message. A truncated set can only make a
+ * heart hollow that should be filled, which the next toggle corrects.
+ *
+ * Idempotent, like every other injected script in this app -- see
+ * ../../__tests__/injection.test.ts. A second injection re-reads through the
+ * installed function rather than installing a second listener.
+ */
+export const REPORT_WISHLIST_HANDLES = `
+(function () {
+  if (window.__ziglyReadWishlistHandles) { window.__ziglyReadWishlistHandles(); return; }
+
+  var LIMIT = ${WISHLIST_LIMIT};
+
+  /** Trim without a regex: escapes inside this template literal get eaten. */
+  function trim(str) {
+    var a = 0;
+    var b = str.length;
+    function ws(c) { return c === 32 || c === 9 || c === 10 || c === 13; }
+    while (a < b && ws(str.charCodeAt(a))) { a++; }
+    while (b > a && ws(str.charCodeAt(b - 1))) { b--; }
+    return str.slice(a, b);
+  }
+
+  /**
+   * The saved handles, or null when storage cannot be read.
+   *
+   * Their accessor first, the raw key as the fallback -- the same order every
+   * other read in this file uses, so this cannot disagree with them.
+   */
+  function handles() {
+    var list = null;
+    try {
+      if (window.ziglyWishlist && window.ziglyWishlist.getWishlist) {
+        var theirs = window.ziglyWishlist.getWishlist();
+        if (Object.prototype.toString.call(theirs) === '[object Array]') {
+          list = theirs;
+        }
+      }
+    } catch (e) {}
+    if (list === null) {
+      try {
+        var raw = window.localStorage.getItem('zigly_wishlist_handles');
+        if (typeof raw !== 'string') { return raw === null ? [] : null; }
+        list = raw.split(',');
+      } catch (e) { return null; }
+    }
+    var seen = {};
+    var out = [];
+    for (var i = 0; i < list.length && out.length < LIMIT; i++) {
+      var h = trim(String(list[i]));
+      if (h && seen[h] !== true) { seen[h] = true; out.push(h); }
+    }
+    return out;
+  }
+
+  var last = '';
+
+  function read() {
+    var list = handles();
+    if (list === null) { return; }
+    var key = list.join(',');
+    if (key === last) { return; }
+    last = key;
+    try {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          tag: 'wishlist-handles',
+          handles: list
+        }));
+      }
+    } catch (e) {}
+  }
+
+  window.__ziglyReadWishlistHandles = read;
+
+  /*
+   * The same three signals the count reporter listens to, for the same reasons:
+   * their own event, a capture-phase click on one of their buttons (which fires
+   * before their handler has written storage, hence the deferral), and
+   * cross-document storage writes.
+   */
+  try {
+    window.addEventListener('wishlistUpdate', function () { setTimeout(read, 0); });
+  } catch (e) {}
+  try {
+    document.addEventListener('click', function (ev) {
+      var t = ev && ev.target;
+      if (!t || !t.closest) { return; }
+      if (t.closest('.swym-button.swym-add-to-wishlist[data-product-handle]')) {
+        setTimeout(read, 0);
+        setTimeout(read, 300);
+      }
+    }, true);
+  } catch (e) {}
+  try {
+    window.addEventListener('storage', function (ev) {
+      if (!ev || ev.key === 'zigly_wishlist_handles' || ev.key === null) { read(); }
+    });
+  } catch (e) {}
+
+  read();
+})();
+true;
+`;
+
+/**
+ * Toggle one product's wishlist state, by handle.
+ *
+ * THE WRITE IS THEIRS, PRESSED RATHER THAN REIMPLEMENTED -- the same rule
+ * `removeFromWishlistScript` above states at length, and for the same reason. A
+ * direct write to `zigly_wishlist_handles` would toggle the list and skip their
+ * counters, their `wishlistUpdate` event and, for a signed-in customer, the POST
+ * to Zigly's own wishlist API. The list would then be right on this device and
+ * wrong everywhere else.
+ *
+ * So this dispatches a click at a button carrying the handle: a real one when
+ * the page has it, otherwise one created with the single attribute their
+ * delegated selector requires, appended (the event has to reach `document`),
+ * clicked, and taken away again.
+ *
+ * WHY THIS EXISTS ALONGSIDE removeFromWishlistScript, which presses the same
+ * button. That one is the wishlist screen's, it is one-directional by contract
+ * -- it verifies the handle actually LEFT the list and reports failure so a
+ * removed line can be put back -- and its reply drives an undo. This one is a
+ * card's heart: it goes both ways, and what it reports is the resulting state
+ * rather than a success. Collapsing them would mean one script whose reply meant
+ * two different things to two callers.
+ *
+ * The result is read back rather than assumed. If their handler did not run --
+ * a page where assets/wishlist.js has not loaded yet -- the state is unchanged
+ * and the heart returns to where it was, instead of showing a save that did not
+ * happen.
+ */
+export const toggleWishlistScript = (handle: string): string => `
+(function () {
+  var handle = ${JSON.stringify(handle)};
+  var SELECTOR = '.swym-button.swym-add-to-wishlist[data-product-handle]';
+  var sent = false;
+
+  function send(saved, ok) {
+    if (sent) { return; }
+    sent = true;
+    try {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          tag: 'wishlist-toggled',
+          handle: handle,
+          saved: saved,
+          ok: ok
+        }));
+      }
+    } catch (e) {}
+  }
+
+  function trim(str) {
+    var a = 0;
+    var b = str.length;
+    function ws(c) { return c === 32 || c === 9 || c === 10 || c === 13; }
+    while (a < b && ws(str.charCodeAt(a))) { a++; }
+    while (b > a && ws(str.charCodeAt(b - 1))) { b--; }
+    return str.slice(a, b);
+  }
+
+  /** Is this handle saved right now? Their accessor first, storage second. */
+  function isSaved() {
+    var list = null;
+    try {
+      if (window.ziglyWishlist && window.ziglyWishlist.getWishlist) {
+        var theirs = window.ziglyWishlist.getWishlist();
+        if (Object.prototype.toString.call(theirs) === '[object Array]') {
+          list = theirs;
+        }
+      }
+    } catch (e) {}
+    if (list === null) {
+      try {
+        var raw = window.localStorage.getItem('zigly_wishlist_handles');
+        list = typeof raw === 'string' ? raw.split(',') : [];
+      } catch (e) { return null; }
+    }
+    for (var i = 0; i < list.length; i++) {
+      if (trim(String(list[i])) === handle) { return true; }
+    }
+    return false;
+  }
+
+  var before = isSaved();
+
+  /** A real button for this handle, if the page has one. */
+  function theirButton() {
+    try {
+      var all = document.querySelectorAll(SELECTOR);
+      for (var i = 0; i < all.length; i++) {
+        if (trim(all[i].getAttribute('data-product-handle') || '') === handle) {
+          return all[i];
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function press() {
+    var real = theirButton();
+    if (real) { real.click(); return true; }
+    try {
+      var b = document.createElement('button');
+      b.className = 'swym-button swym-add-to-wishlist';
+      b.setAttribute('data-product-handle', handle);
+      b.style.display = 'none';
+      document.body.appendChild(b);
+      b.click();
+      if (b.parentNode) { b.parentNode.removeChild(b); }
+      return true;
+    } catch (e) { return false; }
+  }
+
+  if (!press()) { send(before === true, false); return; }
+
+  /*
+   * Read back after their handler has run. Their click path writes storage
+   * synchronously in the common case, but a signed-in customer's also posts --
+   * so the state is checked on the next tick and again shortly after, and the
+   * first read that differs from the pre-click state is what is reported.
+   */
+  function settle() {
+    var now = isSaved();
+    if (now === null) { send(before === true, false); return; }
+    send(now, now !== before);
+  }
+  setTimeout(function () {
+    var now = isSaved();
+    if (now !== null && now !== before) { settle(); return; }
+    setTimeout(settle, 350);
+  }, 0);
+})();
+true;
+`;

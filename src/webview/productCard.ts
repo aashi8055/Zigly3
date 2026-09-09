@@ -16,9 +16,23 @@
  *
  * And a fourth surface was missing from every one of them.
  *
- * THE SEARCHTAP CARD. A listing page shows TWO different product cards. Before
- * any sort or filter, the theme's server-rendered grid. The moment either is
- * applied, SearchTap empties `.searchtap-temp` and renders its OWN grid.
+ * THE SEARCHTAP CARD. A listing page shows TWO different product cards, and
+ * WHICH ONE COMES FIRST DEPENDS ON THE PAGE -- this file used to assert the
+ * theme's grid was always first and SearchTap's always second, and that is
+ * false in the case the customer actually reported.
+ *
+ * On a plain collection page the theme renders its grid server-side and
+ * SearchTap takes over when a sort or filter is applied. But on a brand /
+ * vendor page -- /collections/applod, 66 products, photographed 2026-09-07 --
+ * SearchTap renders the grid on FIRST LOAD, and applying a sort hands the page
+ * to the theme's grid instead. The swap runs both ways.
+ *
+ * That inversion is why the bug was so confusing to place: the initial screen
+ * was the fully-styled SearchTap card and the sorted screen was the
+ * under-styled theme one, which is the exact opposite of what every comment
+ * here predicted. Neither card may be treated as "the one the customer sees
+ * first". Both are styled to the same design, and any assumption about
+ * ordering is a bug waiting to be filed.
  *
  * The trap is that SearchTap's card DOES carry `card-wrapper` and
  * `product-card-wrapper` on its root -- so `body.zigly-listing .card-wrapper`
@@ -175,8 +189,21 @@ const HIDDEN_ROWS: Array<{theme: string[]; searchTap: string[]}> = [
   },
   {
     theme: ['.metafield__richtext_value_tag'],
-    // No SearchTap equivalent: its card does not render the offers note.
-    searchTap: [],
+    /*
+     * THIS USED TO SAY "no SearchTap equivalent: its card does not render the
+     * offers note", AND THAT WAS WRONG. A sorted brand page was photographed on
+     * 2026-09-07 with "enjoy offers on checkout!" on every card -- so its card
+     * does render it, and the assumption that it did not is why the line
+     * survived a sort while being hidden before one.
+     *
+     * The same class name is used, because it is not SearchTap's: Shopify
+     * generates `metafield__richtext_value_tag` from the product metafield
+     * itself, so it travels with the content into whatever markup renders it.
+     * That is also why this is safe to name on both cards rather than guessed
+     * at -- an engine that does not render the note simply has nothing to
+     * match, which costs nothing.
+     */
+    searchTap: ['.metafield__richtext_value_tag'],
   },
   {
     theme: ['.estimate-delivery--date-wrapper'],

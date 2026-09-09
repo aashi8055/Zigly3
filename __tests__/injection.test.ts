@@ -68,151 +68,6 @@ describe('getInjectionForUrl', () => {
     expect(script).toContain('getElementById');
   });
 
-  describe('homepage section order', () => {
-    it('moves the category rail above the banner', () => {
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('home_category_section');
-      expect(script).toContain('homepage_banner');
-      expect(script).toContain('insertBefore');
-    });
-
-    it('matches section ids by stable fragment, not the generated suffix', () => {
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('[id*="home_category_section"]');
-    });
-
-    it('installs the section fetcher before anything calls it', () => {
-      // This was wrong and failed silently. homeLayout is the first module to
-      // call window.__ziglyFetchSection, and pageCache -- which defines it --
-      // came second in the payload, so the call threw on every load and was
-      // swallowed by homeLayout's own try/catch. The visible symptom was the
-      // reference app's six category circles never replacing the homepage's
-      // fourteen, with nothing in the log to say why.
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script.indexOf('window.__ziglyFetchSection = function')).toBeLessThan(
-        script.indexOf('swapCategories'),
-      );
-    });
-
-    it('swaps in the category set the reference app shows', () => {
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('swapCategories');
-      expect(script).toContain('data-zigly-swapped');
-      // Six circles from the pet page, not the homepage's fourteen tiles. The
-      // set itself is Zigly's; only which of their sections is used changes.
-      expect(script).toContain('home_category_section');
-      expect(script).not.toContain('"Small Pets"');
-      expect(script).not.toContain('"Vet Care"');
-    });
-
-    it('lets a transplanted section tell our slot from the site’s own', () => {
-      // "Everything For" reserves a slot called zigly-x-everything, then
-      // checked [id*="everything"] to see whether the site already rendered the
-      // section -- and matched its own slot, so it disabled itself every time
-      // and the section never appeared at all.
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('siteRenders');
-      expect(script).toContain("id.indexOf('zigly-') !== 0");
-    });
-
-    it('can recover when a seeded section id goes stale', () => {
-      // Full ids are used as a fast-path cache hint for Shopify's Section
-      // Rendering API, but a theme re-save changes them -- so there must always
-      // be a fragment-based rediscovery path behind them.
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('re-discovering');
-      expect(script).toContain('rediscover');
-      expect(script).toContain("job.fragment");
-    });
-
-    it('places the coupon strip below the banner when it exists', () => {
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('coupon_slider');
-    });
-
-    it('treats a missing coupon section as normal, not an error', () => {
-      // Zigly adds and removes this section; absence must not warn or throw.
-      // Scoped to the layout module: couponStrip.ts warns when a *copy* fails,
-      // which is a different event and must not be read as this one.
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      const layout = script.slice(
-        script.indexOf('coupon_slider'),
-        script.indexOf('__ziglyCouponStrip'),
-      );
-      expect(layout).not.toContain("warn('coupon strip");
-      expect(layout).not.toContain("warn('coupon section");
-    });
-
-    it('stops the strip scrolling itself and lets the thumb do it', () => {
-      // The movement is the theme's own CSS marquee, so it is stopped in CSS.
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('.mySwiper_couponSlider .slider-track');
-      expect(script).toContain('animation: none !important');
-      expect(script).toContain('.slider-container.mySwiper_couponSlider');
-      expect(script).toContain('overflow-x: auto !important');
-    });
-
-    it('insets the first coupon, by padding the track and not the scroller', () => {
-      // The first coupon sat flush against the left edge while every coupon
-      // after it had a gutter: the theme's inset is on an ancestor, and once
-      // this element became a scroller its content box starts at x=0.
-      //
-      // The gutter has to be on the TRACK. A scroll container's own start
-      // padding is scrolled away, and an older Android WebView drops its end
-      // padding outright -- so padding .slider-container fixes neither the
-      // first coupon at rest nor the missing gutter after the last one. On a
-      // max-content flex track the padding is part of the track's width, so it
-      // scrolls with the content.
-      const css = MOBILE_CSS;
-      // The FIRST occurrence of this selector in the file is inside the comment
-      // above the block, which quotes the theme's own marquee rule to explain
-      // what is being stopped. The real declaration is the one after it.
-      const quoted = css.indexOf('.mySwiper_couponSlider .slider-track {');
-      const from = css.indexOf(
-        '.mySwiper_couponSlider .slider-track {',
-        quoted + 1,
-      );
-      expect(from).toBeGreaterThan(quoted);
-      const rule = css.slice(from, css.indexOf('}', from));
-      expect(rule).toContain('padding-left: 12px');
-      expect(rule).toContain('padding-right: 12px');
-      // Included in the track's own width, or the padding pushes the last
-      // coupon out of reach instead of sitting inside the scroll extent.
-      expect(rule).toContain('box-sizing: border-box');
-    });
-
-    it('snaps a coupon to where the first one rests, not under the inset', () => {
-      const css = MOBILE_CSS;
-      const from = css.indexOf('.slider-container.mySwiper_couponSlider {');
-      const rule = css.slice(from, css.indexOf('}', from));
-      expect(rule).toContain('scroll-padding-left: 12px');
-    });
-
-    it("re-supplies the site's own copy function, and only if absent", () => {
-      // The section's markup calls copyCodeCoupon from an inline onclick, and
-      // this app drops transplanted scripts -- so the function has to come
-      // back, under the same name, without shadowing the site's own.
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain("typeof window.copyCodeCoupon !== 'function'");
-      expect(script).toContain('window.copyCodeCoupon = function');
-      // Same feedback class the theme's CSS keys the tick off.
-      expect(script).toContain('show_copy_message');
-      // Clipboard API first, execCommand when the WebView refuses it.
-      expect(script).toContain('navigator.clipboard.writeText');
-      expect(script).toContain("document.execCommand('copy')");
-    });
-
-    it('drops the duplicate coupons the marquee needed', () => {
-      // translateX(-50%) means the theme emits every coupon twice. Scrolled by
-      // hand, that reads as the list repeating.
-      const script = getInjectionForUrl('https://zigly.com/') as string;
-      expect(script).toContain('data-zigly-deduped');
-    });
-
-    it('is not injected into checkout', () => {
-      expect(getInjectionForUrl('https://zigly.com/checkouts/c/x')).toBeNull();
-    });
-  });
 
   describe('the wishlist heart', () => {
     const home = () => getInjectionForUrl('https://zigly.com/') as string;
@@ -248,139 +103,7 @@ describe('getInjectionForUrl', () => {
     });
   });
 
-  describe('the banner carousel', () => {
-    const home = () => getInjectionForUrl('https://zigly.com/') as string;
 
-    it('runs on inner pages too, not only the dashboard', () => {
-      // The brief is that a banner is never stuck wherever one appears, and the
-      // pet pages, the collection list and the lifestyle pages all carry one.
-      for (const url of [
-        'https://zigly.com/',
-        'https://zigly.com/pages/dog',
-        'https://zigly.com/collections/dog-dry-food',
-      ]) {
-        expect(getInjectionForUrl(url)).toContain('__ziglyBannerCarousel');
-      }
-    });
-
-    it('turns the theme’s misplaced loop into a real one', () => {
-      // The section passes loop: true nested inside autoplay, where Swiper
-      // ignores it -- so the last banner was a dead end. Loop cannot be switched
-      // on by assignment either: Swiper reads it while building the track. So
-      // the instance is rebuilt with loop added, from its OWN passed parameters.
-      const s = home();
-      expect(s).toContain('enableLoop');
-      expect(s).toContain('sw.passedParams');
-      expect(s).toContain('withLoop.loop = true');
-      expect(s).toContain('new Ctor(root, withLoop)');
-      expect(s).toContain('stopOnLastSlide = false');
-    });
-
-    it('re-specifies nothing about the carousel', () => {
-      /*
-       * Every parameter comes from what the theme passed. A hardcoded
-       * slidesPerView or delay here would be this app deciding how Zigly's
-       * banner behaves.
-       *
-       * Asserted against the carousel MODULE, not the whole bundle, and that
-       * narrowing is the point rather than a loosening: the bundle is one
-       * string, so a rule written against it says "nothing anywhere in this app
-       * may name slidesPerView" -- which is not what this test means and not
-       * true. ../src/webview/productPage.ts names it deliberately, to pin the
-       * product gallery to one photo per swipe, and that is a different widget
-       * on a different page. What must stay true is that the BANNER's geometry
-       * is still Zigly's, which is exactly what this now checks.
-       */
-      expect(BANNER_CAROUSEL_SCRIPT).not.toContain('slidesPerView:');
-      expect(BANNER_CAROUSEL_SCRIPT).not.toContain('spaceBetween:');
-      // ...and it is still what the page actually receives.
-      expect(home()).toContain('__ziglyBannerCarousel');
-    });
-
-    it('cannot leave a dead carousel if the rebuild fails', () => {
-      // Destroy comes after the constructor is found and the parameters are
-      // copied, and a failed rebuild puts an instance back with the originals.
-      // No instance plus cleaned styles is a static stack of slides.
-      const s = home();
-      const at = s.indexOf('function enableLoop');
-      const body = s.slice(at, at + 2600);
-      expect(body.indexOf('window.Swiper')).toBeLessThan(
-        body.indexOf('sw.destroy(true, true)'),
-      );
-      expect(body).toContain('new Ctor(root, original)');
-    });
-
-    it('keeps rewind only as the fallback, with its own drag wrap', () => {
-      // rewind is not the same thing: it scrubs backwards through every slide
-      // to reach the first, and it does not cover a manual drag off the end --
-      // which loop mode does, so the wrap is bound only when loop failed.
-      const s = home();
-      expect(s).toContain('if (!result.looping) { bindDragWrap(sw); }');
-      expect(s).toContain("sw.on('touchEnd'");
-      expect(s).toContain('sw.isBeginning');
-      expect(s).toContain('setTimeout(function () {');
-    });
-
-    it('leaves the pagination alone', () => {
-      // The theme passes the document-wide '.swiper-pagination', and this app
-      // puts a dozen more of those on the page -- which looks like a defect and
-      // is not. Swiper's uniqueNavElements defaults to true and narrows a
-      // multi-match string selector to nodes inside the instance's own element.
-      // Re-pointing the dots from here would be pure risk, and Swiper 11
-      // exposes no init/destroy on swiper.pagination to do it cleanly.
-      const s = home();
-      expect(s).not.toContain('pagination.destroy()');
-      expect(s).not.toContain('params.pagination.el =');
-    });
-
-    it('stops autoplay off screen and re-arms it on the way back', () => {
-      // Inner pages are parked off screen rather than hidden, so a carousel
-      // nobody is looking at would keep the compositor busy.
-      const s = home();
-      expect(s).toContain('IntersectionObserver');
-      expect(s).toContain('stopAutoplay');
-      expect(s).toContain('armAutoplay');
-      expect(s).toContain('sw.autoplay.start');
-    });
-
-    it('nudges a visible carousel that has stopped moving', () => {
-      const s = home();
-      expect(s).toContain('sw.slideNext()');
-      expect(s).toContain('onScreen(root)');
-    });
-
-    it('builds no carousel of its own and touches no slide', () => {
-      // It repairs the configuration of the instance the page already made.
-      const s = home();
-      expect(s).not.toContain('new Swiper');
-      expect(s).not.toContain('swiper-slide-duplicate');
-      expect(s).not.toContain('loopCreate');
-    });
-
-    it('leaves a section with no instance alone', () => {
-      // Transplanted sections deliberately never run their scripts, so
-      // el.swiper being undefined is the signal to leave them to the CSS.
-      expect(home()).toContain('if (!sw || !sw.params) { return; }');
-    });
-
-    it('drops the frame the site draws round the strip', () => {
-      const s = home();
-      expect(s).toContain('.homepage_banner .homepageMainBanner.swiper');
-      expect(s).toContain('padding-inline-start: 0 !important');
-      expect(s).toContain('border-radius: 0 !important');
-    });
-  });
-
-  describe('the breed rail', () => {
-    it('draws smaller circles with more air between them', () => {
-      // Was 33% wide with a 14px gap, which read as three big discs almost
-      // touching. Width and gap only make sense chosen together.
-      const s = getInjectionForUrl('https://zigly.com/') as string;
-      expect(s).toContain('flex: 0 0 24% !important');
-      expect(s).toContain('gap: 26px');
-      expect(s).not.toContain('flex: 0 0 33% !important');
-    });
-  });
 
   describe('the product card', () => {
     it('un-hides the container the theme hides, not just the button', () => {
@@ -407,89 +130,8 @@ describe('getInjectionForUrl', () => {
     });
   });
 
-  describe('the brand rail', () => {
-    it('shows one brand per card, not two stacked', () => {
-      // The section's Swiper is initialised with grid: { rows: 2 }, so every
-      // column held two brands. Swiper writes the second row's offset as an
-      // inline margin-top, which is why the override has to be !important.
-      const s = getInjectionForUrl('https://zigly.com/') as string;
-      expect(s).toContain(
-        '.home-brand-section-wrapper .home-shop-brand-swiper-wrapper .swiper-wrapper',
-      );
-      expect(s).toContain('flex-wrap: nowrap !important');
-      expect(s).toContain('margin-top: 0 !important');
-    });
-  });
 
-  describe('hot picks section', () => {
-    const home = () => getInjectionForUrl('https://zigly.com/') as string;
 
-    it("sources both tabs from Zigly's own hot-picks collections", () => {
-      const s = home();
-      // These are the two collections Zigly publish under these names. The
-      // section used to be filled from the /pages/dog and /pages/zigly-cat
-      // arrival rails, which put the wrong products under the right heading.
-      expect(s).toContain('/collections/hot-picks-squeaker-toys');
-      expect(s).toContain('/collections/hot-deals');
-      // Scoped to this section: the full injection still names the arrival
-      // sections, because pageCache seeds their ids and extraSections hides
-      // the homepage's own copy. What matters is that nothing fetches them
-      // to fill this one.
-      expect(HOT_PICKS_SCRIPT).not.toContain('home_arrival_section');
-      expect(HOT_PICKS_SCRIPT).not.toContain('__ziglyFetchSection');
-      // No product titles, prices or handles baked in.
-      expect(s).not.toMatch(/₹\s?\d/);
-    });
-
-    it('still defers both collection fetches until the section nears view', () => {
-      // A collection page is fetched whole, so neither tab may become eager.
-      const s = home();
-      expect(s).toContain('whenNear(section, function () {');
-      expect(s).toContain("loadCards(HOT_SOURCE, paneHot, LIMIT)");
-    });
-
-    it('loads the New Arrivals collection only when that tab is opened', () => {
-      const s = home();
-      expect(s).toContain('if (newLoaded) { return; }');
-      expect(s).toContain('loadCards(NEW_SOURCE, paneNew, LIMIT)');
-    });
-
-    it('defaults to the Hot Picks tab', () => {
-      expect(home()).toContain("zigly-hp__tab is-active");
-    });
-
-    it("keeps the site's own add-to-cart form on each card", () => {
-      // Cards are imported whole; nothing strips or replaces product-form.
-      const s = home();
-      expect(s).toContain('.card-wrapper.product-card-wrapper');
-      expect(s).not.toContain('removeChild(form');
-    });
-
-    it('is not injected into checkout', () => {
-      expect(getInjectionForUrl('https://zigly.com/checkouts/c/x')).toBeNull();
-    });
-  });
-
-  describe('explore section', () => {
-    const home = () => getInjectionForUrl('https://zigly.com/') as string;
-
-    it('transplants the real section rather than rebuilding it', () => {
-      const s = home();
-      expect(s).toContain('explore_product@dog');
-      expect(s).toContain('explore_product@cat');
-      // No hardcoded category names or collection handles.
-      expect(s).not.toContain('dog-wet-food');
-      expect(s).not.toContain('Smart Petcare');
-    });
-
-    it("does not shadow the site's own tab switcher when present", () => {
-      expect(home()).toContain("typeof window.makeActiveSlider !== 'function'");
-    });
-
-    it('is not injected into checkout', () => {
-      expect(getInjectionForUrl('https://zigly.com/checkouts/c/x')).toBeNull();
-    });
-  });
 
   it('does not re-run carousel scripts that loop and clone slides', () => {
     // Swiper loop mode clones slides, which made the breed rails scroll
@@ -740,6 +382,58 @@ describe('getInjectionForUrl', () => {
       expect(FACET_BRIDGE_SCRIPT).not.toContain('removeChild');
     });
 
+    /**
+     * One rule: nothing the bridge drives is ever display:none.
+     *
+     * Not because display:none breaks a click -- it does not, `.click()`
+     * dispatches straight at the node and never hit-tests, and `.st-sidebar`
+     * is hidden by the theme's own CSS while the bridge reads the checkboxes
+     * inside it. The rule exists because these elements ARE the engine, and
+     * the one property that would break them the moment anything needed layout
+     * is the wrong tool for hiding them. Off-screen keeps them laid out.
+     *
+     * This is a whole-payload check on purpose: productCard.test.ts asserts the
+     * same thing about PRODUCT_CARD_CSS alone, which stayed green while this
+     * file's own hand-written block hid five of those selectors.
+     */
+    it('never display:nones a control the bridge reads or clicks', () => {
+      const script = listing();
+      for (const driven of [
+        '.st-sorting-wrapper',
+        '.st-overlay-active',
+        '.filter_h',
+        '.sort_h',
+      ]) {
+        // The rule that names it, up to the end of its declaration block.
+        const at = script.indexOf('body.zigly-listing ' + driven);
+        expect(at).toBeGreaterThan(-1);
+        const block = script.slice(at, script.indexOf('}', at));
+        expect(block).not.toContain('display: none');
+      }
+      // And the dimming layer, which is position:fixed and so escapes an
+      // off-screen parent, must still be taken out.
+      expect(script).toContain('.st-overlay-active::before');
+    });
+
+    /**
+     * No backtick in the STYLESHEET.
+     *
+     * MOBILE_CSS is itself a template literal, and it is then embedded in the
+     * injected script as a second one -- so a backtick anywhere in it, even
+     * inside a CSS comment, closes a literal early and silently drops
+     * everything after it. That is not hypothetical: writing `.click()` in one
+     * of the comments in this very block took twenty test suites down at load
+     * time, and the unlucky version of the same mistake ships a payload that is
+     * valid JavaScript carrying half a stylesheet.
+     *
+     * Scoped to the CSS rather than the whole payload, because the JavaScript
+     * modules legitimately contain backticks inside comments in code that has
+     * already been interpolated and so never re-enters a literal.
+     */
+    it('carries no backtick in the css, which would close its literal', () => {
+      expect(MOBILE_CSS.indexOf(String.fromCharCode(96))).toBe(-1);
+    });
+
     it('reads the facets the site rendered, and never invents any', () => {
       const script = listing();
       // SearchTap's own markup, read on 2026-08-23.
@@ -776,12 +470,43 @@ describe('getInjectionForUrl', () => {
     });
 
     it('asks the site for its facets rather than waiting to be given them', () => {
-      // A collection page fetches no facets until something opens Filter, so a
-      // sheet opened before that would have nothing in it. The site's own pill
-      // is clicked once, out of sight, while the app's cover is still up.
+      /*
+       * A collection page fetches no facets until something opens Filter, so a
+       * sheet opened before that would have nothing in it. The request is made
+       * out of sight, while the app's cover is still up.
+       *
+       * THIS TEST USED TO ASSERT THE BUG. It required
+       * `querySelector('.filter_h')` and `pill.click()` -- one pill, clicked
+       * once. Both halves were wrong, and the app shipped with an empty filter
+       * sheet on every listing page because of them:
+       *
+       *   ONE PILL. There are TWO .filter_h pills in SearchTap's bundle. One
+       *   is `onClick: isFilterOpen = true`, which opens the drawer and never
+       *   fetches; the other is `openFilter()`, which calls setMobileFilter(true)
+       *   and is the one that does. They cannot be told apart from the DOM, and
+       *   querySelector takes whichever is first -- on a collection page, the
+       *   drawer-only one. So every candidate is clicked now; clicking the
+       *   harmless one costs nothing, because closeSite() puts the drawer back
+       *   down.
+       *
+       *   ONCE. SearchTap is a deferred script, so a click dispatched before
+       *   <initial-toolbox-bar> has hydrated is silently lost -- and the latch
+       *   was set on the attempt rather than on facets arriving, so there was
+       *   no second try for the life of the page. It retries until the facets
+       *   are actually there, bounded so a page that will never produce any is
+       *   not clicked at for ever.
+       */
       const script = listing();
-      expect(script).toContain(".querySelector('.filter_h')");
-      expect(script).toContain('pill.click()');
+      // Every candidate pill, not just the first.
+      expect(script).toContain(
+        ".querySelectorAll(\n      '.filter_h, .mobile-toggle-filter, .st-filter-btn'\n    )",
+      );
+      // And the store, which is the state change the real pill makes.
+      expect(script).toContain('store.setMobileFilter(true)');
+      // Retried until the facets arrive, rather than latched on one attempt.
+      expect(script).toContain('function warmDone()');
+      expect(script).toContain('.st-widget .st-widget-title');
+      expect(script).toContain('warmClicks >= WARM_TRIES');
       // And the drawer that opens is put back down through its own Apply.
       expect(script).toContain(".querySelector('.mobilesearch .apply-btn')");
     });
@@ -1181,135 +906,6 @@ describe('getInjectionForUrl', () => {
     expect(script).toContain('MAX_TILES = 16');
   });
 
-  describe('full dashboard match', () => {
-    const home = () => getInjectionForUrl('https://zigly.com/') as string;
-
-    /**
-     * The dashboard tail, in the order the customer asked for on 2026-08-24.
-     *
-     * Every needle is the section's DECLARATION in the SECTIONS chain, not its
-     * bare id -- the stylesheet names several of those ids too, earlier in the
-     * payload, so a bare indexOf would measure the CSS instead of the running
-     * order. Declaration order in that chain is the render order: the
-     * placeholders are created synchronously in a single pass before any fetch
-     * resolves, so no section can be shuffled by the network.
-     *
-     * The headings beside each entry were read off the live sections on
-     * 2026-08-24, so this list is checkable against the site rather than being
-     * a restatement of the code it guards.
-     */
-    const TAIL = [
-      ['"mark":"zigly-x-offer1"', 'Applod Food'],
-      ['"mark":"zigly-x-offer2"', 'Applod Treats'],
-      ['"mark":"zigly-x-coins"', 'Zigly Coins + discount cards'],
-      ['"move":"home_shop_by_brand_section"', 'Top Pet Brands, One Spot!'],
-      ['"mark":"zigly-x-price"', 'Find the Best Deals! (2x3 grid)'],
-      ['"mark":"zigly-x-banner2"', 'Advanced Vet Care banner'],
-      ['"mark":"zigly-x-concern"', 'Care by Concern'],
-      ['"mark":"zigly-x-offer3"', 'Zigly Style Steals'],
-      ['"slot":"zigly-x-bestsellers"', 'Bestsellers'],
-      ['"slot":"zigly-x-everything"', 'Everything For Dogs / Cats'],
-      ['"mark":"zigly-x-double"', "Let's Paw-ty! + Too Many Cute Options?"],
-      ['"move":"helpful_tips"', 'Pet Parenting Made Easy'],
-      ['"move":"custom_video_text_banner"', 'the YouTube video'],
-      ['"move":"about_our_communities"', 'Real Pets. Real Stories. Real Community.'],
-      ['"slot":"zigly-x-instagram"', 'From Our Instagram'],
-      ['"mark":"zigly-x-logos"', 'the brand-claims strip'],
-    ] as const;
-
-    it('declares the whole tail in the requested order', () => {
-      const s = home();
-      const at = TAIL.map(([needle, label]) => {
-        const i = s.indexOf(needle);
-        expect(i).toBeGreaterThan(-1);
-        return {i, label};
-      });
-      // Compared as a list of labels rather than pair by pair, so a failure
-      // prints the order that was declared against the order asked for --
-      // an index pair on its own does not say which two sections swapped.
-      const declared = at.slice().sort((a, b) => a.i - b.i).map(e => e.label);
-      expect(declared).toEqual(at.map(e => e.label));
-    });
-
-    it('opens the tail below Explore, with the coupon strip left under the banner', () => {
-      // The coupon strip is the one entry anchored to the banner rather than to
-      // the running tail, so it stays in the head of the dashboard (section f)
-      // even though it is declared first in this chain.
-      const s = home();
-      expect(s).toContain("spec.key === 'coupon_slider' ? banner : tail");
-      // Explore is what the tail hangs off; if that anchor ever goes, every
-      // section below falls back to sitting under the banner.
-      expect(s).toContain("document.getElementById('zigly-explore')");
-    });
-
-    it('lays Shop by price out as a grid rather than a scrolling rail', () => {
-      // Six tiles, so there is nothing off-screen for a rail to reveal.
-      const s = home();
-      expect(s).toContain('#zigly-x-price .swiper-wrapper');
-      expect(s).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
-      // The generic transplant rule turns .swiper-wrapper into a horizontal
-      // scroller; this section has to opt out of it.
-      expect(s).toContain('scroll-snap-type: none');
-    });
-
-    it('places every section the reference app shows', () => {
-      const s = home();
-      for (const mark of [
-        'zigly-x-coupon',
-        'zigly-x-offer1',
-        'zigly-x-offer2',
-        'zigly-x-offer3',
-        'zigly-x-coins',
-        'zigly-x-banner2',
-        'zigly-x-logos',
-        'zigly-x-price',
-        'zigly-x-concern',
-        'zigly-x-double',
-        'zigly-x-everything',
-      ]) {
-        expect(s).toContain(mark);
-      }
-    });
-
-    it('distinguishes sections whose fragment repeats on the source page', () => {
-      // Three offer sections and three single banners share a fragment, so a
-      // bare lookup would return the first one three times.
-      const s = home();
-      expect(s).toContain('offer_section#1');
-      expect(s).toContain('offer_section#3');
-      expect(s).toContain('custom_single_banner#3');
-    });
-
-    it('swaps in the category set the reference app shows', () => {
-      const s = home();
-      expect(s).toContain('swapCategories');
-      // Replaced in place, never appended alongside the original.
-      expect(s).toContain('replaceChild');
-    });
-
-    it('lets the category circles be scrolled by thumb', () => {
-      // The transplanted rail has no Swiper -- markup inserted through the DOM
-      // never runs its scripts -- so the track sat wider than a box that clips
-      // it, and every circle past the fifth was on the page and unreachable.
-      const s = home();
-      expect(s).toContain('data-zigly-native-scroll');
-      expect(s).toContain('.home-category-swiper');
-      expect(s).toContain('overflow-x: auto !important');
-    });
-
-    it('never turns a live Swiper rail into a scroller as well', () => {
-      // Two markers, and only the one set on a copy that actually landed drives
-      // the CSS. When the fetch fails, the rail the site rendered keeps its own
-      // Swiper, and it must not also be scrolling natively.
-      const s = home();
-      expect(s).toContain(
-        "replacement.setAttribute('data-zigly-native-scroll'",
-      );
-      expect(s).not.toContain(
-        "current.setAttribute('data-zigly-native-scroll'",
-      );
-    });
-  });
 
   it('relocates sections the homepage already has rather than copying them', () => {
     // Top Pets Brands, Pet Parenting and Real Pets are already on the page.
@@ -1354,26 +950,6 @@ describe('getInjectionForUrl', () => {
     expect(script).toContain('"mark":"zigly-x-coins"');
   });
 
-  describe('everything for section', () => {
-    const home = () => getInjectionForUrl('https://zigly.com/') as string;
-
-    it('shows Dogs and Cats tabs, not the source templates’ labels', () => {
-      // Dog page ships Puppy/Adult, cat page ships Kitten/Cat; the reference
-      // shows Dogs/Cats, so the frame is relabelled and refilled.
-      const s = home();
-      expect(s).toContain("['Dogs', 'Cats']");
-      expect(s).toContain('everything@dog');
-      expect(s).toContain('everything@cat');
-    });
-
-    it('supplies the switcher the section needs to work', () => {
-      // Its tabs call makeActiveSlider_eveything (their spelling), which the
-      // homepage never defines -- so tapping a tab did nothing.
-      const s = home();
-      expect(s).toContain('makeActiveSlider_eveything');
-      expect(s).toContain("typeof window.makeActiveSlider_eveything !== 'function'");
-    });
-  });
 
   it('keeps the video section and drops Shop from Feed', () => {
     // video_swiper renders "Shop from Feed", which the reference does not

@@ -15,24 +15,11 @@ import {MOBILE_CSS, buildStyleInjection} from './injectedStyles';
  * passes send this instead of the whole bundle.
  */
 export {RESTYLE_REPEAT} from './injectedStyles';
-import {HOME_LAYOUT_SCRIPT} from './homeLayout';
-import {PAGE_CACHE_SCRIPT} from './pageCache';
-import {BANNER_CAROUSEL_SCRIPT} from './bannerCarousel';
-import {BRAND_RAIL_SCRIPT} from './brandRail';
-import {COUPON_STRIP_SCRIPT} from './couponStrip';
-import {BREED_SECTION_SCRIPT} from './breedSection';
-import {HOT_PICKS_SCRIPT} from './hotPicks';
-import {EXPLORE_SCRIPT} from './explorePicker';
 import {LISTING_PAGE_SCRIPT} from './listingPage';
 import {PRODUCT_PAGE_SCRIPT} from './productPage';
 import {FACET_BRIDGE_SCRIPT} from './facetBridge';
 import {DRAWER_EXTRAS_SCRIPT} from './drawerExtras';
 import {BREED_PAGE_SCRIPT} from './breedPage';
-import {EXTRA_SECTIONS_SCRIPT} from './extraSections';
-import {CONCERN_CARDS_SCRIPT} from './concernCards';
-import {BESTSELLERS_SCRIPT} from './bestsellers';
-import {EVERYTHING_SCRIPT} from './everythingSection';
-import {INSTAGRAM_SECTION_SCRIPT} from './instagramSection';
 import {CART_TOAST_SCRIPT} from './cartToast';
 import {READY_SIGNAL_SCRIPT} from './readySignal';
 import {SEARCH_DIAGNOSTIC} from './diagnostics';
@@ -67,27 +54,38 @@ export const getInjectionForUrl = (url: string): string | null => {
   // Flip to false before cutting a release APK.
   const diagnostic = ENABLE_DIAGNOSTIC ? SEARCH_DIAGNOSTIC : '';
 
-  // Order matters in exactly one place, and it used to be wrong: PAGE_CACHE
-  // defines window.__ziglyFetchSection, and HOME_LAYOUT is the first script to
-  // call it. With the cache installed second, that call threw on every load and
-  // was swallowed by the module's own try/catch -- so the reference app's
-  // category circles were never swapped in, silently, and the homepage kept its
-  // own fourteen-tile set. The fetcher now installs first; every other module
-  // that uses it already ran after it.
+  /*
+   * NO DASHBOARD SECTIONS HERE ANY MORE, and that is the point of this file's
+   * current shape rather than an omission.
+   *
+   * Thirteen modules used to be composed in below the stylesheet -- home
+   * layout, the banner carousel, the coupon strip, breeds, hot picks, explore,
+   * extra sections, brands, concerns, bestsellers, everything, Instagram, and
+   * the section cache they all fetched through. Every one of them existed to
+   * assemble a dashboard *inside the page*, and ../native/NativeDashboard now
+   * draws that dashboard as React Native components over a WebView nobody
+   * looks at. Shipping them was 404 KB of JavaScript per home load, building a
+   * screen that is never on screen -- 323 KB of it Instagram cover bytes that
+   * the native rail loads from ../assets/instagram as real JPEGs instead.
+   *
+   * The WebView itself stays, and stays mounted: it is the app's session. See
+   * the note over the dashboard in ../screens/ZiglyWebViewScreen and
+   * DATA-SOURCES.md §7 -- the cart cookie, the wishlist and every
+   * /cart/add.js post live in that jar, so what is left below is the session,
+   * the pages the app still shows in a WebView, and nothing else.
+   *
+   * WHAT REMAINS AND WHY, since "it looked dashboard-ish" is what would delete
+   * the wrong one next:
+   *   MOBILE_CSS       every WebView page is still restyled; the app's whole
+   *                    difference from the mobile website is in it.
+   *   CART_TOAST       an add can be made from a product page in a layer.
+   *   READY_SIGNAL     it emits `page-ready` for inner page layers. Its
+   *                    `dashboard-ready` branch is now vestigial -- the splash
+   *                    no longer waits for it -- and harmless.
+   *   LISTING / PRODUCT / FACET / DRAWER / BREED  the pages still shown in a
+   *                    WebView. None of them fetches a section.
+   */
   return `${buildStyleInjection(MOBILE_CSS)}
-${PAGE_CACHE_SCRIPT}
-${HOME_LAYOUT_SCRIPT}
-${BANNER_CAROUSEL_SCRIPT}
-${COUPON_STRIP_SCRIPT}
-${BREED_SECTION_SCRIPT}
-${HOT_PICKS_SCRIPT}
-${EXPLORE_SCRIPT}
-${EXTRA_SECTIONS_SCRIPT}
-${BRAND_RAIL_SCRIPT}
-${CONCERN_CARDS_SCRIPT}
-${BESTSELLERS_SCRIPT}
-${EVERYTHING_SCRIPT}
-${INSTAGRAM_SECTION_SCRIPT}
 ${CART_TOAST_SCRIPT}
 ${READY_SIGNAL_SCRIPT}
 ${LISTING_PAGE_SCRIPT}

@@ -193,6 +193,19 @@ const SORTS = [
   'Discount: High to Low',
 ];
 
+/**
+ * SearchTap's store, as the bridge has to find it.
+ *
+ * Only the members the bridge touches: the two actions it calls and the one
+ * value it reads back.
+ */
+interface Store {
+  showMobileFilter: boolean;
+  sortingValue: string;
+  setMobileFilter: (on: boolean) => void;
+  setSortingValue: (label: string) => void;
+}
+
 interface Page {
   body: El;
   posted: unknown[];
@@ -201,6 +214,12 @@ interface Page {
   /** One turn of the bridge's own poll. */
   tick: () => void;
   run: (script: string) => void;
+  /** SearchTap's own store, to assert what the bridge wrote into it. */
+  store: Store;
+  /** Every pill the page draws, in document order. */
+  pills: El[];
+  /** Move the fixture's clock, which is what lets the retry gate be tested. */
+  advance: (ms: number) => void;
 }
 
 /**
@@ -257,11 +276,24 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
     drawer.add(new El('div', 'st-widget').add(value('cat', '(63)')));
   }
 
-  const pill = new El('div', 'filter_h', {}, 'Filter');
+  /*
+   * TWO pills, which is what the real bundle draws and what the old fixture's
+   * single one could never exhibit.
+   *
+   * The first only opens the drawer; the second is the one whose handler
+   * fetches. Their order is the real one -- the drawer-only pill comes first in
+   * document order, which is precisely why a bare querySelector('.filter_h')
+   * took the wrong one and the filter sheet came up empty on every listing
+   * page. Only `fetchPill` is wired to the store here, so a bridge that clicks
+   * just the first one leaves `showMobileFilter` false and fails the test.
+   */
+  const drawerPill = new El('div', 'filter_h', {}, 'Filter');
+  const fetchPill = new El('div', 'filter_h', {}, 'Filter');
   const body = new El('body').add(
     new El('div', 'sortFilterCon').add(
       new El('div', 'sort_h', {}, 'Best selling'),
-      pill,
+      drawerPill,
+      fetchPill,
     ),
     new El('div', 'st-overlay-active').add(
       new El('div', 'st-sorting-wrapper').add(
@@ -280,6 +312,52 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
   const posted: unknown[] = [];
   const timers: Array<() => void> = [];
   const polls: Array<() => void> = [];
+
+  /**
+   * SearchTap's store, and the Vue app it is provided to.
+   *
+   * MODELLED ON THE REAL SHAPE, DELIBERATELY. Pinia's install does
+   * `app.provide(Symbol(), pinia)` into a `provides` object Vue creates with
+   * `Object.create(null)`, and the stores live in a Map at `pinia._s`. An
+   * earlier fixture keyed `provides` with the STRING 'pinia' -- a shape Vue
+   * never produces -- so it passed against a mock that contradicted the
+   * framework while the real `for...in` walk in the bridge enumerated nothing
+   * and found the store zero times on every real page. A fixture that models
+   * framework internals has to model the real ones or it hides the next bug
+   * too, so this one is symbol-keyed and null-prototyped.
+   */
+  const store: Store = {
+    showMobileFilter: false,
+    sortingValue: '',
+    setMobileFilter(on: boolean) {
+      this.showMobileFilter = on;
+    },
+    setSortingValue(label: string) {
+      this.sortingValue = label;
+    },
+  };
+  const provides = Object.create(null) as Record<symbol, unknown>;
+  provides[Symbol()] = {_s: new Map([['sidebarContent', store]])};
+
+  /*
+   * __vue_app__ lives on the exact element handed to app.mount(), which the
+   * bundle mounts at #collectionmodalcontainer -- nested inside the theme's
+   * section wrapper rather than a child of <body>.
+   */
+  const host = new El('div', '', {id: 'collectionmodalcontainer'});
+  (host as unknown as {__vue_app__: unknown}).__vue_app__ = {
+    _context: {provides, config: {globalProperties: {}}},
+  };
+  body.add(host);
+
+  // Only the fetching pill trips the store, exactly as on the real page.
+  fetchPill.click = function click(this: El) {
+    this.clicks += 1;
+    store.setMobileFilter(true);
+  };
+
+  /** A clock the test drives, so the warm-up's retry gate is observable. */
+  let now = 1_000_000;
 
   const document = {
     body,
@@ -303,6 +381,10 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
       'setTimeout',
       'setInterval',
       'clearInterval',
+      // Injected, not inherited: the warm-up spaces its retries off Date.now(),
+      // and against the real clock every poll in one synchronous test reads the
+      // same instant -- so the gate could never be exercised either way.
+      'Date',
       script,
     )(
       window,
@@ -318,6 +400,7 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
       () => {
         polls.length = 0;
       },
+      {now: () => now},
     );
   };
 
@@ -332,6 +415,11 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
     },
     tick: () => polls.forEach(poll => poll()),
     run,
+    store,
+    pills: [drawerPill, fetchPill],
+    advance: (ms: number) => {
+      now += ms;
+    },
   };
 };
 
@@ -450,16 +538,77 @@ describe('reading the page', () => {
 });
 
 describe('asking the site for its facets', () => {
-  it('clicks the site’s own Filter pill, once, when there are none', () => {
+  /**
+   * EVERY pill, not the first one.
+   *
+   * This used to assert `pill?.clicks === 1` against a fixture that drew a
+   * single pill -- so it could not tell querySelector from querySelectorAll,
+   * and it locked in the count that made the retry below impossible. The real
+   * bundle draws two: one whose handler only opens the drawer, and one whose
+   * handler fetches. They are indistinguishable from the DOM, and the
+   * drawer-only one comes first, so clicking "the pill" clicked the wrong one
+   * and the filter sheet came up empty on every listing page.
+   */
+  it('clicks every candidate pill, because the fetching one is not first', () => {
     const page = load(false);
-    const pill = page.body.querySelector('.filter_h');
-    expect(pill?.clicks).toBe(1);
+    const [drawerPill, fetchPill] = page.pills;
+    expect(drawerPill.clicks).toBeGreaterThan(0);
+    expect(fetchPill.clicks).toBeGreaterThan(0);
   });
 
-  it('leaves the pill alone when the facets are already there', () => {
+  /** And the store, which is the state change the fetching pill makes. */
+  it('asks the store directly, which is what the real pill does', () => {
+    const page = load(false);
+    expect(page.store.showMobileFilter).toBe(true);
+  });
+
+  /**
+   * The lost first click, which is what the single latch could never survive.
+   *
+   * SearchTap is a deferred script: a click dispatched before
+   * <initial-toolbox-bar> has hydrated reaches nothing and reports no error.
+   * The old code latched on having made an attempt rather than on facets
+   * arriving, so one lost click meant an empty sheet for the life of the page.
+   */
+  it('tries again when the first attempt did not bring facets', () => {
+    const page = load(false);
+    const fetchPill = page.pills[1];
+    const first = fetchPill.clicks;
+
+    // Still no facets. The next poll, once the gate has elapsed, tries again.
+    page.advance(2000);
+    page.tick();
+    expect(fetchPill.clicks).toBeGreaterThan(first);
+  });
+
+  /** But not on every tick -- the budget would be gone before SearchTap woke. */
+  it('spaces its retries rather than spending them all at once', () => {
+    const page = load(false);
+    const fetchPill = page.pills[1];
+    const first = fetchPill.clicks;
+    // No clock movement: this tick falls inside the gate.
+    page.tick();
+    expect(fetchPill.clicks).toBe(first);
+  });
+
+  /** And it stops, so a page that will never answer is not clicked at for ever. */
+  it('gives up after a bounded number of attempts', () => {
+    const page = load(false);
+    const fetchPill = page.pills[1];
+    for (let i = 0; i < 40; i++) {
+      page.advance(2000);
+      page.tick();
+    }
+    // WARM_TRIES is 10 in the bridge; the point is that it is bounded well
+    // below the 40 opportunities given here, not the exact number.
+    expect(fetchPill.clicks).toBeLessThanOrEqual(10);
+  });
+
+  it('leaves the pills alone when the facets are already there', () => {
     // A search page fetches its facets with its results.
     const page = load(true);
-    expect(page.body.querySelector('.filter_h')?.clicks).toBe(0);
+    expect(page.pills.every(pill => pill.clicks === 0)).toBe(true);
+    expect(page.store.showMobileFilter).toBe(false);
   });
 
   it('puts the drawer it opened back down, through the site’s own Apply', () => {
@@ -526,19 +675,69 @@ describe('applying a filter', () => {
 });
 
 describe('applying a sort', () => {
-  it('clicks the site’s own button for that label', () => {
+  /**
+   * THIS USED TO ASSERT THE BUTTON CLICK, AND THAT WAS THE BUG.
+   *
+   * SearchTap's mobile sort button does not sort anything. It emits, and the
+   * toolbar handles the emit with `sortList(t) { kf().setSortingValue(t) }` --
+   * so writing the store is not a shortcut past the button, it IS what the
+   * button does. Asserting the click certified a path that does nothing on its
+   * own and, worse, could never cover the case below where no button exists.
+   */
+  it('writes the sort into the site’s own store', () => {
     const page = load(true);
     page.run(applySortScript('New Release'));
+    expect(page.store.sortingValue).toBe('New Release');
+  });
+
+  /**
+   * The tap that used to be swallowed, and the reason the store path exists.
+   *
+   * The sheet is drawn from SEED_SORT_OPTIONS before SearchTap has rendered
+   * anything, so this is not an edge case -- it is the normal first sort on a
+   * collection page, where <initial-toolbox-bar> ships empty and its buttons
+   * are client-rendered.
+   */
+  it('applies a sort tapped before the site has drawn its buttons', () => {
+    const page = load(true);
+    const dropdown = page.body.querySelector('.st-overlay-active');
+    if (dropdown) {
+      dropdown.children.length = 0;
+    }
+    expect(
+      page.body.querySelectorAll('.st-sorting-wrapper button[value]'),
+    ).toEqual([]);
+
+    page.run(applySortScript('Price: Low to High'));
+    expect(page.store.sortingValue).toBe('Price: Low to High');
+  });
+
+  /**
+   * The default has to go through the button, because SearchTap's own watcher
+   * refuses it: `t && "Best selling" !== t`. A store write alone would move the
+   * app's tick and leave the grid sorted however it already was.
+   */
+  it('clicks the button to restore the site’s default sort', () => {
+    const page = load(true);
+    page.run(applySortScript('Best selling'));
     const clicked = page.body
       .querySelectorAll('.st-sorting-wrapper button[value]')
       .filter(button => button.clicks > 0);
     expect(clicked).toHaveLength(1);
-    expect(clicked[0].getAttribute('value')).toBe('New Release');
+    expect(clicked[0].getAttribute('value')).toBe('Best selling');
   });
 
+  /*
+   * And it must not reach the STORE either, which is the half that matters now.
+   * SearchTap's sortList does `this.sort.find(s => s.label === ...).field` with
+   * no fallback, so an unoffered label is a TypeError thrown inside its own
+   * watcher -- after which the grid stops answering any later sort or filter on
+   * that page. A click that misses is harmless; a store write that misses is not.
+   */
   it('clicks nothing for a sort the site does not offer', () => {
     const page = load(true);
     page.run(applySortScript('Alphabetical'));
+    expect(page.store.sortingValue).toBe('');
     const clicked = page.body
       .querySelectorAll('button[value]')
       .filter(button => button.clicks > 0);
