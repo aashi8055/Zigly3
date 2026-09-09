@@ -31,19 +31,42 @@
  * a set would have thrown that away and left the app sorting alphabetically by
  * accident.
  *
- * WHAT WAS READ, AND WHEN. Read out of the served collection HTML and
- * `assets/searchtap.js` on 2026-09-09:
+ * `.st-product` IS NOT A CARD, AND THAT WAS THIS FILE'S FIRST BUG.
  *
- *   .st-product         one SearchTap card. Its own class, present only on the
- *                       grid SearchTap renders after a filter or sort.
+ * The first version asked for `.st-product` and then for a link INSIDE each
+ * match. It reported nothing, ever, and the filter appeared to do nothing at
+ * all. Two separate reasons, both already recorded in this codebase:
+ *
+ *   1. ./productCard's long comment on the same mistake: SearchTap's parts are
+ *      FLAT SIBLINGS, not a nest. `st-product`, `st-product-name`,
+ *      `st-product-price` and `st-product-details` share a prefix and nothing
+ *      else -- there is no card root that its parts sit inside. So
+ *      `querySelector('a[href]')` within a `.st-product` finds nothing,
+ *      because the link is beside it rather than in it.
+ *   2. The only two `class="st-product"` in `assets/searchtap.js` are the
+ *      autocomplete LOADING SKELETON -- `<a>` elements with no href at all.
+ *      So even the guard that was supposed to mean "SearchTap has taken the
+ *      grid over" was reading a placeholder.
+ *
+ * WHAT IS READ NOW. The product LINK is the anchor, not a card wrapper. Every
+ * `a[href*="/products/"]` in the grid region is read and the handles
+ * deduplicated -- which is what the reported set actually is, and it needs no
+ * opinion about which element is a card or how the parts nest. Read out of
+ * `assets/searchtap.js` and the served collection HTML on 2026-09-09, and
+ * corrected against the device on 2026-09-10:
+ *
+ *   .st-product-wrap    the real SearchTap card container -- `.old-price` and
+ *                       `.new-price` are its descendants, and `st-w-1/2` is
+ *                       what makes the grid two columns.
+ *   .st-product-media   that card's image box; it holds an `<a>`.
  *   #product-grid       the theme's own server-rendered grid, which is what is
  *                       on the page BEFORE SearchTap replaces it.
- *   a[href*="/products/"]  the card's link. The handle is the segment after
- *                       `/products/`, with any query or fragment dropped.
+ *   .st-atc / .st-review  SearchTap's own add button and rating chip, used
+ *                       only as evidence that its grid is the one rendered.
  *
- * Guarded throughout: a selector that disappears reports an empty list, which
- * the native screen treats as "the bridge has nothing to say" and falls back to
- * its own unfiltered query rather than drawing an empty collection.
+ * Guarded throughout: a selector that disappears reports nothing, which the
+ * native screen treats as "the bridge has nothing to say" -- it keeps its own
+ * unfiltered query rather than drawing an empty collection.
  */
 import {LISTING_TEST_JS} from './listingPage';
 
@@ -109,34 +132,76 @@ ${LISTING_TEST_JS}
   }
 
   /**
-   * Whether SearchTap has taken the grid over.
+   * The element SearchTap's results live in, or null when it has not rendered.
    *
-   * Before a filter or a sort, the grid on the page is the theme's own
-   * server-rendered '#product-grid' and the native screen's GraphQL query
-   * already covers it -- reporting those handles would be the app reading the
-   * page to learn what it already knew. '.st-product' appears only once
-   * SearchTap has replaced it, which is exactly when its answer is worth
-   * reading.
+   * SearchTap REPLACES the theme's grid rather than filling it, so this is
+   * looked up fresh on every read -- a node found once is a node that has
+   * since been detached.
+   *
+   * BOTH SCOPES ARE SEARCHTAP'S OWN, and that is a requirement rather than a
+   * preference. '.st-collection-content' was tried here and removed: it is a
+   * wrapper in the THEME's own searchtap-collection-template.liquid and the
+   * theme's own '#product-grid' sits inside it, so scoping to it would report
+   * the server-rendered grid's handles as though a filter had selected them --
+   * the exact confusion this bridge exists to avoid. Only elements SearchTap
+   * itself creates can stand for "SearchTap answered".
+   *
+   * Scoped rather than document-wide so a recommendation rail further down the
+   * page cannot add its products to a filter's result set.
    */
-  function searchtapGrid() {
-    return document.querySelectorAll('.st-product').length > 0;
+  function resultsRoot() {
+    var scopes = ['.st-product-wrapper', '.st-results'];
+    for (var i = 0; i < scopes.length; i++) {
+      var found = document.querySelector(scopes[i]);
+      /*
+       * A scope that holds no product link is SearchTap's empty shell -- it
+       * mounts its containers before it has results -- so it is not an answer
+       * and the next candidate is tried.
+       */
+      if (found && found.querySelector('a[href*="/products/"]')) {
+        return found;
+      }
+    }
+    return null;
   }
 
-  /** Every handle in the rendered grid, in document order, deduplicated. */
+  /**
+   * Whether what is rendered is SEARCHTAP's grid rather than the theme's.
+   *
+   * The distinction is the whole point of the bridge, and a class the two
+   * share cannot make it. These four are SearchTap's own and appear on no
+   * theme card: its card container, its image box, its add control and its
+   * rating chip.
+   */
+  function searchtapGrid() {
+    var root = resultsRoot();
+    if (!root) { return false; }
+    return !!(
+      root.querySelector('.st-product-wrap') ||
+      root.querySelector('.st-product-media') ||
+      root.querySelector('.st-atc') ||
+      root.querySelector('.st-review')
+    );
+  }
+
+  /**
+   * Every product handle in the rendered grid, in document order.
+   *
+   * THE LINKS ARE THE ANCHOR, not a card wrapper -- see the note at the top of
+   * this file on why asking for a link inside '.st-product' found nothing. A
+   * card links to its product several times over (the photo, the title and the
+   * quick-add all carry the same href), so the dedupe is doing real work here
+   * rather than guarding an edge case: without it a grid of 24 products would
+   * report 70-odd handles.
+   */
   function handles() {
+    var root = resultsRoot();
+    if (!root) { return []; }
     var out = [];
     var seen = {};
-    var cards = document.querySelectorAll('.st-product');
-    for (var i = 0; i < cards.length && out.length < ${MAX_HANDLES}; i++) {
-      var link = cards[i].querySelector('a[href]');
-      if (!link) { continue; }
-      var handle = handleOf(link.getAttribute('href') || '');
-      /*
-       * A card links to its product several times over -- the photo, the title
-       * and the quick-add all carry the same href -- and 'querySelector' takes
-       * the first, so the dedupe is really about a product appearing in two
-       * cards (a recommendation rail below the grid, say).
-       */
+    var links = root.querySelectorAll('a[href*="/products/"]');
+    for (var i = 0; i < links.length && out.length < ${MAX_HANDLES}; i++) {
+      var handle = handleOf(links[i].getAttribute('href') || '');
       if (handle && !seen[handle]) {
         seen[handle] = true;
         out.push(handle);

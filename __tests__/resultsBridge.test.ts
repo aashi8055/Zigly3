@@ -91,9 +91,19 @@ class El {
   }
 }
 
-/** tag, .class, and [attr] / [attr="value"], in any combination. */
+/**
+ * tag, .class, and [attr] / [attr="value"] / [attr*="value"], in any
+ * combination.
+ *
+ * The `*=` (substring) form is here because the bridge relies on it: it reads
+ * `a[href*="/products/"]`, which is what lets it anchor on the product LINK
+ * rather than on a card wrapper class SearchTap does not give it. A matcher
+ * that silently ignored the operator would match every `<a>` on the page and
+ * the "ignores a link that is not a product" case would pass for the wrong
+ * reason.
+ */
 const matches = (node: El, simple: string): boolean => {
-  const attr = /\[([a-z-]+)(?:="([^"]*)")?\]/i.exec(simple);
+  const attr = /\[([a-z-]+)(?:(\*?)="([^"]*)")?\]/i.exec(simple);
   const rest = simple.replace(/\[[^\]]*\]/g, '');
   const classes = rest.split('.').slice(1).filter(Boolean);
   const tag = rest.split('.')[0];
@@ -110,8 +120,14 @@ const matches = (node: El, simple: string): boolean => {
     if (value === null) {
       return false;
     }
-    if (attr[2] !== undefined && value !== attr[2]) {
-      return false;
+    const wanted = attr[3];
+    if (wanted !== undefined) {
+      // `*=` is a substring test; a bare `=` is equality.
+      const hit =
+        attr[2] === '*' ? value.indexOf(wanted) !== -1 : value === wanted;
+      if (!hit) {
+        return false;
+      }
     }
   }
   return true;
@@ -120,9 +136,44 @@ const matches = (node: El, simple: string): boolean => {
 /** A link inside a card. */
 const link = (href: string) => new El('a', '', {href});
 
-/** One SearchTap card, with however many links it carries. */
+/**
+ * One SearchTap card, with however many links it carries.
+ *
+ * SHAPED LIKE THE REAL ONE, and the first version of this fixture was not --
+ * which is why the bridge shipped reporting nothing and the filter appeared
+ * dead on the device. It built `<div class="st-product">` with the links
+ * inside, and the bridge read it happily. On the real site there is no such
+ * element: `.st-product` is a FLAT SIBLING class in SearchTap's markup (the
+ * long note in ../src/webview/productCard records the same trap costing the
+ * same kind of bug), and the only two `class="st-product"` in searchtap.js are
+ * the autocomplete loading skeleton, whose anchors carry no href at all.
+ *
+ * So the card here is `.st-product-wrap` -- the true container, the one whose
+ * descendants are `.old-price` and `.new-price` -- holding an image box and a
+ * details block, each with its own link to the same product. That repetition
+ * is real and is what the bridge's dedupe is for.
+ */
 const stProduct = (...hrefs: string[]): El =>
-  new El('div', 'st-product').add(...hrefs.map(link));
+  new El('div', 'st-product-wrap').add(
+    new El('figure', 'st-product-media').add(...hrefs.map(link)),
+    new El('div', 'st-product-details').add(
+      new El('div', 'st-product-name').add(...hrefs.map(link)),
+      new El('div', 'st-product-price'),
+    ),
+  );
+
+/**
+ * Whatever cards are given, inside SearchTap's own results wrapper.
+ *
+ * The wrapper is not decoration. The bridge scopes its read to an element
+ * SEARCHTAP created -- never to the theme's own containers, because the
+ * theme's `#product-grid` sits inside those and its handles would then be
+ * reported as though a filter had selected them. So a fixture without a
+ * SearchTap scope is a page SearchTap has not rendered, and the bridge is
+ * right to say nothing about it.
+ */
+const inStGrid = (...cards: El[]): El =>
+  new El('div', 'st-product-wrapper').add(...cards);
 
 /** The theme's own server-rendered grid, before SearchTap replaces it. */
 const themeGrid = (): El =>
@@ -248,7 +299,7 @@ describe('the results bridge reports SearchTaps answer', () => {
 
   it('strips the collection prefix, the query and the fragment', () => {
     const {posted} = harness(
-      new El('div').add(
+      inStGrid(
         stProduct('/collections/x/products/handle-one?variant=9'),
         stProduct('/products/handle-two#tab'),
         stProduct('https://zigly.com/products/handle-three'),
@@ -264,7 +315,7 @@ describe('the results bridge reports SearchTaps answer', () => {
   /** A card links to its product from the photo, the title and the quick-add. */
   it('reports a product once however many times its card links to it', () => {
     const {posted} = harness(
-      new El('div').add(
+      inStGrid(
         stProduct('/products/only-one', '/products/only-one'),
         stProduct('/products/only-one'),
       ),
@@ -274,7 +325,7 @@ describe('the results bridge reports SearchTaps answer', () => {
 
   it('ignores a card whose link is not a product', () => {
     const {posted} = harness(
-      new El('div').add(
+      inStGrid(
         stProduct('/pages/about'),
         stProduct('/products/real-one'),
       ),
@@ -289,6 +340,114 @@ describe('the results bridge reports SearchTaps answer', () => {
     tick();
     // Same grid, so nothing new to say.
     expect(posted.length).toBe(1);
+  });
+});
+
+describe('the real sequence a customer drives', () => {
+  /**
+   * THE WHOLE JOURNEY, in the order the device performs it.
+   *
+   * This is the case the unit tests above each cover one slice of, and the one
+   * that was actually broken: the page loads showing the theme's grid, the
+   * customer applies a filter, SearchTap REPLACES the grid, and only then is
+   * there an answer to report. A bridge that is silent at step 1 and speaks at
+   * step 3 is the whole contract.
+   */
+  it('stays silent on the themes grid, then reports once SearchTap replaces it', () => {
+    const {posted, body, tick} = harness(themeGrid());
+
+    // 1. Page as served: the theme's own grid. The native screen's own query
+    //    already covers this, so the bridge must not report it.
+    expect(posted).toEqual([]);
+    tick();
+    expect(posted).toEqual([]);
+
+    // 2. The customer taps a chip. SearchTap replaces the grid -- it does not
+    //    fill the theme's, which is why the bridge re-looks-up its root on
+    //    every read rather than caching a node.
+    body.children.length = 0;
+    body.add(
+      inStGrid(
+        stProduct('/collections/applod/products/kept-one?variant=7'),
+        stProduct('/products/kept-two'),
+      ),
+    );
+
+    // 3. The poll finds it and posts the filtered set, in SearchTap's order.
+    tick();
+    expect(posted.length).toBe(1);
+    expect(posted[0].handles).toEqual(['kept-one', 'kept-two']);
+
+    // 4. Tapping a second chip narrows it again: a new answer, so a new report.
+    body.children.length = 0;
+    body.add(inStGrid(stProduct('/products/kept-two')));
+    tick();
+    expect(posted.length).toBe(2);
+    expect(posted[1].handles).toEqual(['kept-two']);
+
+    // 5. And an unchanged grid is not re-reported, however often it is read.
+    tick();
+    tick();
+    expect(posted.length).toBe(2);
+  });
+});
+
+describe('the bridge does not treat .st-product as a card', () => {
+  /**
+   * THE BUG THIS FILE SHIPPED WITH, pinned so it cannot come back.
+   *
+   * The first version asked for `.st-product` and then for a link inside each
+   * match. Nothing was ever reported and the filter looked dead on the device.
+   * `.st-product` is a flat sibling class in SearchTap's markup -- the same
+   * trap ../src/webview/productCard documents at length -- so a link is never
+   * *inside* it, and the only two `class="st-product"` in searchtap.js belong
+   * to the autocomplete loading skeleton, whose anchors have no href.
+   *
+   * A page shaped the way that skeleton is must therefore report nothing,
+   * rather than being mistaken for a rendered result set.
+   */
+  it('says nothing for a bare .st-product with no link inside it', () => {
+    const {posted} = harness(
+      new El('div', 'st-product-wrapper').add(
+        // The skeleton's shape: the class, an anchor, and no href anywhere.
+        new El('div', 'st-product').add(
+          new El('figure', 'st-product-media').add(new El('a', '')),
+        ),
+      ),
+    );
+    expect(posted).toEqual([]);
+  });
+
+  /**
+   * And the positive half: the real card reports even though its links are
+   * nested two levels down and never children of a `.st-product`.
+   */
+  it('reads the real cards links, which are not children of .st-product', () => {
+    const {posted} = harness(inStGrid(stProduct('/products/nested-deep')));
+    expect(posted[0].handles).toEqual(['nested-deep']);
+  });
+
+  /**
+   * The theme's own containers are never a scope: `#product-grid` sits inside
+   * them, so scoping there would report the server-rendered grid as a filter
+   * result -- which is the one thing this bridge exists to distinguish.
+   */
+  it('does not scope itself to the themes own collection wrapper', () => {
+    /*
+     * The scope LIST, not the whole script: the comment above it names the
+     * rejected selector on purpose, to say why it must not come back, and a
+     * bare `not.toContain` over the file would forbid explaining the decision.
+     */
+    const at = RESULTS_BRIDGE_SCRIPT.indexOf('var scopes = [');
+    expect(at).toBeGreaterThan(-1);
+    const list = RESULTS_BRIDGE_SCRIPT.slice(
+      at,
+      RESULTS_BRIDGE_SCRIPT.indexOf(']', at),
+    );
+    expect(list).not.toContain('st-collection-content');
+    expect(list).not.toContain('product-grid');
+    // And it still scopes to something SearchTap itself creates.
+    expect(list).toContain('st-product-wrapper');
   });
 });
 
