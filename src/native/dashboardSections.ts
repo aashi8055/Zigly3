@@ -81,6 +81,28 @@ export type DashboardSection = {
   readonly fragment: string | null;
   /** True once this section is drawn natively. */
   readonly native: boolean;
+  /**
+   * This section can be taller than the viewport, so it must not be clipped.
+   *
+   * ../native/NativeDashboard scrolls with `removeClippedSubviews`, and on
+   * Android the clipping stops re-attaching the children that follow a section
+   * taller than the viewport -- the failure that once left Real Pets, From Our
+   * Instagram and the logo strip permanently missing, with the video block's
+   * navy ground reading as a wall ending the page.
+   *
+   * Marking a section here opts THAT SECTION out of the clipping and leaves
+   * the others clipped, which is where the scrolling gain comes from.
+   *
+   * NOTHING SETS IT TODAY, and it is kept rather than removed. The video block
+   * was the only section that ever needed it and that section is now hidden
+   * (see `video` below), so the constraint is currently satisfied by every
+   * section on the page. The flag stays because the constraint has not gone
+   * away: it is a property of the scroller, not of that one block, and the
+   * next section that outgrows a short screen would hit the same bug with no
+   * hint as to why. Left as the documented escape hatch, with the mechanism
+   * wired up in ../native/NativeDashboard.
+   */
+  readonly tall?: boolean;
 };
 
 /**
@@ -425,12 +447,53 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     fragment: 'helpful_tips',
     native: true,
   },
+  /**
+   * The promotional video block.
+   *
+   * `frozen`, not `theme`, and the correction is worth the entry. This was
+   * `theme` with a `custom_video_text_banner` fragment, on the reading that the
+   * poster came from a `video_poster` setting the app would learn from the
+   * rendered section. It does not: the dog page's copy of the section sets
+   * `video_link` to a YouTube URL and no poster at all, so the section emits a
+   * bare `<iframe>` with no image in it. The app spent every launch fetching
+   * that section to look for a picture that was never there -- and, because
+   * ../native/VideoBlock returned null without one, drew no section at all.
+   *
+   * The heading, the copy and the navy ground are theme settings held in the
+   * app; the poster is derived from the video id against YouTube's own image
+   * host. So nothing about this section is read from zigly.com at runtime, and
+   * `fragment` is null because there is no longer a section to compare a native
+   * version against. ./video carries the full reading.
+   */
   {
     key: 'video',
     title: null,
-    source: 'theme',
-    fragment: 'custom_video_text_banner',
-    native: true,
+    source: 'frozen',
+    fragment: null,
+    /*
+     * HIDDEN, and the entry stays as the record of that.
+     *
+     * `native: false` rather than a deleted entry: this list is the dashboard's
+     * running order and the one place the full set of sections is written
+     * down, so a section the app deliberately does not draw has to be
+     * distinguishable from one nobody has got to yet. ../../__tests__ read
+     * this file for exactly that.
+     *
+     * WHY IT IS HIDDEN. The block never played anything. React Native has no
+     * `<Video>` and no media package is installed, so ../native/VideoBlock
+     * drew the poster frame, the heading and a 431-character paragraph -- a
+     * still photograph of a brown living room, filling most of a screen, that
+     * did nothing when tapped. It was also the tallest section on the page by
+     * a wide margin, which is what put the three sections after it behind the
+     * clipping bug the note on `removeClippedSubviews` in
+     * ../native/NativeDashboard records.
+     *
+     * So the component and ./video are both kept -- nothing is deleted, and
+     * flipping this back to true restores the section as it was -- but the
+     * dashboard does not draw a video it cannot play. Wiring a real player is
+     * the dependency decision ../native/VideoBlock's own header sets out.
+     */
+    native: false,
   },
   {
     key: 'community',

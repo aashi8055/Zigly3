@@ -32,32 +32,43 @@
  * play button that does nothing is worse than no play button. So the affordance
  * follows the capability rather than being painted on regardless.
  */
-import React from 'react';
+import React, {useState} from 'react';
 import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
-import {Block, usePulse} from '../components/Skeleton';
 import {
   VIDEO_BACKGROUND,
   VIDEO_DESCRIPTION,
-  VIDEO_RAIL,
+  VIDEO_POSTER,
+  VIDEO_POSTER_FALLBACK,
   VIDEO_TEXT,
   VIDEO_TITLE,
 } from './video';
-import {
-  fetchIcons,
-  loadIcons,
-  saveIcons,
-  type IconMap,
-  type TileRail,
-} from './tileIcons';
-import {useSectionData} from './useSectionData';
 
 const GUTTER = 12;
 
 /** The poster, at the source video's 16:9. */
 const RATIO = 16 / 9;
 
-const EMPTY_ICONS: IconMap = {};
+/**
+ * How many lines of the paragraph show before "Read more".
+ *
+ * FIVE, and the figure is a viewport budget rather than a taste. See the note
+ * on `root` below: the dashboard clips away everything after a section taller
+ * than the viewport, and this is the tallest section on the page. On a 360dp
+ * phone the poster is 189dp and the copy's fixed furniture -- padding, the
+ * heading, the toggle row -- is another 94dp, so the paragraph is the only
+ * part of the card whose height is a choice. At its full 9 lines the card
+ * comes to 454dp, which overflows a short screen's viewport and takes Real
+ * Pets, From Our Instagram and the logo strip with it.
+ *
+ * Five lines put the collapsed card at 378dp, comfortably inside the ~526dp
+ * a 640dp-tall phone leaves between the header and the bottom bar. Nothing is
+ * lost: the tap expands it in place, and an expanded card is allowed to be
+ * tall because it is the customer's own doing -- by then they have scrolled it
+ * to the top of the screen, and the sections below are reached by collapsing
+ * it again or by the scroll that follows.
+ */
+const DESCRIPTION_LINES = 5;
 
 type Props = {
   /**
@@ -77,78 +88,162 @@ const PlayMark = () => (
 );
 
 const VideoBlock = ({onPlay}: Props) => {
-  const {data: icons, loading} = useSectionData<IconMap>({
-    load: () => loadIcons(VIDEO_RAIL as TileRail),
-    fetcher: signal => fetchIcons(VIDEO_RAIL as TileRail, signal),
-    save: learned => saveIcons(VIDEO_RAIL as TileRail, learned),
-    isEmpty: map => !map || Object.keys(map).length === 0,
-    empty: EMPTY_ICONS,
-  });
+  /**
+   * Fall back to the standard-definition still if the HD one 404s.
+   *
+   * `maxresdefault` exists for this video, but it is the one YouTube still
+   * that is not guaranteed -- it is only generated for uploads above 720p. If
+   * Zigly ever swaps the video for a lower-resolution one, this keeps the
+   * block illustrated instead of blank. `hqdefault` exists for every video.
+   */
+  const [hd, setHd] = useState(true);
+  const poster = hd ? VIDEO_POSTER : VIDEO_POSTER_FALLBACK;
 
-  const pulse = usePulse(loading);
-  const poster = icons[VIDEO_RAIL.tiles[0].key];
+  /**
+   * Whether the paragraph is showing in full.
+   *
+   * Collapsed to `DESCRIPTION_LINES` until tapped -- see that constant for the
+   * viewport budget behind the figure. The site shows the whole paragraph and
+   * so does this once expanded; the cap exists because this app draws the
+   * block inside a clipping scroller and the site does not.
+   */
+  const [expanded, setExpanded] = useState(false);
+
+  /*
+   * NO LOADING STATE AND NO FETCH, unlike every other illustrated section.
+   *
+   * The poster is derived from the video id rather than learned from the
+   * section's markup -- see ./video, which carries why this section has no
+   * poster image to learn in the first place. So there is nothing to wait for:
+   * the URL is known at build time and the only latency is the image itself,
+   * which `Image` handles. A skeleton here would be a placeholder for a
+   * request that is never made.
+   */
+  const image = (
+    <Image
+      source={{uri: poster}}
+      style={[styles.poster, styles.posterImage]}
+      resizeMode="cover"
+      onError={() => setHd(false)}
+      {...(onPlay
+        ? {accessible: false}
+        : {
+            accessibilityRole: 'image' as const,
+            accessibilityLabel: VIDEO_TITLE,
+          })}
+    />
+  );
 
   return (
     <View style={styles.root}>
-      {loading && !poster ? (
-        <Block pulse={pulse} style={styles.posterPlaceholder} />
-      ) : poster ? (
-        onPlay ? (
-          <Pressable
-            onPress={onPlay}
-            accessibilityRole="button"
-            accessibilityLabel={`Play video: ${VIDEO_TITLE}`}
-            style={styles.poster}
-          >
-            {({pressed}) => (
-              <>
-                <Image
-                  source={{uri: poster}}
-                  style={[styles.posterImage, pressed && styles.pressed]}
-                  resizeMode="cover"
-                  accessible={false}
-                />
-                <View style={styles.playOverlay}>
-                  <PlayMark />
-                </View>
-              </>
-            )}
-          </Pressable>
-        ) : (
-          /*
-           * No handler: a picture, not a control. No play glyph either -- see
-           * the note at the top on why the affordance follows the capability.
-           */
-          <Image
-            source={{uri: poster}}
-            style={[styles.poster, styles.posterImage]}
-            resizeMode="cover"
-            accessibilityRole="image"
-            accessibilityLabel={VIDEO_TITLE}
-          />
-        )
+      {onPlay ? (
+        <Pressable
+          onPress={onPlay}
+          accessibilityRole="button"
+          accessibilityLabel={`Play video: ${VIDEO_TITLE}`}
+          style={styles.poster}
+        >
+          {({pressed}) => (
+            <>
+              <Image
+                source={{uri: poster}}
+                style={[styles.posterImage, pressed && styles.pressed]}
+                resizeMode="cover"
+                onError={() => setHd(false)}
+                accessible={false}
+              />
+              <View style={styles.playOverlay}>
+                <PlayMark />
+              </View>
+            </>
+          )}
+        </Pressable>
       ) : (
         /*
-         * The poster never arrived. The heading and the copy are in the app, so
-         * the block still says what Zigly wanted said -- unlike the offer
-         * rails, there is text to fall back to.
+         * No handler: a picture, not a control. No play glyph either -- see
+         * the note at the top on why the affordance follows the capability.
          */
-        null
+        image
       )}
 
       <View style={styles.copy}>
         <Text style={styles.title}>{VIDEO_TITLE}</Text>
-        <Text style={styles.description}>{VIDEO_DESCRIPTION}</Text>
+        <Text
+          style={styles.description}
+          /*
+           * `undefined` rather than 0 when expanded: on Android
+           * `numberOfLines={0}` is not "no limit" in every RN version, and
+           * omitting the prop is the only spelling that reliably means it.
+           */
+          numberOfLines={expanded ? undefined : DESCRIPTION_LINES}
+        >
+          {VIDEO_DESCRIPTION}
+        </Text>
+        {/*
+          The toggle, and it goes both ways.
+          A "Read more" with no way back would leave the card tall for the rest
+          of the session -- which is the state the cap exists to avoid.
+        */}
+        <Text
+          onPress={() => setExpanded(current => !current)}
+          accessibilityRole="button"
+          accessibilityState={{expanded}}
+          style={styles.more}
+        >
+          {expanded ? 'Read less' : 'Read more'}
+        </Text>
       </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  /**
+   * A CARD, INSET AND ROUNDED -- not the full-bleed field this used to draw.
+   *
+   * The old note here said "full-bleed, so the navy runs to both edges as it
+   * does on the site", and that was simply wrong about the site. Read from
+   * `zigly-website-code/.../sections/custom-video-text-banner.liquid`: the
+   * section carries the `page-width` class, so it is inset like every other
+   * section, and `.content-video-text-banner` sets `border-radius: 16px` with
+   * the mobile rules rounding the video's top corners to match. It is a card
+   * on the page, and it never touched the window's edges.
+   *
+   * WHY IT MATTERED RATHER THAN BEING A DETAIL. The poster is a photograph of
+   * a warm brown living room -- brown sofa, brown floor, lamplight. Bled to
+   * both edges with the navy copy directly beneath it and no boundary between
+   * them, the two read as one continuous block whose colour changes halfway
+   * down: the navy appeared to "turn brown" further down the page, which is
+   * exactly how it was reported. Neither colour was wrong; the missing edge
+   * was. Inset and rounded, the poster is a picture inside a card and the navy
+   * is the card's own ground, so the change of colour lands on a border where
+   * the eye expects one.
+   */
   root: {
-    // The theme's own `background_color` for this block. Full-bleed, so the
-    // navy runs to both edges as it does on the site.
+    // The theme's own `background_color` for this block.
     backgroundColor: VIDEO_BACKGROUND,
+    marginHorizontal: GUTTER,
+    borderRadius: 16,
+    /*
+     * THIS CARD MUST STAY SHORTER THAN THE VIEWPORT, and that is a constraint
+     * from ../native/NativeDashboard rather than a look.
+     *
+     * The dashboard scrolls with `removeClippedSubviews`, and on Android the
+     * clipping stops re-attaching the children that follow a section taller
+     * than the viewport. This block is the tallest section on the page -- a
+     * 16:9 poster plus a 431-character paragraph -- and when it overflowed,
+     * the three sections after it (Real Pets, From Our Instagram, the logo
+     * strip) never came back: the navy card with its brown-sofa poster read as
+     * a wall ending the page just below "Pet Parenting Made Easy", which is
+     * exactly how it was reported.
+     *
+     * `maxHeight` is not the fix and was not used -- it would clip the card's
+     * own text instead. The paragraph is capped at `DESCRIPTION_LINES` below,
+     * which is what keeps the whole card inside a short screen's viewport.
+     */
+    // The poster is a child at the top corners, so the card has to clip it --
+    // without this Android paints the image square over the rounded ground.
+    overflow: 'hidden',
     marginBottom: 22,
   },
   poster: {
@@ -161,11 +256,6 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.86,
-  },
-  posterPlaceholder: {
-    width: '100%',
-    aspectRatio: RATIO,
-    borderRadius: 0,
   },
   /** Centred over the poster, without intercepting anything. */
   playOverlay: {
@@ -202,8 +292,18 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
     borderLeftColor: COLORS.navy,
   },
+  /**
+   * The copy, inside the card.
+   *
+   * `GUTTER + 4` before, which was the page's own inset -- correct when this
+   * block ran to both edges and had to create its own. The card now supplies
+   * that, so repeating it here would inset the text twice and leave the
+   * paragraph in a narrow column down the middle of the card. 16 is the
+   * theme's own mobile figure, near enough: `.text-div-banner` sets
+   * `padding: 20px 16.5px` below 749px.
+   */
   copy: {
-    paddingHorizontal: GUTTER + 4,
+    paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 20,
   },
@@ -224,6 +324,22 @@ const styles = StyleSheet.create({
     // Slightly under full white: forty lines of pure white on navy is harsh,
     // and the heading above it should still read as the louder of the two.
     opacity: 0.88,
+  },
+  /**
+   * "Read more" / "Read less", on the card's own navy.
+   *
+   * Full white against the paragraph's 0.88, so it reads as the control rather
+   * than as another line of the copy. `paddingTop` gives it a tap target
+   * without a border: the paragraph's last line ends flush against it
+   * otherwise.
+   */
+  more: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 12.5,
+    lineHeight: 19,
+    fontWeight: '700',
+    color: VIDEO_TEXT,
+    paddingTop: 8,
   },
 });
 

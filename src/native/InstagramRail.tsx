@@ -54,14 +54,45 @@ const GAP = 12;
 const GUTTER = 12;
 
 /**
- * The card's width as a share of the rail.
+ * How many cards fill the rail's width.
  *
- * `flex: 0 0 46%` in the web version -- just under half, so two cards and the
- * edge of a third are on screen and the rail plainly continues. Expressed as a
- * percentage string for the same reason: a fixed dp would show a different
- * number of cards on a tablet.
+ * 2.25, so two covers and a quarter of the third are on screen: the fraction is
+ * what tells the customer the rail scrolls. The same figure and the same
+ * reasoning as `WIDE_VISIBLE` in ./TileRow, which sizes the Explore tiles.
  */
-const CARD_WIDTH = '46%';
+const CARDS_VISIBLE = 2.25;
+
+/**
+ * The card's edge for a given rail width, IN DP RATHER THAN A PERCENTAGE.
+ *
+ * THIS IS THE FIX FOR THE CUT-OFF FRAME, and the percentage was the cause.
+ * `width: '46%'` was carried over from the web version's `flex: 0 0 46%`, where
+ * it is correct because a CSS flex item resolves its percentage against the
+ * flex container's own content box. React Native has no such guarantee inside a
+ * horizontal `ScrollView`: the scroll content's width is unbounded by design --
+ * that is what makes it scrollable -- so a percentage width has no definite
+ * base to resolve against. Android measured it against a width that is not the
+ * screen's, so the squares came out the wrong size and the last one was clipped
+ * mid-cover.
+ *
+ * Sized in dp from the measured rail width instead, which is what every other
+ * rail on the dashboard already does (`breedSize` and `wideSize` in ./TileRow).
+ * The gaps and the leading gutter are subtracted first so the arithmetic
+ * describes the row that is actually drawn -- 2.25 cards, 2 gaps between them,
+ * and the gutter at each end -- rather than an idealised one.
+ */
+export const coverSize = (width: number): number =>
+  Math.round((width - 2 * GUTTER - CARDS_VISIBLE * GAP) / CARDS_VISIBLE);
+
+/**
+ * The fallback edge, for a rail drawn before anything has measured it.
+ *
+ * 150dp is `coverSize` at 360dp, the width this app's reference phone reports.
+ * A number rather than a percentage for the reason above: at least this one is
+ * wrong by a predictable amount on an unusual screen, instead of being
+ * undefined on every screen.
+ */
+const FALLBACK_SIZE = 150;
 
 /**
  * The reel marker's play triangle.
@@ -89,9 +120,12 @@ type Props = {
 
 const Card = ({
   post,
+  size,
   onOpen,
 }: {
   post: InstagramPost;
+  /** The card's edge in dp. Square, so one number. See `coverSize`. */
+  size: number;
   onOpen: (url: string) => void;
 }) => (
   <Pressable
@@ -100,7 +134,13 @@ const Card = ({
     // The caption, as the web version uses it for alt text. The reel badge is
     // decorative, so the label says which cards are videos.
     accessibilityLabel={post.isVideo ? `Reel: ${post.alt}` : post.alt}
-    style={styles.card}
+    /*
+     * The size is given rather than styled, and both edges are set explicitly.
+     * `aspectRatio: 1` alone would leave the square dependent on the width
+     * resolving, which is the problem this replaced -- stating height as well
+     * means the card cannot be measured into the wrong shape.
+     */
+    style={[styles.card, {width: size, height: size}]}
   >
     {({pressed}) => (
       <>
@@ -133,14 +173,20 @@ const InstagramRail = ({onOpen, railWidth}: Props) => {
   }
 
   /**
-   * The snap interval, when the caller knows the rail's width.
+   * The card's edge, and the pitch the rail snaps to.
    *
-   * A card is 46% of the rail, so the pitch is that plus the gap. Without a
-   * width the rail still scrolls -- it simply does not snap, which is the right
-   * degradation: a wrong snap interval fights the thumb, while no snap is
-   * merely plainer.
+   * One derivation for both, which is the point: the snap interval has to be
+   * the card plus the gap, and computing the two from different formulas is
+   * how a rail ends up snapping to somewhere that is not a card edge. It did
+   * before -- the snap was `railWidth * 0.46 + GAP` while the card was a
+   * percentage measured against something else entirely.
+   *
+   * Without a measured width the rail still scrolls, at `FALLBACK_SIZE`, and
+   * simply does not snap: a wrong snap interval fights the thumb, while no
+   * snap is merely plainer.
    */
-  const snap = railWidth ? Math.round(railWidth * 0.46) + GAP : undefined;
+  const size = railWidth ? coverSize(railWidth) : FALLBACK_SIZE;
+  const snap = railWidth ? size + GAP : undefined;
 
   return (
     <View style={styles.root}>
@@ -155,7 +201,7 @@ const InstagramRail = ({onOpen, railWidth}: Props) => {
         directionalLockEnabled
       >
         {INSTAGRAM_POSTS.map(post => (
-          <Card key={post.id} post={post} onOpen={onOpen} />
+          <Card key={post.id} post={post} size={size} onOpen={onOpen} />
         ))}
       </ScrollView>
     </View>
@@ -193,9 +239,12 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   card: {
-    width: CARD_WIDTH,
-    // Square, because the covers are Instagram's own square crops.
-    aspectRatio: 1,
+    /*
+     * NO WIDTH AND NO `aspectRatio` HERE. Both edges are set inline from
+     * `coverSize` -- see the note on the `style` prop in `Card`, and
+     * `coverSize` itself for why a percentage was the cut-off frame's cause.
+     * Square is still the shape; it is now stated in dp instead of inferred.
+     */
     borderRadius: 14,
     overflow: 'hidden',
     // Holds the card's shape while the cover decodes, so the rail does not

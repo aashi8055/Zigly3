@@ -21,7 +21,6 @@ import {
   HIDDEN_SECTIONS,
   nativeCount,
 } from '../src/native/dashboardSections';
-import {EXTRA_SECTIONS_SCRIPT} from '../src/webview/extraSections';
 
 /**
  * The sections the app assembles rather than fetching whole, and why each one
@@ -38,30 +37,67 @@ import {EXTRA_SECTIONS_SCRIPT} from '../src/webview/extraSections';
  *   bestsellers  a GraphQL query against sort_by=best-selling.
  *   everything   TWO fetched sections merged under tab labels no template has
  *                (the dog page ships Puppy/Adult, the cat page Kitten/Cat).
- *   instagram    frozen shortcodes; the one section not read from zigly.com.
+ *   instagram    frozen shortcodes; not read from zigly.com at all.
+ *   video        the promotional block. Its entry used to name
+ *                `custom_video_text_banner`, fetched to learn a poster image
+ *                that does not exist: the dog page's copy of that section sets
+ *                `video_link` to a YouTube URL and no `video_poster`, so it
+ *                renders a bare `<iframe>` with no image in it. The heading and
+ *                copy are theme settings held in the app and the poster is
+ *                derived from the video id, so there is nothing to fetch.
  */
-const ASSEMBLED = ['bestsellers', 'everything', 'hot-picks', 'instagram'];
+const ASSEMBLED = [
+  'bestsellers',
+  'everything',
+  'hot-picks',
+  'instagram',
+  'video',
+];
 
 /**
- * The fragments ../src/webview/extraSections declares, in its own order.
+ * The fragments the web dashboard declared, in its own order.
  *
- * Read off the generated script rather than re-typing the array, so a section
- * added or reordered there is seen here. The script embeds the array as JSON,
- * which is what makes it readable at all.
+ * THIS USED TO BE READ OUT OF `EXTRA_SECTIONS_SCRIPT` AND THAT MODULE IS GONE.
+ * It, and the twelve other in-page section builders, were deleted when
+ * ../src/native/NativeDashboard took over -- they existed to assemble a
+ * dashboard inside a WebView nobody looks at any more.
+ *
+ * So the reference is frozen here instead. That is a real loss and worth
+ * naming: the old helper re-read the live array, so a section reordered in the
+ * web module was seen here automatically, and this list has to be edited by
+ * hand. It is kept rather than dropped because of what these three tests
+ * actually catch -- a section silently missing from the native rebuild, or one
+ * invented that the site never had -- which is exactly the class of drift the
+ * standing design rule (CLAUDE.md) exists to prevent, and which nothing else
+ * in this suite checks.
+ *
+ * Captured from `extraSections.ts` at commit 257879c, the switch-over, by
+ * running the module and reading its generated `var SECTIONS` array. The order
+ * is the declaration order, with `move`/`hide`/`slot` entries resolved to their
+ * key exactly as the old helper did.
  */
-const extraSectionOrder = (): string[] => {
-  const json = /var SECTIONS = (\[[\s\S]*?\]);/.exec(EXTRA_SECTIONS_SCRIPT);
-  if (!json) {
-    throw new Error('SECTIONS array not found in EXTRA_SECTIONS_SCRIPT');
-  }
-  const entries = JSON.parse(json[1]) as {
-    key?: string;
-    move?: string;
-    hide?: string;
-    slot?: string;
-  }[];
-  return entries.map(e => e.key || e.move || e.hide || e.slot || '?');
-};
+const WEB_SECTION_ORDER: string[] = [
+  'coupon_slider',
+  'offer_section#1',
+  'offer_section#2',
+  'best_deals',
+  'home_shop_by_brand_section',
+  'shop_by_price',
+  'custom_single_banner#2',
+  'shop_of_concern',
+  'offer_section#3',
+  'zigly-x-bestsellers',
+  'home_arrival_section',
+  'zigly-x-everything',
+  'redesign_custom_double_banner',
+  'helpful_tips',
+  'custom_video_text_banner',
+  'about_our_communities',
+  'zigly-x-instagram',
+  'custom_single_banner#3',
+];
+
+const extraSectionOrder = (): string[] => WEB_SECTION_ORDER;
 
 describe('the manifest is the web dashboard, in the same order', () => {
   /**
@@ -101,9 +137,24 @@ describe('the manifest is the web dashboard, in the same order', () => {
       ),
       ...HIDDEN_SECTIONS,
     ]);
-    // The two reserved slots are filled by their own modules and carry no
-    // fetchable fragment; they are in the manifest under their own keys.
-    const slots = ['zigly-x-bestsellers', 'zigly-x-everything', 'zigly-x-instagram'];
+    /*
+     * Sections the manifest carries under their own key with no fetchable
+     * fragment. Three are reserved slots filled by their own modules.
+     *
+     * `custom_video_text_banner` is the fourth and is different in kind: the
+     * web dashboard really did fetch that section, and the native one does not
+     * need to. It was fetched to learn a poster image the section does not
+     * contain -- the dog page sets `video_link` to a YouTube URL and no
+     * `video_poster`, so the markup is a bare `<iframe>`. The native block
+     * derives its poster from the video id instead, which is why the fragment
+     * left the manifest. See ../src/native/video.
+     */
+    const slots = [
+      'zigly-x-bestsellers',
+      'zigly-x-everything',
+      'zigly-x-instagram',
+      'custom_video_text_banner',
+    ];
 
     const unaccounted = declared.filter(f => !known.has(f) && !slots.includes(f));
     expect(unaccounted).toEqual([]);
@@ -195,20 +246,31 @@ describe('the manifest is well formed', () => {
     expect(new Set(titles).size).toBe(2);
   });
 
-  /** Instagram is the one section not read from zigly.com. */
-  it('marks Instagram as the only frozen source', () => {
+  /**
+   * The two sections not read from zigly.com at runtime.
+   *
+   * Instagram was the only one until the video block joined it: that section's
+   * poster is derived from a YouTube video id rather than fetched, and its
+   * heading, copy and ground are theme settings held in the app -- so no part
+   * of it touches the store. See ../src/native/video for why, and note that
+   * the two are frozen for different reasons: Instagram because the site has
+   * no feed to read, the video because the section it would read carries no
+   * image at all.
+   */
+  it('marks Instagram and the video block as the frozen sources', () => {
     const frozen = DASHBOARD_SECTIONS.filter(s => s.source === 'frozen');
-    expect(frozen.map(s => s.key)).toEqual(['instagram']);
+    expect(frozen.map(s => s.key).sort()).toEqual(['instagram', 'video']);
   });
 
   /**
    * A section with no fetchable fragment must be one the app assembles.
    *
-   * Three qualify, for three different reasons: bestsellers is a GraphQL query,
-   * Instagram is frozen shortcodes, and Everything For merges two fetched
-   * sections under tab labels no template has. The last is why this rule cannot
-   * simply be "graphql or frozen" -- it is `section`-sourced and still has no
-   * single fragment to name.
+   * They qualify for different reasons: bestsellers is a GraphQL query,
+   * Instagram is frozen shortcodes, the video block derives its poster from a
+   * YouTube id, and Everything For merges two fetched sections under tab labels
+   * no template has. The last is why this rule cannot simply be "graphql or
+   * frozen" -- it is `section`-sourced and still has no single fragment to
+   * name.
    */
   it('only allows a null fragment where the app assembles the section', () => {
     const assembled = DASHBOARD_SECTIONS.filter(s => s.fragment === null);
@@ -234,19 +296,40 @@ describe('migration progress', () => {
   });
 
   /**
-   * Native sections must be a run from the top, with no gaps.
+   * WAS: native sections must be a run from the top, with no gaps.
    *
-   * The chosen plan is to build every section and then switch over, so a gap
-   * would not break anything today. It is still worth holding: a contiguous run
-   * is what makes a partial switch-over possible at any point -- native
+   * That guard existed for a migration that has since finished, and it is
+   * retired rather than quietly weakened. Its reasoning was that a contiguous
+   * run "is what makes a partial switch-over possible at any point -- native
    * sections above, WebView below -- which is the fallback if the full
-   * migration needs to ship in halves.
+   * migration needs to ship in halves". Every section became native in
+   * 257879c, so there is no half left to ship and no WebView tail to keep
+   * below the run.
+   *
+   * `native: false` now means something the old test could not distinguish: a
+   * section the app draws NOTHING for on purpose. The video block is the first
+   * -- see its entry in ../src/native/dashboardSections for why -- and a
+   * deliberately hidden section sits wherever the running order puts it, which
+   * is mid-list. Under the old rule, hiding it would have read as a regression
+   * in a migration that is already complete.
+   *
+   * What is still worth holding is the part that catches a real mistake: a
+   * section drawn by nothing must be hidden ON PURPOSE, with the manifest
+   * saying so, rather than by omission.
    */
-  it('keeps the native sections contiguous from the top', () => {
-    const flags = DASHBOARD_SECTIONS.map(s => s.native);
-    const firstWeb = flags.indexOf(false);
-    if (firstWeb !== -1) {
-      expect(flags.slice(firstWeb).some(Boolean)).toBe(false);
-    }
+  it('draws every section it does not deliberately hide', () => {
+    const hidden = DASHBOARD_SECTIONS.filter(s => !s.native).map(s => s.key);
+    // The one section the app deliberately draws nothing for. Adding another
+    // means saying so here, which is the point -- a section that silently
+    // stopped drawing is the failure this replaces.
+    expect(hidden).toEqual(['video']);
+  });
+
+  it('still draws the three sections that close the page', () => {
+    // The regression that prompted the video block being hidden: its card was
+    // taller than the viewport, and Android's clipping stopped re-attaching
+    // everything after it. These three are what went missing.
+    const native = DASHBOARD_SECTIONS.filter(s => s.native).map(s => s.key);
+    expect(native.slice(-3)).toEqual(['community', 'instagram', 'logos']);
   });
 });
