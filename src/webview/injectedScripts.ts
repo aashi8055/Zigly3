@@ -18,6 +18,7 @@ export {RESTYLE_REPEAT} from './injectedStyles';
 import {LISTING_PAGE_SCRIPT} from './listingPage';
 import {PRODUCT_PAGE_SCRIPT} from './productPage';
 import {FACET_BRIDGE_SCRIPT} from './facetBridge';
+import {RESULTS_BRIDGE_SCRIPT} from './resultsBridge';
 import {DRAWER_EXTRAS_SCRIPT} from './drawerExtras';
 import {BREED_PAGE_SCRIPT} from './breedPage';
 import {CART_TOAST_SCRIPT} from './cartToast';
@@ -84,6 +85,11 @@ export const getInjectionForUrl = (url: string): string | null => {
    *                    no longer waits for it -- and harmless.
    *   LISTING / PRODUCT / FACET / DRAWER / BREED  the pages still shown in a
    *                    WebView. None of them fetches a section.
+   *   RESULTS          the collection grid is native now, but its FILTER is
+   *                    still SearchTap's -- so this reports which products a
+   *                    filter selected, for the native grid to draw. Listing
+   *                    pages only, and it says nothing until SearchTap has
+   *                    actually replaced the grid. See ./resultsBridge.
    */
   return `${buildStyleInjection(MOBILE_CSS)}
 ${CART_TOAST_SCRIPT}
@@ -91,6 +97,7 @@ ${READY_SIGNAL_SCRIPT}
 ${LISTING_PAGE_SCRIPT}
 ${PRODUCT_PAGE_SCRIPT}
 ${FACET_BRIDGE_SCRIPT}
+${RESULTS_BRIDGE_SCRIPT}
 ${DRAWER_EXTRAS_SCRIPT}
 ${BREED_PAGE_SCRIPT}
 ${diagnostic}`;

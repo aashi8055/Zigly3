@@ -57,6 +57,7 @@ import {
   READ_FACETS_SCRIPT,
   toggleFacetScript,
 } from '../src/webview/facetBridge';
+import {RESULTS_BRIDGE_SCRIPT} from '../src/webview/resultsBridge';
 import {
   PRODUCT_ADD_TO_BAG_SCRIPT,
   PRODUCT_BUY_NOW_SCRIPT,
@@ -152,6 +153,7 @@ describe('every separately injected payload is valid too', () => {
     ['PAGE_PREFETCH_SCRIPT', PAGE_PREFETCH_SCRIPT],
     ['FACET_BRIDGE_SCRIPT', FACET_BRIDGE_SCRIPT],
     ['READ_FACETS_SCRIPT', READ_FACETS_SCRIPT],
+    ['RESULTS_BRIDGE_SCRIPT', RESULTS_BRIDGE_SCRIPT],
     // The parameterised ones, with a value that exercises the quoting: an
     // apostrophe and a backslash are what would break a hand-built string.
     ['suggestScript', suggestScript("dog's \\ bed", 1)],

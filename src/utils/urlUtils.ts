@@ -263,3 +263,53 @@ export const classifyUrl = (raw: string, inCheckoutFlow = false): UrlAction => {
   warn('sending unknown host to browser:', host);
   return {kind: 'external', url: raw};
 };
+
+/**
+ * True on `/collections` itself -- the list of collections, not a collection.
+ *
+ * The distinction matters because the two are different screens with different
+ * data: `/collections` is the twelve coloured category cards
+ * (../native/collectionCards) and `/collections/{handle}` is a product grid.
+ * The trailing slash is accepted because the theme links both ways.
+ */
+export const isCollectionsIndexUrl = (raw: string): boolean => {
+  const parsed = parseUrl(raw);
+  if (!parsed || !isInternalHost(parsed.host)) {
+    return false;
+  }
+  const path = withoutMarket(parsed.path.toLowerCase());
+  return path === '/collections' || path === '/collections/';
+};
+
+/**
+ * The collection handle in a url, or null when it is not a collection page.
+ *
+ * `/collections/applod` -> 'applod'. Null for `/collections` (the index -- see
+ * above), for a product opened from inside a collection
+ * (`/collections/applod/products/x`, which is a product page and carries
+ * '/collections/' only incidentally), and for `/search`, which is a listing
+ * with no collection behind it.
+ *
+ * The market prefix is stripped for the reason the rest of this file strips it,
+ * and the handle is checked against the shape Shopify actually issues --
+ * lowercase alphanumerics and hyphens -- so a path segment that could not be a
+ * handle is refused rather than being sent to the API.
+ */
+export const collectionHandleOf = (raw: string): string | null => {
+  const parsed = parseUrl(raw);
+  if (!parsed || !isInternalHost(parsed.host)) {
+    return null;
+  }
+  const path = withoutMarket(parsed.path.toLowerCase());
+  if (path.indexOf('/products/') !== -1) {
+    return null;
+  }
+  if (path.indexOf('/collections/') !== 0) {
+    return null;
+  }
+  const handle = path.slice('/collections/'.length).replace(/\/+$/, '');
+  if (!handle || handle.indexOf('/') !== -1) {
+    return null;
+  }
+  return /^[a-z0-9][a-z0-9-]*$/.test(handle) ? handle : null;
+};

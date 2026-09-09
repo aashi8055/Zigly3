@@ -53,6 +53,7 @@ import {
   PAGE_SIZE,
   fetchCollectionCount,
   fetchListingPage,
+  fetchProductsByHandle,
   sortByDiscount,
   sortById,
   type ListingProduct,
@@ -110,6 +111,23 @@ type Props = {
   onAdd: (variantId: number) => void;
   /** Space to leave under the last row, for the Sort/Filter bar. */
   bottomInset?: number;
+  /**
+   * The handles SearchTap's filters selected, or null when nothing is filtered.
+   *
+   * WHY THE GRID TAKES THIS AT ALL. The filter screen is SearchTap's, because
+   * its facets are not Shopify's and cannot be derived from them -- see the
+   * module note. So a filtered result set exists only as SearchTap's rendered
+   * grid inside the page; ../webview/resultsBridge reads the handles out of it
+   * and they arrive here. The grid then draws those products, with its own
+   * cards, in SearchTap's own order.
+   *
+   * Null and empty mean different things and are treated differently. Null is
+   * "no filter is applied", and the grid runs its own collection query. An
+   * empty array is "the filter matched nothing", which is a real empty state
+   * and must not silently fall back to the unfiltered list -- that would show
+   * the customer a full grid after they filtered it down to none.
+   */
+  filteredHandles?: readonly string[] | null;
 };
 
 const CollectionScreen = ({
@@ -119,6 +137,7 @@ const CollectionScreen = ({
   onOpen,
   onAdd,
   bottomInset = 0,
+  filteredHandles = null,
 }: Props) => {
   const [products, setProducts] = useState<readonly ListingProduct[]>([]);
   const [heading, setHeading] = useState(title ?? '');
@@ -139,7 +158,17 @@ const CollectionScreen = ({
    */
   const generation = useRef(0);
 
-  /** The first page, and the count beside the heading. Re-runs on sort. */
+  /**
+   * Whether a filter is applied, as a stable string.
+   *
+   * The handles arrive as a fresh array from the bridge on every report, so
+   * depending on the array itself would re-run this effect on every identical
+   * report. Joined into one string, an unchanged filter is an unchanged
+   * dependency.
+   */
+  const filterKey = filteredHandles ? filteredHandles.join(',') : null;
+
+  /** The products: either SearchTap's filtered set, or the collection's page. */
   useEffect(() => {
     const mine = ++generation.current;
     const controller = new AbortController();
@@ -147,6 +176,29 @@ const CollectionScreen = ({
     setFailed(false);
 
     (async () => {
+      /*
+       * FILTERED: draw exactly what SearchTap selected.
+       *
+       * No paging and no cursor -- what the bridge read is what the page is
+       * showing, and SearchTap does its own paging inside the page. Asking
+       * Shopify for "the next page" of a set defined by SearchTap is not a
+       * question that has an answer.
+       */
+      if (filteredHandles) {
+        // Filtered to nothing is a real empty state, not a reason to fall back.
+        const found = filteredHandles.length
+          ? await fetchProductsByHandle(filteredHandles, controller.signal)
+          : [];
+        if (generation.current !== mine) {
+          return;
+        }
+        setProducts(found);
+        setCursor(null);
+        setMore(false);
+        setLoading(false);
+        return;
+      }
+
       const page = await fetchListingPage(handle, sort, null, controller.signal);
       if (generation.current !== mine) {
         return;
@@ -166,7 +218,9 @@ const CollectionScreen = ({
     })();
 
     return () => controller.abort();
-  }, [handle, sort]);
+    // `filterKey` stands in for `filteredHandles` -- see its declaration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handle, sort, filterKey]);
 
   /**
    * The product count, fetched once per collection.
@@ -188,7 +242,8 @@ const CollectionScreen = ({
 
   /** The next page. */
   const loadMore = useCallback(async () => {
-    if (paging || loading || !more || !cursor) {
+    // A filtered set is complete as it stands -- see the effect above.
+    if (paging || loading || !more || !cursor || filteredHandles) {
       return;
     }
     const mine = generation.current;
@@ -201,7 +256,7 @@ const CollectionScreen = ({
       setMore(page.hasNextPage);
     }
     setPaging(false);
-  }, [cursor, handle, loading, more, paging, sort]);
+  }, [cursor, filteredHandles, handle, loading, more, paging, sort]);
 
   /**
    * What the grid draws.
@@ -218,6 +273,16 @@ const CollectionScreen = ({
    * sending the first row -- and it is the trade the sort was accepted under,
    * because Shopify offers no discount key to ask for instead.
    */
+  /**
+   * The number under the heading.
+   *
+   * The collection's total normally; the filtered set's size while a filter is
+   * applied. Not `products.length` in the unfiltered case -- that is one page
+   * of 24, and captioning a 66-product collection "24 Products" because that
+   * is how far the customer has scrolled would be worse than no caption.
+   */
+  const shownCount = filteredHandles ? products.length : count;
+
   const sortedProducts = useMemo(
     () =>
       sortById(sort).key === null ? sortByDiscount(products) : [...products],
@@ -246,9 +311,16 @@ const CollectionScreen = ({
             the total, and a wrong number under a collection heading is the kind
             of small false statement the standing design rule exists to prevent.
           */}
-          {count !== null ? (
+          {/*
+            While a filter is applied the number is the filtered set's own
+            size, because that is what is on screen -- printing the
+            collection's total under a filtered grid would be a caption that
+            contradicts the products beneath it. `shownCount` is null only
+            when neither number is known yet.
+          */}
+          {shownCount !== null ? (
             <Text style={styles.count}>
-              {count} {count === 1 ? 'Product' : 'Products'}
+              {shownCount} {shownCount === 1 ? 'Product' : 'Products'}
             </Text>
           ) : null}
         </View>

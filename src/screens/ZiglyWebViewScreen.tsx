@@ -80,6 +80,8 @@ import {
   isInternalHost,
   parseUrl,
   showsSortFilterBar,
+  isCollectionsIndexUrl,
+  collectionHandleOf,
 } from '../utils/urlUtils';
 import {RESTYLE_REPEAT, getInjectionForUrl} from '../webview/injectedScripts';
 import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../webview/prefetch';
@@ -157,6 +159,14 @@ import {
 import type {PageStack} from '../navigation/pageStack';
 import BottomNav from '../components/BottomNav';
 import NativeDashboard from '../native/NativeDashboard';
+import CollectionList from '../native/CollectionList';
+import CollectionScreen from '../native/CollectionScreen';
+import {
+  DEFAULT_SORT,
+  SORTS,
+  sortById,
+  type SortId,
+} from '../native/listing';
 import {WishlistProvider} from '../native/wishlistContext';
 import SortFilterBar from '../components/SortFilterBar';
 import ProductActionBar from '../components/ProductActionBar';
@@ -478,6 +488,26 @@ const STACK_FOR_PHASE: Record<'phone' | 'otp' | 'details', AccountStack> = {
   details: ['login', 'otp', 'signup'],
 };
 
+/**
+ * Drop the entries of a per-layer map whose layer no longer exists.
+ *
+ * The same array-identity discipline the painted-layers cleanup follows: the
+ * SAME object is returned when nothing was stale, because a new object every
+ * time would set state on every run of the effect and loop for ever.
+ */
+const dropStaleKeys = <T,>(
+  map: Record<number, T>,
+  live: Set<number>,
+): Record<number, T> => {
+  const stale = Object.keys(map).filter(key => !live.has(Number(key)));
+  if (stale.length === 0) {
+    return map;
+  }
+  const next = {...map};
+  stale.forEach(key => delete next[Number(key)]);
+  return next;
+};
+
 const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /**
    * The dashboard, mounted once and never navigated away from: it is expensive
@@ -630,6 +660,45 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * ../webview/facetBridge).
    */
   const [facetsByKey, setFacetsByKey] = useState<Record<number, Facets>>({});
+  /**
+   * Which sort the NATIVE collection grid is showing, per page layer.
+   *
+   * Separate from `facetsByKey` above, and the two are not redundant. That one
+   * mirrors what SearchTap holds inside the page, which is still the authority
+   * for filters; this is the app's own answer for a grid it draws itself from
+   * the Storefront API. Four of the site's five sorts are Shopify sort keys, so
+   * the native grid re-queries rather than asking the page to re-sort -- see
+   * ../native/listing's SORTS.
+   *
+   * Per layer for the same reason the facets are: a collection kept alive
+   * behind a product must be found sorted the way it was left.
+   */
+  const [gridSortByKey, setGridSortByKey] = useState<Record<number, SortId>>(
+    {},
+  );
+  /**
+   * The handles SearchTap's filters selected, per page layer.
+   *
+   * Posted by ../webview/resultsBridge from inside the page. `undefined` (no
+   * entry) means no filter is applied and the native grid runs its own
+   * collection query; an entry -- including an empty array -- means SearchTap
+   * has answered and the grid draws exactly that set. The difference matters:
+   * an empty array is a filter that matched nothing, and falling back to the
+   * unfiltered list there would show a full grid to a customer who had just
+   * filtered it down to none.
+   */
+  const [resultsByKey, setResultsByKey] = useState<
+    Record<number, readonly string[]>
+  >({});
+  /**
+   * Whether the visible page is a native collection grid, for the callbacks.
+   *
+   * `gridHandle` is derived far below this point -- it needs `headerUrl`, which
+   * needs the stack -- and `chooseSort` is declared above it. A ref rather than
+   * a reorder: the derivation reads a dozen values and moving it up would drag
+   * all of them with it. Kept in step by the effect beside the derivation.
+   */
+  const gridHandleRef = useRef<string | null>(null);
   /** Which of the two sheets is up, if either. */
   const [listingSheet, setListingSheet] = useState<'sort' | 'filter' | null>(
     null,
@@ -1312,6 +1381,12 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       stale.forEach(key => delete next[Number(key)]);
       return next;
     });
+    /*
+     * And the native grid's own two, for the same reason: one entry per
+     * collection opened in a session, one of them holding a list of handles.
+     */
+    setGridSortByKey(prev => dropStaleKeys(prev, live));
+    setResultsByKey(prev => dropStaleKeys(prev, live));
   }, [stack.layers]);
 
   useEffect(() => {
@@ -1487,6 +1562,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const facets: Facets =
     (showing !== null ? facetsByKey[showing.key] : undefined) ?? EMPTY_FACETS;
 
+
   const closeListingSheet = useCallback(() => setListingSheet(null), []);
 
   const openSortSheet = useCallback(() => {
@@ -1520,6 +1596,33 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       const key = showing.key;
+
+      /*
+       * ON A NATIVE GRID, SORTING IS OURS.
+       *
+       * The grid draws products from the Storefront API, and four of the site's
+       * five sorts are Shopify sort keys -- so this records the choice and the
+       * grid re-queries. Asking the page to re-sort instead would sort a grid
+       * nobody is looking at, and then the app would be showing one order while
+       * the page held another.
+       *
+       * The fifth, "Discount: High To Low", has no Shopify key and is computed
+       * in the grid; it is a `SortId` here like any other.
+       *
+       * Matched by LABEL, because that is what the sheet has to offer: the
+       * sheet's rows are ../native/listing's SORTS when a native grid is
+       * showing (see the render below), so the label always resolves. A label
+       * that somehow does not is left to the page, which is the old path and
+       * cannot be worse than ignoring the tap.
+       */
+      const native = gridHandleRef.current !== null
+        ? SORTS.find(option => option.label === label)
+        : undefined;
+      if (native) {
+        setGridSortByKey(prev => ({...prev, [key]: native.id}));
+        return;
+      }
+
       setFacetsByKey(prev => ({
         ...prev,
         [key]: selectSort(prev[key] ?? EMPTY_FACETS, label),
@@ -1537,14 +1640,45 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       const key = showing.key;
-      setFacetsByKey(prev => ({
-        ...prev,
-        [key]: toggleOption(prev[key] ?? EMPTY_FACETS, groupIndex, label),
-      }));
+      const next = toggleOption(
+        facetsByKey[key] ?? EMPTY_FACETS,
+        groupIndex,
+        label,
+      );
+      setFacetsByKey(prev => ({...prev, [key]: next}));
       setFacetBusy(true);
       injectInto(key, toggleFacetScript(groupIndex, groupTitle, label));
+
+      /*
+       * THE LAST FILTER COMING OFF IS THE ONE CASE THE BRIDGE CANNOT REPORT.
+       *
+       * ../webview/resultsBridge reads SearchTap's rendered grid, and that grid
+       * is still SearchTap's after the final chip is cleared -- so it reports
+       * the unfiltered set as though it were an answer, and the native grid
+       * would go on drawing a fixed list of handles with no paging instead of
+       * returning to its own query.
+       *
+       * The optimistic state computed above is what knows: it is the app's
+       * own record of which chips are on, and it is correct on the frame of the
+       * tap. When nothing is left on, the entry is dropped and the grid falls
+       * back to the collection query -- which is also what restores infinite
+       * scroll.
+       */
+      const anyOn = next.groups.some(group =>
+        group.options.some(option => option.on),
+      );
+      if (!anyOn) {
+        setResultsByKey(prev => {
+          if (!(key in prev)) {
+            return prev;
+          }
+          const without = {...prev};
+          delete without[key];
+          return without;
+        });
+      }
     },
-    [injectInto, showing],
+    [facetsByKey, injectInto, showing],
   );
 
   /** Kept for the back button, which reads it inside a native callback. */
@@ -3136,6 +3270,30 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     [injectInto],
   );
 
+  /**
+   * Add to the bag from the native collection grid.
+   *
+   * THE SAME RULE AS EVERYWHERE, and the reason this is not a native fetch: the
+   * app has one session and it lives in the WebView's cookie jar
+   * (DATA-SOURCES.md §7), so a `fetch('/cart/add.js')` from here would write to
+   * a different cart than the one the customer is shopping.
+   *
+   * Into the LAYER, not into 'home'. The dashboard's version posts to the
+   * dashboard WebView because that is the page behind it; the grid's page is
+   * the layer under the grid, and it is a collection page -- which carries the
+   * cart drawer and the theme's own scripts, so the add reports itself back
+   * through the same 'cart-added' path any other add does.
+   */
+  const addFromGrid = useCallback(
+    (variantId: number) => {
+      const layer = visibleLayer(stackRef.current);
+      if (layer) {
+        injectInto(layer.key, addToCartScript(variantId));
+      }
+    },
+    [injectInto],
+  );
+
   const openAccountFromMenu = useCallback(() => {
     closeMenu();
     setWishlistOpen(false);
@@ -3955,6 +4113,60 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
   /** The visible page is a collection or a search result. */
   const onListing = headerUrl !== null && showsSortFilterBar(headerUrl);
+
+  /* ------------------------------------------------------------------ native
+   * The two collection screens.
+   *
+   * Both are drawn OVER the layer that holds the page, with the WebView left
+   * mounted underneath rather than replaced. That is not laziness: the filter
+   * screen is still SearchTap's (its facets are not Shopify's -- see
+   * ../native/listing), so the page has to be there for ../webview/facetBridge
+   * to read and drive, and for ../webview/resultsBridge to report which
+   * products a filter selected. What changes is that nobody looks at it.
+   */
+
+  /** The visible layer is `/collections` -- the twelve category cards. */
+  const onCollectionsIndex =
+    headerUrl !== null && isCollectionsIndexUrl(headerUrl);
+
+  /**
+   * The collection whose grid is showing, or null.
+   *
+   * Null on `/collections` (the index, a different screen), on a product
+   * opened from inside a collection, and on `/search` -- which is a listing
+   * with no collection behind it, so it keeps the WebView's own SearchTap grid.
+   */
+  const gridHandle = headerUrl !== null ? collectionHandleOf(headerUrl) : null;
+
+  useEffect(() => {
+    gridHandleRef.current = gridHandle;
+  }, [gridHandle]);
+
+  /** Which sort that grid is showing. The site's default until changed. */
+  const gridSort: SortId =
+    (showing !== null ? gridSortByKey[showing.key] : undefined) ?? DEFAULT_SORT;
+
+  /**
+   * The filtered handles for that grid, or null for "no filter applied".
+   *
+   * Read as an absent key rather than an empty array, because the two mean
+   * different things to the grid -- see `resultsByKey`.
+   */
+  const gridResults: readonly string[] | null =
+    showing !== null && showing.key in resultsByKey
+      ? resultsByKey[showing.key]
+      : null;
+
+  /** Whether either native collection screen is the thing on screen. */
+  const onNativeCollection =
+    (onCollectionsIndex || gridHandle !== null) &&
+    !searchOpen &&
+    !menuOpen &&
+    !inCheckout &&
+    !showCart &&
+    !wishlistOpen &&
+    !onAccountScreen &&
+    !showError;
 
   /**
    * The visible page is a product's own page -- reusing the same test
@@ -5096,6 +5308,37 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                         // not the site did what was asked.
                         setFacetBusy(false);
                       }
+                    } else if (data && data.tag === 'results') {
+                      /*
+                       * WHICH PRODUCTS SEARCHTAP'S FILTERS SELECTED.
+                       *
+                       * The native grid draws its own cards, but the filter
+                       * screen is SearchTap's -- its facets are not Shopify's
+                       * and cannot be derived from them (see
+                       * ../native/listing). So the page applies the filter and
+                       * ../webview/resultsBridge reports the handles that
+                       * survived it; the grid asks GraphQL for those handles
+                       * and draws them in SearchTap's own order.
+                       *
+                       * Only ever set, never cleared here. The bridge reports
+                       * a filtered grid; it has nothing to say about a filter
+                       * being removed, because SearchTap's grid is still the
+                       * thing on the page either way. Clearing belongs to the
+                       * one place that knows a filter came off -- see the
+                       * effect beside `resultsByKey`.
+                       */
+                      const handles = Array.isArray(data.handles)
+                        ? data.handles.filter(
+                            (h: unknown): h is string =>
+                              typeof h === 'string' && h.length > 0,
+                          )
+                        : null;
+                      if (handles) {
+                        setResultsByKey(prev => ({
+                          ...prev,
+                          [layer.key]: handles,
+                        }));
+                      }
                     }
                   } catch {
                     // Page scripts may postMessage for their own reasons.
@@ -5154,6 +5397,45 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             </View>
           );
         })}
+
+        {/*
+          THE TWO NATIVE COLLECTION SCREENS.
+
+          Drawn over the layer that holds the page, with that layer's WebView
+          left mounted underneath rather than replaced -- the same arrangement
+          the dashboard uses. Here it is load-bearing rather than incidental:
+          the filter screen is still SearchTap's, so the page has to be there
+          for ../webview/facetBridge to read and drive its facets and for
+          ../webview/resultsBridge to report which products a filter selected.
+          The customer never sees it.
+
+          After the layer map, so it paints over the layer it belongs to; the
+          cart, wishlist and account sections come after this and so still
+          cover it, which is right -- each of those is a newer screen.
+        */}
+        {onNativeCollection ? (
+          <View style={styles.pageLayer}>
+            {/* The same provider the dashboard's cards use: the heart is five
+                levels down. See ../native/wishlistContext. */}
+            <WishlistProvider handles={wishlistHandles} toggle={toggleWish}>
+              {gridHandle !== null ? (
+                <CollectionScreen
+                  // Keyed by handle so walking between two collections in one
+                  // layer starts the grid fresh rather than showing the
+                  // previous collection's products under the new heading.
+                  key={gridHandle}
+                  handle={gridHandle}
+                  sort={gridSort}
+                  filteredHandles={gridResults}
+                  onOpen={openFromDashboard}
+                  onAdd={addFromGrid}
+                />
+              ) : (
+                <CollectionList onOpen={openFromDashboard} />
+              )}
+            </WishlistProvider>
+          </View>
+        ) : null}
 
         {showCart ? (
           /*
@@ -5368,10 +5650,32 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         />
       ) : null}
 
+      {/*
+        The sort sheet's rows.
+
+        ON A NATIVE GRID they are ../native/listing's SORTS -- the site's own
+        five labels in the site's own order, which is where they were read
+        from, and the sort is applied by re-querying rather than by driving the
+        page. That also means the sheet is populated on the first frame: the
+        WebView's own list arrives only once SearchTap has rendered, so a sheet
+        opened quickly on a slow connection used to be empty.
+
+        ON /search, which is a listing this app has not made native, they are
+        still the page's -- read by ../webview/facetBridge, ticked by
+        SearchTap's own answer.
+      */}
       <SortSheet
         visible={showSortFilter && listingSheet === 'sort'}
-        options={facets.sortOptions}
-        selected={facets.sortLabel}
+        options={
+          gridHandle !== null
+            ? SORTS.map(option => option.label)
+            : facets.sortOptions
+        }
+        selected={
+          gridHandle !== null
+            ? sortById(gridSort).label
+            : facets.sortLabel
+        }
         onSelect={chooseSort}
         onClose={closeListingSheet}
       />
