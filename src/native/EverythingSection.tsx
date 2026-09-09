@@ -29,13 +29,22 @@ const RAILS: readonly TileRail[] = [
 
 type Props = {
   onOpen: (path: string) => void;
+  /** The screen's width, for the `wide` tile. See ./TileRow. */
+  width?: number;
 };
 
-const EverythingSection = ({onOpen}: Props) => (
+const EverythingSection = ({onOpen, width}: Props) => (
   <TabbedTileSection
     title={EVERYTHING_TITLE}
     tabs={EVERYTHING_TABS}
     rails={RAILS}
+    /*
+     * `wide`, like ./ExploreSection: these tiles are photographs of a category
+     * with no label of their own, so the picture has to carry the meaning and a
+     * 104dp thumbnail could not. Two and a quarter fill the row.
+     */
+    variant="wide"
+    width={width}
     onOpen={onOpen}
   />
 );

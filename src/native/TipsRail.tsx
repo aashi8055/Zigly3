@@ -197,6 +197,17 @@ const passthrough = (value: Tip[]): Promise<Tip[]> => Promise.resolve(value);
 const styles = StyleSheet.create({
   root: {
     marginBottom: 22,
+    /*
+     * Extra air above this section, which no other rail has.
+     *
+     * What sits directly above it is the double banner -- two full-bleed images
+     * stacked, edge to edge. Every other rail is preceded by something with its
+     * own gutter, so the 22dp the banner carries below itself is enough. Against
+     * a full-bleed edge it is not: the article cards started immediately under a
+     * photograph that ran the whole width, and the two read as one block with
+     * the heading trapped between them.
+     */
+    marginTop: 14,
   },
   head: {
     flexDirection: 'row',

@@ -77,3 +77,8 @@ yarn-error.log
 # Release signing material - never commit
 android/keystore.properties
 android/app/*.keystore
+
+# Shopify theme source for zigly.com (Zigly-Live-June, Dawn 15.2.0).
+# Read-only reference for how the live site actually works -- see CLAUDE.md.
+# Not part of the app build, so it stays local rather than in the repo.
+zigly-website-code/

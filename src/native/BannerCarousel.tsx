@@ -24,10 +24,19 @@
  *   - 5000ms between slides. The theme's own `autoplay.delay`.
  *   - Dots below the image, not over it -- the same correction the injected
  *     stylesheet makes by giving `.swiper-pagination` static positioning.
- *   - 2:1. The mobile crops are cut to 600x400, but the section is displayed at
- *     roughly 2:1 and, decisively, ../components/Skeleton reserves
- *     `aspectRatio: 2` for it. A different ratio here would make the dashboard
- *     jump at the moment the placeholder came off.
+ *   - 3:2, WHICH IS A CORRECTION. This was 2:1, on the reasoning that the
+ *     section "is displayed at roughly 2:1" and that ../components/Skeleton
+ *     reserved `aspectRatio: 2` for it. Both halves of that were wrong in the
+ *     same direction. The mobile crops are cut to 600x400 -- 3:2 -- and drawing
+ *     a 3:2 image in a 2:1 box with `cover` throws away a quarter of its
+ *     height, split top and bottom. That is the "banners look cut off from
+ *     above" report: the artwork's own headline sits in the top third of these
+ *     crops and the top third was exactly what was being trimmed.
+ *
+ *     The skeleton was not a reason to keep it, either -- it was the same
+ *     assumption written down in a second place. `HomeSkeleton`'s `banner`
+ *     block now reserves 3:2 too, so the placeholder and the image are the same
+ *     shape and nothing jumps when the placeholder comes off.
  *
  * WHY A ScrollView AND NOT A FlatList. Ten full-width images at most, and every
  * one of them wants to be decoded before the customer swipes to it rather than
@@ -70,8 +79,14 @@ const DELAY_MS = 5000;
  */
 const RESUME_MS = 8000;
 
-/** Matching `../components/Skeleton`'s reserved shape, for the reason above. */
-const RATIO = 2;
+/**
+ * The banners' own aspect ratio: 600x400, so 1.5.
+ *
+ * Matched by `../components/Skeleton`'s reserved shape rather than matching it
+ * -- see the correction at the top. Whole-number `2` here was cropping every
+ * banner by a quarter of its height.
+ */
+const RATIO = 1.5;
 
 type Props = {
   /** Where a tap goes; a storefront path or absolute zigly.com URL. */
@@ -227,9 +242,15 @@ const BannerCarousel = ({onOpen}: Props) => {
             <Image
               source={{uri: slide.image}}
               style={{width, height}}
-              // `cover`: the crop is 600x400 (3:2) shown in a 2:1 box, so a
-              // little is trimmed top and bottom. `contain` would letterbox the
-              // banner against the page and read as a picture of a banner.
+              /*
+               * `cover` still, but it no longer crops: the box is now the
+               * artwork's own 3:2, so cover and contain resolve to the same
+               * pixels for a slide cut to spec. It is kept as `cover` for the
+               * slide that is not -- a merchant uploading a differently
+               * proportioned image gets a full-bleed banner with a little
+               * trimmed, rather than one letterboxed against the page, which
+               * reads as a picture of a banner instead of a banner.
+               */
               resizeMode="cover"
               accessible={false}
             />

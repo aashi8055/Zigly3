@@ -73,9 +73,11 @@ export type Product = {
  * The card's field set, as a fragment.
  *
  * One definition, used by every rail's query, so a card can never be handed a
- * product missing a field it draws. `variants(first: 2)` is deliberate: two is
- * all that is needed to answer "is there a choice to make?", and asking for
- * more would pull data no card reads.
+ * product missing a field it draws. `variants(first: 20)` is deliberate: the
+ * card's button adds the first variant IN STOCK, so it has to see past a
+ * sold-out lead variant, and 20 covers Zigly's real weight and size ranges.
+ * It was `first: 2` while a card only needed to answer "is there a choice to
+ * make?" -- see parseProduct for why it no longer asks that.
  */
 export const PRODUCT_FIELDS = `
   fragment CardProduct on Product {
@@ -85,7 +87,7 @@ export const PRODUCT_FIELDS = `
     featuredImage { url }
     priceRange { minVariantPrice { amount } }
     compareAtPriceRange { minVariantPrice { amount } }
-    variants(first: 2) {
+    variants(first: 20) {
       edges { node { id availableForSale } }
     }
   }
@@ -155,11 +157,25 @@ export const parseProduct = (node: ProductNode | null | undefined): Product | nu
 
   const edges = Array.isArray(node.variants?.edges) ? node.variants.edges : [];
   /*
-   * One variant means the card may add it; two or more means it must not.
-   * `variants(first: 2)` caps the list at two, so "length > 1" reads as "there
-   * is a choice to make" rather than as an exact count.
+   * The variant the card's button adds: the first one in stock, and failing
+   * that the first one at all.
+   *
+   * A card USED to refuse an id whenever a product had choices, and its button
+   * read "View Options" and opened the product page. That was wrong -- not
+   * unsafe, just not what zigly.com does. The theme's own cards
+   * (sections/custom-recently-viewed.liquid, ~line 663) say "Add to Bag" on
+   * every product and post `variants.find(availableForSale)`, falling back to
+   * `variants[0]`. A rail of cards where some buttons add and some navigate is
+   * a divergence the site never had, so this picks the variant the same way.
+   *
+   * `variants(first: 20)` covers Zigly's real catalogue -- weights and sizes,
+   * not a hundred-variant configurator -- and a product whose in-stock variant
+   * sits past the 20th falls back to the first, which is the theme's own
+   * fallback for an all-sold-out product.
    */
-  const variantId = edges.length === 1 ? numericId(edges[0]?.node?.id) : null;
+  const nodes = edges.map(edge => edge?.node).filter(Boolean);
+  const firstAvailable = nodes.find(v => v?.availableForSale !== false);
+  const variantId = numericId((firstAvailable ?? nodes[0])?.id);
 
   const url = node.featuredImage?.url;
 

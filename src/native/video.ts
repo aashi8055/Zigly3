@@ -47,31 +47,58 @@ export const VIDEO_BACKGROUND = '#183761';
 export const VIDEO_TEXT = '#ffffff';
 
 /**
- * The homepage's template prefix. See ./community for why this is
- * `template--` and not `sections--`.
+ * The YouTube video this section plays, and where its poster frame comes from.
+ *
+ * THIS SECTION HAS NO POSTER IMAGE, AND THE APP SPENT ITS WHOLE LIFE LOOKING
+ * FOR ONE. Corrected 2026-09-09 by reading the section as the dashboard
+ * actually renders it, which is the dog page's copy:
+ *
+ *   "video_link": "https://www.youtube.com/watch?v=1vIjfkud5MQ"
+ *
+ * and no `video_poster` setting at all. `custom-video-text-banner.liquid` has
+ * four branches -- `video_file`, `video_url`, `video_link`, then nothing -- and
+ * only the first two emit a `<video poster="...">`. `video_link` emits a bare
+ * YouTube `<iframe>`. Verified against the live rendered section: one iframe,
+ * no `<img>`, no `poster` attribute anywhere in the markup.
+ *
+ * WHICH MADE THE SECTION DRAW NOTHING. ./tileIcons only reads `<img src>` and
+ * `<video poster>`, so it found no candidate, `VIDEO_RAIL` resolved empty, and
+ * ./VideoBlock's `poster ? ... : null` fell through to `null` -- the whole
+ * block, heading and copy included, rendered as nothing. That was invisible
+ * rather than broken-looking, which is why it went unnoticed.
+ *
+ * The previous note here claimed `video_poster` was
+ * `shopify://shop_images/zigly-thumbnail.jpg` with the mp4 at
+ * `shopify://files/videos/zigly-videoplayback.mp4`. Neither is in this
+ * section's settings. That reading came from `templates/index.json` -- the
+ * HOMEPAGE's copy of the section, which the docblock at the top of this file
+ * says outright is where it was read from -- and the homepage's copy is
+ * configured differently from the dog page's. The dashboard is the dog page
+ * (see ../native/dashboardSections), so the dog page's settings are the ones
+ * that count. A `zigly-thumbnail.jpg` does exist in Files and is the same
+ * still frame, which is exactly why the mistake survived: the key looked
+ * plausible and its absence looked like a network failure.
+ *
+ * SO THE POSTER IS DERIVED, NOT FETCHED. YouTube serves a still for every
+ * video at a fixed URL from the id, so the frame needs no Shopify lookup and
+ * no section fetch at all -- it is the one piece of artwork on the dashboard
+ * that is complete on the first frame with no request. `maxresdefault` is the
+ * 1280x720 master; it exists for this video (checked), and `hqdefault` is the
+ * fallback every video has if a future one is swapped in without an HD still.
  */
-const HOME = 'template--26530973548860__';
+export const VIDEO_ID = '1vIjfkud5MQ';
 
 /**
- * The poster frame's artwork store.
+ * The poster frame's URL, from the video id.
  *
- * `zigly-thumbnail.jpg` is the theme's `video_poster`. The mp4 itself
- * (`shopify://files/videos/zigly-videoplayback.mp4`) is a Files reference, not
- * an image, so ./tileIcons cannot resolve it -- which is the other half of the
- * dependency question above: the app would need the file's CDN URL as well as
- * a player.
+ * i.ytimg.com, which is YouTube's own image host and needs no API key. Not
+ * routed through ./tileIcons: there is no section markup to parse and nothing
+ * to learn, so a store and a fetch would be machinery around a string.
  */
-export const VIDEO_RAIL = {
-  storeKey: 'zigly.videoPoster.v1',
-  sectionId: HOME + 'custom_video_text_banner_HKdrme',
-  fragment: 'custom_video_text_banner',
-  tiles: [
-    {
-      label: VIDEO_TITLE,
-      // No destination: the poster is a play control, not a link. The screen
-      // decides what a tap does -- see ./VideoBlock.
-      path: '',
-      key: 'zigly-thumbnail.jpg',
-    },
-  ],
-};
+export const VIDEO_POSTER = `https://i.ytimg.com/vi/${VIDEO_ID}/maxresdefault.jpg`;
+
+/** The fallback still, for a video with no HD frame. See `VIDEO_POSTER`. */
+export const VIDEO_POSTER_FALLBACK = `https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg`;
+
+/** Where a tap goes, until the app can play an embed itself. */
+export const VIDEO_WATCH_URL = `https://www.youtube.com/watch?v=${VIDEO_ID}`;

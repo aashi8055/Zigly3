@@ -48,15 +48,44 @@ export const CATEGORIES: readonly Tile[] = [
 ];
 
 /**
+ * The two circles the dashboard does not show, and why they are dropped here
+ * rather than deleted above.
+ *
+ * `CATEGORIES` is the theme's own block list in the theme's own order, and it
+ * stays complete: it is what the rendered section is matched against when the
+ * artwork is learned (./tileIcons pairs by filename stem across the whole
+ * section), and shortening it would mean the app quietly disagreeing with the
+ * page it reads from.
+ *
+ * "All" and "New Pet Parent" are the last two blocks and they are the two that
+ * do not belong on a phone's top rail. "All" links to `/` -- the dashboard the
+ * customer is already looking at -- so it is a circle that goes nowhere. "New
+ * Pet Parent" is a guide page, not a category, and it carries the rail's only
+ * two-word-wrapping label. Six is also what fits: at 60dp plus a 12dp pitch the
+ * seventh is always half off the edge of the narrowest phone this supports.
+ */
+const HIDDEN_CATEGORIES: readonly string[] = ['All', 'petparent'];
+
+/** The six circles the dashboard draws, in the theme's order. */
+export const DASHBOARD_CATEGORIES: readonly Tile[] = CATEGORIES.filter(
+  tile => !HIDDEN_CATEGORIES.includes(tile.key),
+);
+
+/**
  * The category rail's storage and its section.
  *
  * The seeded id is ../webview/pageCache's own for this section; a miss falls
  * back to fragment rediscovery and self-heals, so it is a first-run hint rather
  * than something anybody has to keep up to date.
+ *
+ * `tiles` is the SHORTENED list, because this is what the rail draws. The
+ * artwork lookup is unaffected: it keys by `Tile.key` against whatever the
+ * rendered section yields, so learning covers a superset and the two dropped
+ * stems are simply never asked for.
  */
 export const CATEGORY_RAIL: TileRail = {
   storeKey: 'zigly.categoryIcons.v1',
   sectionId: 'template--26530973942076__home_category_section_ej8trH',
   fragment: 'home_category_section',
-  tiles: CATEGORIES,
+  tiles: DASHBOARD_CATEGORIES,
 };

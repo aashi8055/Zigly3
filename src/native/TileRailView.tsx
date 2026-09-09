@@ -15,7 +15,7 @@
 import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
-import TileRow from './TileRow';
+import TileRow, {type TileVariant} from './TileRow';
 import {
   fetchIcons,
   loadIcons,
@@ -46,6 +46,14 @@ type Props = {
    * decision about how a path is opened.
    */
   onOpen: (path: string) => void;
+  /**
+   * Which tile shape the row draws. `circle` (the category rail) by default;
+   * the two breed rails pass `breed`, whose disc is more than twice the size
+   * and is measured against the screen -- see ./TileRow's `breedSize`.
+   */
+  variant?: TileVariant;
+  /** The screen's width. Required by the `breed` variant, ignored otherwise. */
+  width?: number;
 };
 
 /**
@@ -57,7 +65,13 @@ type Props = {
  */
 const EMPTY_ICONS: IconMap = {};
 
-const TileRailView = ({rail, title = null, onOpen}: Props) => {
+const TileRailView = ({
+  rail,
+  title = null,
+  onOpen,
+  variant = 'circle',
+  width,
+}: Props) => {
   const {data: icons} = useSectionData<IconMap>({
     load: () => loadIcons(rail),
     fetcher: signal => fetchIcons(rail, signal),
@@ -68,8 +82,18 @@ const TileRailView = ({rail, title = null, onOpen}: Props) => {
 
   return (
     <View style={styles.root}>
-      {title ? <Text style={styles.title}>{title}</Text> : null}
-      <TileRow tiles={rail.tiles} icons={icons} onOpen={onOpen} />
+      {title ? (
+        <Text style={[styles.title, variant === 'breed' && styles.titleBreed]}>
+          {title}
+        </Text>
+      ) : null}
+      <TileRow
+        tiles={rail.tiles}
+        icons={icons}
+        onOpen={onOpen}
+        variant={variant}
+        width={width}
+      />
     </View>
   );
 };
@@ -93,6 +117,20 @@ const styles = StyleSheet.create({
     // tile rather than proud of it.
     paddingHorizontal: GUTTER,
     marginBottom: 12,
+  },
+  /**
+   * The breed rails' heading, scaled to the discs under it.
+   *
+   * 17 over a 130dp photograph reads as undersized -- the note below the base
+   * style argues 17 because "a 20px heading over a 60dp disc reads as louder
+   * than the content", and at breed size the content is twice as loud. The
+   * gutter matches ./TileRow's wider breed pitch so the heading still sits over
+   * the first disc rather than proud of it.
+   */
+  titleBreed: {
+    fontSize: 19,
+    lineHeight: 24,
+    paddingHorizontal: 18,
   },
 });
 

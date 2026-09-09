@@ -53,7 +53,24 @@
           which is why this does not need a values-v31 variant.
         -->
         <item name="android:windowSplashScreenBackground">@color/zigly_splash_ground</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/zigly_splash_logo</item>
+        <!--
+          THE SQUARE ICON IS DELIBERATELY NOT USED HERE ANY MORE.
+
+          This was @mipmap/zigly_splash_logo, the launcher artwork, while the JS
+          splash drew the wide wordmark — so on Android 12+ the launch showed a
+          small square mark and then a different, wider logo. Two logos, back to
+          back, at the first thing anyone sees.
+
+          Android 12+ masks and clips this icon to a circle at a fixed size, so a
+          493x124 wordmark cannot be handed to it directly — it would be cropped
+          to its middle. Pointing it at the same wordmark bitmap is therefore not
+          an option, and neither is leaving the square icon in place.
+
+          So the platform splash is given NO icon: the ground colour alone, which
+          is the same white as both the launch drawable and SplashScreen. The
+          customer sees one white field until React mounts and draws the wordmark
+          on it. One logo, once — which is the whole intent.
+        -->
         <!--
           Hold the platform splash for a beat rather than letting it snap away
           the instant the activity is ready. 0 would let Android 12+ tear it

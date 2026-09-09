@@ -35,6 +35,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   Alert,
+  Animated,
   AppState,
   BackHandler,
   Keyboard,
@@ -44,6 +45,8 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 // react-native-webview@14 declares `class WebView<P = undefined>`, which makes
@@ -81,16 +84,6 @@ import {
 import {RESTYLE_REPEAT, getInjectionForUrl} from '../webview/injectedScripts';
 import {PAGE_PREFETCH_SCRIPT, PREFETCH_SCRIPT} from '../webview/prefetch';
 import {
-  loadSectionIds,
-  saveSectionIds,
-  seedSectionIdsScript,
-} from '../webview/sectionIdStore';
-import type {SectionIds} from '../webview/sectionIdStore';
-import {
-  buildSectionPrewarmScript,
-  SECTION_WARM_SCRIPT,
-} from '../webview/sectionPrewarm';
-import {
   BAND_TAP_TAG,
   buildSearchBandScript,
   removeSearchBandScript,
@@ -98,7 +91,10 @@ import {
 import {log, warn} from '../utils/logger';
 import PageCover, {PAGE_COVER_CAP_MS} from '../components/PageCover';
 import type {CoverVariant} from '../components/PageCover';
-import NativeHeader from '../components/NativeHeader';
+import NativeHeader, {
+  SearchBandSection,
+  SEARCH_BAND_H,
+} from '../components/NativeHeader';
 import AnnouncementBar from '../components/AnnouncementBar';
 import CartToast from '../components/CartToast';
 import MessageToast from '../components/MessageToast';
@@ -114,6 +110,8 @@ import WishlistScreen from '../components/WishlistScreen';
 import {
   WISHLIST_SCRIPT,
   REPORT_WISHLIST_COUNT,
+  REPORT_WISHLIST_HANDLES,
+  toggleWishlistScript,
   removeFromWishlistScript,
 } from '../webview/wishlistBridge';
 import {parseWishlist} from '../wishlist/wishlistItems';
@@ -159,6 +157,7 @@ import {
 import type {PageStack} from '../navigation/pageStack';
 import BottomNav from '../components/BottomNav';
 import NativeDashboard from '../native/NativeDashboard';
+import {WishlistProvider} from '../native/wishlistContext';
 import SortFilterBar from '../components/SortFilterBar';
 import ProductActionBar from '../components/ProductActionBar';
 import {
@@ -262,19 +261,17 @@ type Target = 'home' | 'login' | 'password' | number;
 /**
  * What the dashboard's WebView runs before the page's own scripts.
  *
- * The header rule, plus the section prewarm -- which is the whole reason the
- * dashboard now assembles while it downloads instead of afterwards; see
- * ../webview/sectionPrewarm.
+ * The header rule, and now only that. It used to carry the section prewarm as
+ * well -- the reason the page's dashboard assembled while it downloaded rather
+ * than afterwards -- and that dashboard is ../native/NativeDashboard now, so
+ * there is nothing in the page left to warm.
  *
  * A module constant rather than something built per render, so the prop never
  * changes identity: `injectedJavaScriptBeforeContentLoaded` is read once per
  * navigation, and handing the WebView a fresh string on every render of this
- * very busy screen would be churn for no gain. It is compiled with the
- * written-down section id seeds only -- what earlier launches learned arrives
- * from disk a moment later, and `onLoadStart` re-injects a payload carrying it.
+ * very busy screen would be churn for no gain.
  */
-const HOME_EARLY_SCRIPT = `${EARLY_HEADER_CSS}
-${buildSectionPrewarmScript()}`;
+const HOME_EARLY_SCRIPT = EARLY_HEADER_CSS;
 
 /**
  * Whether a page is a shopping page.
@@ -532,6 +529,21 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * anywhere to fall out of step with it.
    */
   const [wishlistCount, setWishlistCount] = useState(0);
+  /**
+   * WHICH products are saved, for the dashboard's product cards.
+   *
+   * The count above drives the badge; this drives every heart on every product
+   * card (../native/ProductCard, through ../native/wishlistContext). It is the
+   * same storage read by a second reporter -- REPORT_WISHLIST_HANDLES -- rather
+   * than a second source, so the badge and the hearts cannot disagree.
+   *
+   * A `Set` because a rail asks it once per card, and it is only ever replaced,
+   * never mutated: a mutated Set is the same object and would not re-render the
+   * cards that read it.
+   */
+  const [wishlistHandles, setWishlistHandles] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   /** Offer strings mirrored from the site's own announcement bar. */
   const [announcements, setAnnouncements] = useState<string[]>([]);
   /**
@@ -759,6 +771,37 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * presentation is ours.
    */
   const [menuOpen, setMenuOpen] = useState(false);
+
+  /**
+   * True once the band has been scrolled off the top of the list.
+   *
+   * Used for one thing: stopping the search band's typewriter, which re-renders
+   * ten times a second and is worth nothing in a band nobody can see.
+   *
+   * THIS USED TO BE DRIVEN BY AN `Animated.Value` WRITTEN EVERY FRAME. The band
+   * was pinned in the header and a transform carried it off with the content, so
+   * a per-frame offset was the mechanism and this threshold came along for free
+   * off the same value. The band is a section of the dashboard's list now
+   * (`searchBand`), so nothing translates -- and the per-frame event plus its JS
+   * listener became sixty callbacks a second spent to find one transition, which
+   * is what made the whole dashboard scroll worse. A settled `onScroll` at
+   * `SCROLL_SETTLE_MS` finds the same threshold for a fraction of the cost.
+   */
+  const [bandGone, setBandGone] = useState(false);
+
+  const handleDashboardScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = event.nativeEvent.contentOffset.y;
+      // Guarded so this sets state twice per full travel rather than on every
+      // report: setState with an unchanged value still costs a render pass.
+      setBandGone(gone => {
+        const next = y >= SEARCH_BAND_H;
+        return next === gone ? gone : next;
+      });
+    },
+    [],
+  );
+
   const [menu, setMenu] = useState<MenuNode[]>([]);
   const menuOpenRef = useRef(false);
   const menuRef = useRef<MenuDrawerHandle | null>(null);
@@ -934,46 +977,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * which should not happen silently on mobile data.
    */
   const unmeteredRef = useRef(false);
-  /**
-   * Section ids learned on earlier launches (see ../webview/sectionIdStore).
-   *
-   * A ref, not state: nothing renders differently because of it, and it is read
-   * from WebView callbacks, which see a ref rather than a stale closure. Empty
-   * until the read off disk lands, which is not a problem -- an empty map means
-   * the page falls back to the written-down seeds, exactly as it always did.
-   */
-  const sectionIds = useRef<SectionIds>({});
   const [offline, setOffline] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const showing = visibleLayer(stack);
-
-  // ----------------------------------------------------------- section ids
-  /**
-   * Read what earlier launches learned, and give it to the page as soon as both
-   * exist.
-   *
-   * Started on mount, which is the earliest it can be, and deliberately not
-   * awaited by anything: the dashboard is already loading and must not be held up
-   * for a cache. If the read wins the race the ids are in place before the first
-   * section is asked for; if it loses, ../webview/pageCache consults the global
-   * per lookup, so everything deferred until it nears the viewport -- which is
-   * most of the dashboard -- still gets the benefit.
-   */
-  useEffect(() => {
-    let live = true;
-    loadSectionIds().then(ids => {
-      if (!live || Object.keys(ids).length === 0) {
-        return;
-      }
-      sectionIds.current = ids;
-      injectInto('home', seedSectionIdsScript(ids));
-    });
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /**
    * What the last launch knew, so this one does not open on 'unknown'.
@@ -1181,7 +1188,38 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const handleDashboardPainted = useCallback(() => {
     setHomePainted(current => (current ? current : true));
-  }, []);
+    /*
+     * AND THE SPLASH, HERE, ON THE SAME SIGNAL.
+     *
+     * This is the line the native switch-over needed and did not get. The
+     * splash used to wait for the page's own `dashboard-ready`, because the
+     * dashboard was assembled inside the WebView out of a dozen section
+     * fetches and there was no earlier honest moment: a load event meant the
+     * document had arrived, not that the store had. So it waited, and its
+     * failsafes -- SPLASH_READY_GRACE_MS from load end, SPLASH_MAX_MS from
+     * launch -- were what actually lifted it when the signal was late.
+     *
+     * The native dashboard has already changed what that signal is worth.
+     * `dashboard-ready` now reports on a page nobody looks at, and the real
+     * dashboard is these components: the moment they lay out, the store is on
+     * screen. Leaving the splash on the WebView's clock meant holding the logo
+     * over a dashboard that was already drawn, for as long as a page load the
+     * customer never sees -- which is the whole launch, spent waiting for
+     * nothing.
+     *
+     * THIS IS NOT THE HAND-OVER-TO-THE-SKELETON CHANGE THAT WAS REJECTED, and
+     * the difference is the reason it is right this time. That one retired the
+     * splash early onto `HomeSkeleton` -- swapping a held logo for a held
+     * wireframe, which added a screen to the launch without bringing the real
+     * dashboard forward by a millisecond. This lifts it onto the real
+     * dashboard, on the same signal that takes its cover off, and brings the
+     * dashboard forward by every millisecond the WebView still has to run.
+     * `PageCover` is still behind it for the same reason as before: if this
+     * ever fires before there is anything to show, the cover is what is
+     * underneath, not the mobile website.
+     */
+    retireSplash();
+  }, [retireSplash]);
 
   /**
    * Cover this layer again: it is loading a different page.
@@ -1340,6 +1378,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /** What the foreground handler above calls; see refreshCountsRef. */
   refreshCountsRef.current = () => {
     injectInto('home', REPORT_WISHLIST_COUNT);
+    /*
+     * The handle set, alongside the count, and only ever into 'home'.
+     *
+     * The dashboard's product cards are the only thing that reads it, and the
+     * dashboard's WebView is where the storage it reads lives. Inner page
+     * layers get the count (their header shows a badge) and not this -- see
+     * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
+     */
+    injectInto('home', REPORT_WISHLIST_HANDLES);
     injectInto('home', REPORT_CART_COUNT);
   };
 
@@ -1373,24 +1420,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
        * only one their `wishlistUpdate` event reaches.
        */
       injectInto(target, REPORT_WISHLIST_COUNT);
-      /*
-       * The section ids, into the document that has actually committed.
-       *
-       * This is the injection that has to land, and the two earlier attempts at it
-       * cannot be relied on. The mount-time read resolves off disk on its own
-       * schedule -- if it wins the race it lands in a document that is about to be
-       * replaced, and the global goes with it. The onLoadStart injection has the
-       * same problem from the other side: on a first launch the read has usually
-       * not finished, so there is nothing to inject yet.
-       *
-       * Here the document exists and is the one that will be shown, and the
-       * sections that matter most have not been requested yet: everything below
-       * the fold waits until it nears the viewport. ../webview/pageCache reads the
-       * global per lookup precisely so a seed arriving at this point still counts.
-       */
-      if (Object.keys(sectionIds.current).length > 0) {
-        injectInto(target, seedSectionIdsScript(sectionIds.current));
-      }
       /*
        * The search band, into the document that has just committed.
        *
@@ -1566,6 +1595,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // a "should".
     injectInto('home', REPORT_CART_COUNT);
     injectInto('home', REPORT_WISHLIST_COUNT);
+    /*
+     * The handle set, alongside the count, and only ever into 'home'.
+     *
+     * The dashboard's product cards are the only thing that reads it, and the
+     * dashboard's WebView is where the storage it reads lives. Inner page
+     * layers get the count (their header shows a badge) and not this -- see
+     * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
+     */
+    injectInto('home', REPORT_WISHLIST_HANDLES);
   }, [injectInto]);
 
   /**
@@ -1583,6 +1621,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     setStack(prev => goToDashboard(prev));
     injectInto('home', REPORT_CART_COUNT);
     injectInto('home', REPORT_WISHLIST_COUNT);
+    /*
+     * The handle set, alongside the count, and only ever into 'home'.
+     *
+     * The dashboard's product cards are the only thing that reads it, and the
+     * dashboard's WebView is where the storage it reads lives. Inner page
+     * layers get the count (their header shows a badge) and not this -- see
+     * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
+     */
+    injectInto('home', REPORT_WISHLIST_HANDLES);
   }, [injectInto]);
 
   /**
@@ -1601,6 +1648,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     setStack(prev => closeTopPage(prev));
     injectInto('home', REPORT_CART_COUNT);
     injectInto('home', REPORT_WISHLIST_COUNT);
+    /*
+     * The handle set, alongside the count, and only ever into 'home'.
+     *
+     * The dashboard's product cards are the only thing that reads it, and the
+     * dashboard's WebView is where the storage it reads lives. Inner page
+     * layers get the count (their header shows a badge) and not this -- see
+     * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
+     */
+    injectInto('home', REPORT_WISHLIST_HANDLES);
     return true;
   }, [injectInto]);
 
@@ -1705,6 +1761,45 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   );
 
   // ---------------------------------------------------------------- wishlist
+  /**
+   * A product card's heart was tapped.
+   *
+   * OPTIMISTIC, THEN AUTHORITATIVE. The set is flipped here so the heart
+   * responds on the frame of the tap -- the write goes through the WebView and
+   * a heart that waited for the round trip would feel broken. The page then
+   * reports the state its storage actually holds ('wishlist-toggled' above),
+   * which is applied whether or not it agrees; a toggle whose handler never ran
+   * reports the unchanged state and the heart goes back.
+   *
+   * THE WRITE IS THEIRS. `toggleWishlistScript` presses Zigly's own wishlist
+   * button rather than writing their storage key, so their counters, their
+   * `wishlistUpdate` event and -- for a signed-in customer -- the POST to their
+   * wishlist API all happen. See ../webview/wishlistBridge for the full
+   * argument; it is the same rule the wishlist screen's removal follows.
+   *
+   * The badge is not touched here. Their event fires REPORT_WISHLIST_COUNT in
+   * the same page, so the count arrives on its own and there is no second
+   * number maintained by hand.
+   */
+  const toggleWish = useCallback(
+    (handle: string) => {
+      if (!handle) {
+        return;
+      }
+      setWishlistHandles(current => {
+        const next = new Set(current);
+        if (next.has(handle)) {
+          next.delete(handle);
+        } else {
+          next.add(handle);
+        }
+        return next;
+      });
+      injectInto('home', toggleWishlistScript(handle));
+    },
+    [injectInto],
+  );
+
   const openWishlist = useCallback(() => {
     // Re-read every time it opens: the shopper may have saved something on a
     // product page since. Asked of the dashboard, which is already loaded, so
@@ -1718,6 +1813,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * on screen for the whole of that wait.
      */
     injectInto('home', REPORT_WISHLIST_COUNT);
+    /*
+     * The handle set, alongside the count, and only ever into 'home'.
+     *
+     * The dashboard's product cards are the only thing that reads it, and the
+     * dashboard's WebView is where the storage it reads lives. Inner page
+     * layers get the count (their header shows a badge) and not this -- see
+     * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
+     */
+    injectInto('home', REPORT_WISHLIST_HANDLES);
     injectInto('home', WISHLIST_SCRIPT);
   }, [injectInto]);
 
@@ -1843,6 +1947,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     // Either badge may have changed while the cart was open.
     injectInto('home', REPORT_CART_COUNT);
     injectInto('home', REPORT_WISHLIST_COUNT);
+    /*
+     * The handle set, alongside the count, and only ever into 'home'.
+     *
+     * The dashboard's product cards are the only thing that reads it, and the
+     * dashboard's WebView is where the storage it reads lives. Inner page
+     * layers get the count (their header shows a badge) and not this -- see
+     * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
+     */
+    injectInto('home', REPORT_WISHLIST_HANDLES);
   }, [endCheckoutHold, injectInto]);
 
   const openCart = useCallback(() => {
@@ -3889,6 +4002,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !onAccountScreen;
 
   /**
+   * Whether the DASHBOARD draws its own native band.
+   *
+   * The condition `NativeHeader`'s `showSearch` used to carry, moved here
+   * because the band moved into ../native/NativeDashboard's list. Distinct
+   * from `showSearchBand` above, which is about the injected band on every
+   * other page: the dashboard has no visible WebView to inject into, so it is
+   * the one page whose band is native.
+   */
+  const showSearchBandNatively =
+    onDashboard(stack) && !searchOpen && !showCart;
+
+  /**
    * Keep the page's band section in step with the app's decision.
    *
    * Re-runs when the answer changes, when the visible layer changes, and when
@@ -4014,7 +4139,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
          * is the one thing that could put it back. Turning it on is a one-word
          * change."
          */
-        showSearch={onDashboard(stack) && !searchOpen && !showCart}
+        /*
+         * FALSE ALWAYS -- the dashboard draws its own band inside its list.
+         *
+         * This was `onDashboard(stack) && !searchOpen && !showCart`, which is
+         * now `showSearchBandNatively` below and is passed to
+         * `NativeDashboard` as `searchBand` instead. The header's band is left
+         * in place, unused on every screen, because it is still the only band
+         * that can fold for the drawer (`searchCollapsed`) and nothing else
+         * has needed it since. See `SearchBandSection` for why a band pinned
+         * above the scroller cannot avoid leaving an unpainted slot behind.
+         */
+        showSearch={false}
         // No wishlist on the dashboard -- that matches the reference too. The
         // cart screen is the other place it appears: the reference drops the
         // bag there (you are already in the bag) and shows the heart instead.
@@ -4052,7 +4188,35 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
          * height: hiding it would drop the space in one frame while the drawer
          * is sliding in.
          */
+        /*
+         * Folded by the drawer ONLY -- deliberately not by the scroll.
+         *
+         * `bandGone` is tempting here and is wrong. `searchCollapsed` is what
+         * gives the band's *layout height* back, and the band is inside the
+         * header, above the list -- so collapsing it removes 64px from above
+         * content the finger is already dragging, and everything below jumps
+         * up by a band's height mid-scroll. The travel alone is what should
+         * move the band; its space is reserved for as long as it belongs to
+         * the page.
+         *
+         * `menuOpen` keeps its original job -- see the note below on why an
+         * expanded band standing over an open drawer was a real defect.
+         */
         searchCollapsed={menuOpen}
+        /*
+         * The travel itself. Written by the dashboard's scroll -- see the
+         * declaration above for why nothing drove this before.
+         */
+        /*
+         * No offset. The header's band is drawn on no screen now
+         * (`showSearch={false}`), so there is nothing for a travel value to
+         * position -- see `searchBand` on the dashboard below.
+         */
+        /*
+         * Stop the typewriter once the band has travelled out of sight. Not
+         * the same as collapsing it -- see the note on the prop.
+         */
+        searchOffscreen={bandGone}
         searchPlaceholders={searchPlaceholders}
         searchTypeMs={searchTypeMs}
         showBack={
@@ -4098,27 +4262,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             // land. It is idempotent, so running twice costs nothing.
             injectInto('home', EARLY_HEADER_CSS);
             /*
-             * And the section ids again, because a new document does not inherit
-             * the global the last one was given. This is the path that matters
-             * on a reload; the mount-time read covers the first load.
+             * No section ids and no prewarm here any more. Both existed to get
+             * the page's own dashboard assembling as early as possible -- the
+             * ids so a section lookup cost no whole-page fetch, the prewarm so
+             * the fetches started while the document downloaded. The dashboard
+             * is ../native/NativeDashboard now and reads the Storefront API
+             * directly, so there is no in-page section to warm and no id to
+             * seed. See ../webview/injectedScripts for the full list of what
+             * came out and what deliberately stayed.
              */
-            if (Object.keys(sectionIds.current).length > 0) {
-              injectInto('home', seedSectionIdsScript(sectionIds.current));
-            }
-            /*
-             * The section prewarm, for the same reason the header rule is
-             * repeated here: document-start injection is unreliable on Android,
-             * and this is the one payload where landing late costs the whole
-             * benefit -- a prewarm that fires after load end has saved nothing.
-             *
-             * Injected AFTER the ids above so it can use what earlier launches
-             * learned rather than the seeds alone. Guarded on its own global, so
-             * whichever of the two paths lands first wins and the other is free.
-             */
-            injectInto(
-              'home',
-              buildSectionPrewarmScript(sectionIds.current),
-            );
           }}
           onLoadEnd={handleLoadEnd}
           onError={({nativeEvent}) => {
@@ -4146,19 +4298,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               }
               if (data && data.tag === 'search-diag') {
                 log('SEARCHDIAG', JSON.stringify(data));
-              } else if (data && data.tag === 'section-ids') {
-                /*
-                 * The page had to rediscover a section id, which cost it a
-                 * whole-page fetch. Keeping it means the next launch does not pay
-                 * that again -- see ../webview/sectionIdStore.
-                 *
-                 * Merged rather than replaced: the page only reports what IT had
-                 * to look up, so replacing would discard ids learned on an
-                 * earlier launch that this one never needed to ask about.
-                 */
-                saveSectionIds(data.ids, sectionIds.current).then(merged => {
-                  sectionIds.current = merged;
-                });
               } else if (data && data.tag === 'card-probe') {
                 reportCardProbe(data);
               } else if (data && data.tag === 'restyle-missing') {
@@ -4181,34 +4320,43 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               } else if (data && data.tag === 'menu') {
                 setMenu(parseMenu(data, ZIGLY_ORIGIN));
               } else if (data && data.tag === 'dashboard-ready') {
-                // The moment the splash has been waiting for: styled, laid out,
-                // sections transplanted, top imagery decoded.
-                retireSplash();
-                // Its own cover, independent of the splash: this is the real
-                // signal it has been waiting for too.
-                setHomePainted(true);
-                // Read the menu now so the first tap of the hamburger opens on
-                // a filled drawer rather than a spinner.
+                /*
+                 * THE PAGE IS READY. THAT IS NO LONGER WHAT THE SPLASH IS
+                 * WAITING FOR.
+                 *
+                 * This used to be the launch's pivot: it retired the splash and
+                 * uncovered the dashboard, because the dashboard *was* this
+                 * page. Both of those now happen on the native dashboard's
+                 * first layout instead -- see `handleDashboardPainted`, which
+                 * is reached long before this and does not depend on the page
+                 * at all. Neither is repeated here: this signal arrives after
+                 * a load the customer never looks at, so acting on it could
+                 * only ever be late.
+                 *
+                 * What is still worth doing on it is the work that genuinely
+                 * needs the page: it is loaded, so the two reads that come out
+                 * of it can be made now rather than on first tap.
+                 */
+                // The menu, so the first tap of the hamburger opens on a filled
+                // drawer rather than a spinner.
                 injectInto('home', READ_MENU_SCRIPT);
-                // Who is signed in, asked once the dashboard is settled. The
-                // answer decides what the Account tab opens, and asking now
-                // means the tap does not have to wait for a round trip.
+                // Who is signed in. The answer decides what the Account tab
+                // opens, and asking now means the tap does not wait for a
+                // round trip.
                 probeAccount();
                 /*
-                 * Warm the rest of THIS page, then the next pages -- and both
-                 * only on an unmetered connection, which is the same trade
-                 * ../webview/prefetch already makes: data for speed, never made
-                 * silently on mobile data.
+                 * The next PAGES are still worth prefetching, on an unmetered
+                 * connection only -- the same trade ../webview/prefetch makes:
+                 * data for speed, never made silently on mobile data.
                  *
-                 * Sections first. Everything below the fold is deferred until it
-                 * nears the viewport, so without this the customer's first scroll
-                 * is what starts the round trip -- the dashboard visibly loading
-                 * itself under their thumb. Warming puts the markup in the page's
-                 * own section cache, so the deferred loader finds it already
-                 * there and places it with no network at all.
+                 * SECTION_WARM_SCRIPT is gone from here. It warmed this page's
+                 * own section cache so the customer's first scroll did not
+                 * start a round trip, and there is no such cache and no such
+                 * scroll now: the dashboard is native, and the sections that
+                 * fetch do it through ../native/storefront and hold their own
+                 * skeletons.
                  */
                 if (unmeteredRef.current) {
-                  injectInto('home', SECTION_WARM_SCRIPT);
                   injectInto('home', PREFETCH_SCRIPT);
                 } else {
                   log('prefetch skipped: metered connection');
@@ -4297,6 +4445,50 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 if (typeof data.n === 'number') {
                   setWishlistCount(data.n);
                 }
+              } else if (data && data.tag === 'wishlist-handles') {
+                /*
+                 * The saved handles, for the dashboard's hearts.
+                 *
+                 * Replaced wholesale rather than merged: the reporter sends the
+                 * complete list every time it changes, so a merge would keep a
+                 * handle the customer had just removed on another surface.
+                 */
+                if (Array.isArray(data.handles)) {
+                  const next = new Set<string>(
+                    data.handles.filter(
+                      (h: unknown): h is string =>
+                        typeof h === 'string' && h.length > 0,
+                    ),
+                  );
+                  setWishlistHandles(next);
+                }
+              } else if (data && data.tag === 'wishlist-toggled') {
+                /*
+                 * One card's heart settled.
+                 *
+                 * The optimistic flip already happened in `toggleWish`; this is
+                 * the authoritative answer from the page's own storage, so it
+                 * is applied whether or not it agrees. A toggle their handler
+                 * never ran (`ok: false`) reports the UNCHANGED state, which is
+                 * what puts the heart back rather than leaving a save the
+                 * customer did not make.
+                 */
+                if (typeof data.handle === 'string' && typeof data.saved === 'boolean') {
+                  const handle: string = data.handle;
+                  const isSaved: boolean = data.saved;
+                  setWishlistHandles(current => {
+                    if (current.has(handle) === isSaved) {
+                      return current;
+                    }
+                    const next = new Set(current);
+                    if (isSaved) {
+                      next.add(handle);
+                    } else {
+                      next.delete(handle);
+                    }
+                    return next;
+                  });
+                }
               } else if (data && data.tag === 'wishlist') {
                 // Read out of the site's own localStorage by the dashboard
                 // itself; see ../webview/wishlistBridge.
@@ -4381,19 +4573,64 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           something real on screen.
         */}
         <View style={styles.pageLayer}>
-          <NativeDashboard
-            width={windowWidth}
-            onOpen={openFromDashboard}
-            onAdd={addFromDashboard}
-            /*
-             * No `onPlayVideo`. React Native has no <Video> and no media
-             * package is installed, so the promotional block draws its poster,
-             * heading and copy -- which is what the site shows before a tap
-             * too -- and shows no play glyph while this is undefined. See the
-             * note in ../native/VideoBlock for the two ways it could be wired.
-             */
-            onPainted={handleDashboardPainted}
-          />
+          {/*
+            The wishlist, for every product card the dashboard draws.
+
+            A provider rather than props on NativeDashboard: the card is five
+            levels down and three of the components between here and it have no
+            other interest in the wishlist. See ../native/wishlistContext.
+          */}
+          <WishlistProvider handles={wishlistHandles} toggle={toggleWish}>
+            <NativeDashboard
+              width={windowWidth}
+              onOpen={openFromDashboard}
+              onAdd={addFromDashboard}
+              /*
+               * No `onPlayVideo`. React Native has no <Video> and no media
+               * package is installed, so the promotional block draws its poster,
+               * heading and copy -- which is what the site shows before a tap
+               * too -- and shows no play glyph while this is undefined. See the
+               * note in ../native/VideoBlock for the two ways it could be wired.
+               */
+              onPainted={handleDashboardPainted}
+              /*
+               * Still written, and still for the header -- but no longer for
+               * the band's travel.
+               *
+               * The band is a section of this list now (`searchBand` below),
+               * so nothing translates it: it scrolls because the list scrolls.
+               * The offset stays because `bandGone` is derived from it, which
+               * is what stops the typewriter once the band has scrolled out of
+               * sight. See the declaration above.
+               */
+              onScroll={handleDashboardScroll}
+              /*
+               * THE BAND, AS THE LIST'S FIRST SECTION.
+               *
+               * It was `showSearch` on `NativeHeader`, drawn pinned above this
+               * list. A pinned band has to reserve SEARCH_BAND_H of layout
+               * height for the field to travel out of, and that slot is not
+               * painted -- so once the field had gone, a white panel the size
+               * and shape of the search field stayed stuck under the bar.
+               * Neither reclaiming the slot (the list jumps 64px mid-drag) nor
+               * filling it with blue (the old "blue box under the bar") is a
+               * fix; both are written up on `SearchBandSection`.
+               *
+               * `offscreen` is only the typewriter's economy here -- nothing
+               * about this band's layout depends on it.
+               */
+              searchBand={
+                showSearchBandNatively ? (
+                  <SearchBandSection
+                    onSearchPress={openSearch}
+                    searchPlaceholders={searchPlaceholders}
+                    searchTypeMs={searchTypeMs}
+                    offscreen={bandGone}
+                  />
+                ) : null
+              }
+            />
+          </WishlistProvider>
         </View>
 
         {/*

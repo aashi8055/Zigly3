@@ -175,35 +175,60 @@ const styles = StyleSheet.create({
   root: {
     marginBottom: 22,
   },
+  /**
+   * The section heading, larger than a rail's.
+   *
+   * 20 rather than the 17 every other rail title uses, and centred with the
+   * tabs below it. This section is the one place on the dashboard where the
+   * heading, a pair of pills and a rail read as a single centred unit -- the
+   * tabs are the only thing under it and there is no left-aligned card edge for
+   * a left-aligned heading to line up with.
+   */
   title: {
     fontFamily: FONT_FAMILY,
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 20,
+    lineHeight: 26,
     fontWeight: '700',
     color: COLORS.ink,
     paddingHorizontal: GUTTER,
-    marginBottom: 10,
-  },
-  tabs: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: GUTTER,
+    textAlign: 'center',
     marginBottom: 12,
   },
+  /** Centred under the heading, rather than aligned to the rail's gutter. */
+  tabs: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: GUTTER,
+    marginBottom: 14,
+  },
+  /**
+   * A tab pill: red outline, red text, white ground.
+   *
+   * Navy before, which made these the only navy pills on a dashboard whose
+   * every other active state is the brand red -- the tab strips in ./ProductRail
+   * and ./TabbedTileSection, and the card buttons. Red here puts the section in
+   * step with them.
+   */
   tab: {
     fontFamily: FONT_FAMILY,
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: COLORS.navy,
-    paddingVertical: 7,
-    paddingHorizontal: 14,
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.red,
+    backgroundColor: COLORS.white,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
     borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.navy,
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    // The radius has to clip the fill on Android, where a Text's background is
+    // painted square without it.
     overflow: 'hidden',
   },
+  /** The selected tab: filled red, white text. */
   tabActive: {
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
     color: COLORS.white,
   },
   track: {

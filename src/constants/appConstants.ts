@@ -241,12 +241,32 @@ export const LISTING_PATHS = ['/collections/', '/search'];
  * itself assembled well inside a second, and a 900ms floor would be the entire
  * remaining launch time.
  *
- * 400 keeps what the floor is actually for -- a fast launch still reads as a
+ * 400 kept what the floor is actually for -- a fast launch still reads as a
  * deliberate brand moment rather than a frame of white -- without being the
- * bottleneck. It is a floor, not a target: on a cold launch the dashboard is
- * still what decides, and this number does nothing.
+ * bottleneck. It was a floor, not a target: on a cold launch the dashboard was
+ * still what decided, and the number did nothing.
+ *
+ * THE NATIVE DASHBOARD INVERTED THAT, which is why it is 1200 now. Everything
+ * above assumes the splash lifts on the WebView reporting a dozen section
+ * fetches assembled -- something that took a second or more, so a 400ms floor
+ * was never reached. The dashboard is React components now and it retires the
+ * splash on its own `onLayout` (see ../screens/ZiglyWebViewScreen's
+ * `handleDashboardPainted`), which fires within a couple of frames of mount.
+ * The floor stopped being a floor and became the entire duration of the splash,
+ * so the logo appeared and vanished in well under half a second -- read as a
+ * flash, not as a brand moment.
+ *
+ * 1200 was therefore a real hold: the mark on screen long enough to be seen
+ * and read before the store replaced it. 2500 is the same reasoning taken
+ * further -- 1200 still read as a glance rather than a brand moment on a warm
+ * launch, where the native dashboard paints almost immediately and this floor
+ * is the whole of what the customer sees. Two and a half seconds is long
+ * enough to register the wordmark and watch it breathe once.
+ *
+ * It is still a floor and still does nothing on a slow launch, where
+ * SPLASH_MAX_MS and the dashboard's own layout are what decide.
  */
-export const SPLASH_MIN_MS = 400;
+export const SPLASH_MIN_MS = 2500;
 
 /**
  * Hard cap on the splash.

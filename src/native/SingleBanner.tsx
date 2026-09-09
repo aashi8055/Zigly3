@@ -66,10 +66,17 @@ const SingleBanner = ({banner, onOpen}: Props) => {
   // The artwork's own shape, per banner -- see `ratio` in ./singleBanners.
   const ratio = banner.ratio;
   const image = tile ? icons[tile.key] : undefined;
+  /*
+   * Full-bleed unless the banner asks to be inset. Only the brand-claims strip
+   * does -- see `inset` in ./singleBanners for why it is the exception.
+   */
+  const inset = banner.inset
+    ? {paddingHorizontal: banner.inset}
+    : undefined;
 
   if (loading) {
     return (
-      <View style={styles.root}>
+      <View style={[styles.root, inset]}>
         <Block pulse={pulse} style={[styles.placeholder, {aspectRatio: ratio}]} />
       </View>
     );
@@ -88,7 +95,7 @@ const SingleBanner = ({banner, onOpen}: Props) => {
    */
   if (!tile.path) {
     return (
-      <View style={styles.root}>
+      <View style={[styles.root, inset]}>
         <Image
           source={{uri: image}}
           style={[styles.image, {aspectRatio: ratio}]}
@@ -101,7 +108,7 @@ const SingleBanner = ({banner, onOpen}: Props) => {
   }
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, inset]}>
       <Pressable
         onPress={() => onOpen(tile.path)}
         accessibilityRole="link"
@@ -126,8 +133,9 @@ const SingleBanner = ({banner, onOpen}: Props) => {
 
 const styles = StyleSheet.create({
   root: {
-    // No horizontal padding: full-bleed, as the hero carousel is. See the note
-    // at the top on why the section's own 10px radius is dropped.
+    // No horizontal padding by default: full-bleed, as the hero carousel is.
+    // See the note at the top on why the section's own 10px radius is dropped,
+    // and `inset` in ./singleBanners for the one banner that opts back in.
     marginBottom: 22,
   },
   image: {

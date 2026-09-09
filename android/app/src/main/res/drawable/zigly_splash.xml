@@ -21,6 +21,18 @@
   SplashScreen takes over, the swap is invisible: two identical images, one
   replacing the other.
 
+  THE MARK IS THE WORDMARK, NOT THE LAUNCHER ICON, and that correction is the
+  point of this file's current shape. This used to draw the square launcher
+  artwork (162/216/324/432px) from the mipmap set — while the JS splash drew the
+  wide 493x124 wordmark. So the customer saw a small square mark for a beat and
+  then a different, wider logo: two logos at launch, which is exactly the "swap
+  is invisible" property this file claims and did not have.
+
+  @drawable-xhdpi/zigly_wordmark is the same 493x124 file the JS splash uses.
+  Placed in the xhdpi bucket so the window manager draws it at 493/2 ≈ 246dp
+  wide, which is the 240dp SplashScreen gives it — the two frames now match in
+  artwork AND in size.
+
   A layer-list rather than a bitmap, because the mark must NOT be stretched to
   the window. `gravity="center"` draws it at its own size on the ground colour,
   which is what keeps a wordmark from being a few percent wide on a tall phone.
@@ -29,7 +41,7 @@
     <item android:drawable="@color/zigly_splash_ground" />
     <item>
         <bitmap
-            android:src="@mipmap/zigly_splash_logo"
+            android:src="@drawable/zigly_wordmark"
             android:gravity="center" />
     </item>
 </layer-list>

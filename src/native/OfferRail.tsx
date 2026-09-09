@@ -53,23 +53,48 @@ import {useSectionData} from './useSectionData';
 const GUTTER = 12;
 
 /**
- * The tile's size.
+ * How many tiles are visible at once.
+ *
+ * 1.8, so the second tile is most of the way on and the third is off the edge.
+ * The theme's artwork here is a promotional composition -- a product, a
+ * discount and a word or two of copy baked into the image -- rather than a
+ * packshot, and at 132dp (two and a bit on screen) that copy was too small to
+ * read, which made the rail a row of coloured squares.
+ */
+const TILES_VISIBLE = 1.8;
+
+/**
+ * The tile's size for a given screen width.
  *
  * The theme's artwork is cut to 650x610 and 610x650 -- square either way,
- * within a few percent -- and its own stylesheet rounds these to 8px. 132dp
- * puts two and a bit on screen beside the 12dp gutter, which is the "there is
- * more to the right" shape a rail needs.
+ * within a few percent -- and its own stylesheet rounds these to 8px.
+ *
+ * DERIVED RATHER THAN FIXED, which is the change here. It was a flat 132dp,
+ * chosen to put "two and a bit on screen beside the 12dp gutter". A fixed
+ * number shows a different fraction of the next tile on every phone, and the
+ * fraction is the part that says the rail scrolls -- so the count is what is
+ * fixed now and the size follows from it. On a 360dp phone this is ~180dp.
+ *
+ * Exported so the rail's snap interval is computed from the same number rather
+ * than from a second one that could drift.
  */
-const TILE = 132;
+export const offerTileSize = (width: number): number =>
+  Math.round((width - GUTTER - TILES_VISIBLE * GUTTER) / TILES_VISIBLE);
+
+/** The fallback when no width is given: the old fixed size. */
+const TILE_FALLBACK = 132;
 
 type Props = {
   rail: OfferRailData;
   onOpen: (path: string) => void;
+  /** The screen's width, which the tile is sized against. */
+  width?: number;
 };
 
 const EMPTY_ICONS: IconMap = {};
 
-const OfferRail = ({rail, onOpen}: Props) => {
+const OfferRail = ({rail, onOpen, width}: Props) => {
+  const TILE = width ? offerTileSize(width) : TILE_FALLBACK;
   const {data: icons, loading} = useSectionData<IconMap>({
     load: () => loadIcons(rail as TileRail),
     fetcher: signal => fetchIcons(rail as TileRail, signal),
@@ -94,9 +119,9 @@ const OfferRail = ({rail, onOpen}: Props) => {
       <View style={styles.root}>
         <Text style={styles.title}>{rail.title}</Text>
         <View style={styles.track}>
-          <Block pulse={pulse} style={styles.placeholder} />
-          <Block pulse={pulse} style={styles.placeholder} />
-          <Block pulse={pulse} style={styles.placeholder} />
+          <Block pulse={pulse} style={[styles.placeholder, {width: TILE, height: TILE}]} />
+          <Block pulse={pulse} style={[styles.placeholder, {width: TILE, height: TILE}]} />
+          <Block pulse={pulse} style={[styles.placeholder, {width: TILE, height: TILE}]} />
         </View>
       </View>
     );
@@ -135,7 +160,7 @@ const OfferRail = ({rail, onOpen}: Props) => {
              * on `label` in ./offerRails.
              */
             accessibilityLabel={tile.label}
-            style={styles.cell}
+            style={[styles.cell, {width: TILE, height: TILE}]}
           >
             {({pressed}) => (
               <Image
@@ -176,9 +201,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: GUTTER,
     gap: GUTTER,
   },
+  /**
+   * The tile. Its size is applied at the call site, not here: it is derived
+   * from the screen width now (see `offerTileSize`) and a stylesheet is built
+   * once at module load, before any width is known.
+   */
   cell: {
-    width: TILE,
-    height: TILE,
     // The theme's own radius for these tiles: `.block_image_div img,
     // .block_image_div { border-radius: 8px }`.
     borderRadius: 8,
@@ -192,9 +220,8 @@ const styles = StyleSheet.create({
   imagePressed: {
     opacity: 0.72,
   },
+  /** Sized at the call site, for the same reason as `cell`. */
   placeholder: {
-    width: TILE,
-    height: TILE,
     borderRadius: 8,
   },
 });

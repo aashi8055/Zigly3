@@ -46,8 +46,10 @@
 import React from 'react';
 import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
 import {BUTTON_FILL, COLORS, FONT_FAMILY} from '../constants/appConstants';
+import {HeartOutline, HeartShape} from '../components/glyphs';
 import {money} from '../utils/money';
 import type {Product} from './products';
+import {useWishlist} from './wishlistContext';
 
 /**
  * The card's width on a rail.
@@ -68,27 +70,45 @@ type Props = {
   /**
    * Add this variant to the bag.
    *
-   * Only ever called with a non-null `variantId`; a card whose product has
-   * choices routes its button to `onOpen` instead. The screen runs the WebView
-   * bridge -- see the note above on why this cannot be a native fetch.
+   * Only ever called with a non-null `variantId` -- the first in-stock variant,
+   * resolved in ./products. A card whose product yielded no parseable id at all
+   * routes its button to `onOpen` instead. The screen runs the WebView bridge
+   * -- see the note above on why this cannot be a native fetch.
    */
   onAdd: (variantId: number) => void;
 };
 
 const ProductCard = ({product, onOpen, onAdd}: Props) => {
   /**
+   * The wishlist, from ./wishlistContext rather than from props.
+   *
+   * Every product surface in the app draws this card, and the state lives five
+   * levels up in ../screens/ZiglyWebViewScreen -- see that file for why it is a
+   * context. With no provider this is an empty set and no toggle, and the heart
+   * is simply not drawn.
+   */
+  const {handles, toggle: onWish} = useWishlist();
+  const saved = handles.has(product.handle);
+
+  /**
    * Whether the button adds or navigates.
    *
-   * Three states, and they are all the same button so the rail's rhythm never
-   * breaks: a one-variant product in stock adds; a product with choices opens
-   * its page to make them; a sold-out product says so and does nothing.
+   * Two states now, and they are the same button so the rail's rhythm never
+   * breaks: a product in stock adds; a sold-out one says so and does nothing.
+   *
+   * There USED to be a third, "View Options", for a product with more than one
+   * variant -- which on a New Arrivals card in Hot Picks or Bestsellers is most
+   * of them, so those rails read "View Options" where the website reads "Add to
+   * Bag". ../native/products now resolves a variant for every product the way
+   * the theme's cards do (the first in stock), so the only reason left to not
+   * add is stock.
+   *
+   * `variantId !== null` stays in `canAdd` because `onAdd` must never be called
+   * with null -- a product whose gids were all unparseable still yields none.
+   * Such a card falls back to opening the product page, same as before.
    */
   const canAdd = product.available && product.variantId !== null;
-  const label = !product.available
-    ? 'Sold Out'
-    : product.variantId === null
-    ? 'View Options'
-    : 'Add to Bag';
+  const label = product.available ? 'Add to Bag' : 'Sold Out';
 
   return (
     <View style={styles.card}>
@@ -139,6 +159,48 @@ const ProductCard = ({product, onOpen, onAdd}: Props) => {
         )}
       </Pressable>
 
+      {/*
+        The wishlist heart, over the top-right of the photo.
+        
+        OUTSIDE THE CARD'S MAIN Pressable, not inside it. A Pressable nested in
+        another Pressable is ambiguous on Android -- the outer one frequently
+        wins the gesture -- so a heart drawn inside the card's link would open
+        the product about as often as it saved it. Absolutely positioned over
+        the image box instead, as a sibling, which is also how the theme's own
+        card places it.
+
+        Drawn only when there is a toggle to call. See `onWish`.
+      */}
+      {onWish ? (
+        <Pressable
+          onPress={() => onWish(product.handle)}
+          accessibilityRole="button"
+          accessibilityState={{selected: saved === true}}
+          accessibilityLabel={
+            saved
+              ? `Remove ${product.title} from wishlist`
+              : `Save ${product.title} to wishlist`
+          }
+          // The glyph is 18dp in a 30dp disc at the corner of a 156dp card, so
+          // the target is grown well past its ink.
+          hitSlop={10}
+          style={({pressed}) => [styles.wish, pressed && styles.wishPressed]}
+        >
+          {saved ? (
+            <HeartShape size={18} color={COLORS.red} />
+          ) : (
+            /*
+              Hollow until the handle set says otherwise, including before the
+              set has arrived -- it starts empty. An unsaved product is by far
+              the common case, so an outline is right almost always and is
+              corrected within a frame of the set landing; starting filled would
+              flash a save the customer never made.
+            */
+            <HeartOutline size={18} color={COLORS.ink} />
+          )}
+        </Pressable>
+      ) : null}
+
       <Pressable
         onPress={() =>
           canAdd && product.variantId !== null
@@ -181,6 +243,35 @@ const styles = StyleSheet.create({
   },
   body: {
     marginBottom: 8,
+  },
+  /**
+   * The wishlist heart's disc, at the photo's top-right.
+   *
+   * A white disc under the glyph rather than the bare glyph: Zigly's packshots
+   * are on white but not uniformly -- a pale bag or a light-coloured bed can
+   * sit directly under the corner and an unbacked outline disappears into it.
+   * The disc is the theme's own treatment on its card too.
+   *
+   * Positioned against the card, which is this style's parent and is the
+   * default `relative`. 6dp in from the photo's corner.
+   */
+  wish: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
+    // A hairline rather than a shadow: an elevation on Android would paint a
+    // grey halo on the white photo, which reads as a smudge at this size.
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.hairline,
+  },
+  wishPressed: {
+    opacity: 0.6,
   },
   imageBox: {
     width: '100%',

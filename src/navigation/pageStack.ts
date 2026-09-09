@@ -90,6 +90,111 @@ const bareUrl = (url: string): string => {
   return bare.length > 1 && bare.endsWith('/') ? bare.slice(0, -1) : bare;
 };
 
+/** The path, with the query and fragment taken off. */
+const pathOf = (url: string): string => bareUrl(url).split('?')[0];
+
+/**
+ * The query keys SearchTap writes into the url as the customer sorts and
+ * filters, read out of its own `pushSort` / `pushFilters` on 2026-09-06.
+ *
+ * `sort` and `page` are written by name. Every facet is written under its own
+ * heading, which cannot be listed here -- Zigly can add one in the admin any
+ * afternoon -- so `facetLike` below tests the SHAPE those take instead.
+ */
+const SEARCHTAP_QUERY_KEYS = ['sort', 'page', 'q', 'query'];
+
+/**
+ * Whether two urls are the same listing page with only its sort or filters
+ * changed.
+ *
+ * WHY THIS EXISTS. SearchTap applies a sort by writing it into the url --
+ * `pushSort()` calls `pushRouteToURL()`, which is a history.pushState. Android
+ * reports a pushState through onPageStarted exactly as it reports a real
+ * navigation, and `sameDocument` says the two urls differ because the query
+ * differs. So the app put its cover back over a page the customer was already
+ * reading and re-ran the whole injection -- and because a pushState loads no
+ * document, nothing ever posted `page-ready` to lift that cover again, so it
+ * sat there until the blanket deadline expired.
+ *
+ * The path must match exactly: this says "the same page, re-sorted", never
+ * "some other page". A url that changes anything but these keys is a real
+ * navigation and is treated as one.
+ */
+export const sameListingResults = (a: string, b: string): boolean => {
+  if (pathOf(a) !== pathOf(b)) {
+    return false;
+  }
+  if (bareUrl(a) === bareUrl(b)) {
+    return false; // Not a rewrite at all; sameDocument already covers it.
+  }
+
+  /*
+   * Every key whose value differs between the two urls. If they are all
+   * SearchTap's, this is its own rewrite of the page already on screen.
+   */
+  const changed = new Set<string>();
+  const read = (url: string): Map<string, string> => {
+    const out = new Map<string, string>();
+    const query = bareUrl(url).split('?')[1] ?? '';
+    if (!query) {
+      return out;
+    }
+    for (const pair of query.split('&')) {
+      if (!pair) {
+        continue;
+      }
+      const eq = pair.indexOf('=');
+      const key = eq === -1 ? pair : pair.slice(0, eq);
+      out.set(
+        decodeURIComponent(key).toLowerCase(),
+        eq === -1 ? '' : pair.slice(eq + 1),
+      );
+    }
+    return out;
+  };
+
+  const before = read(a);
+  const after = read(b);
+  before.forEach((value, key) => {
+    if (after.get(key) !== value) {
+      changed.add(key);
+    }
+  });
+  after.forEach((value, key) => {
+    if (before.get(key) !== value) {
+      changed.add(key);
+    }
+  });
+
+  if (changed.size === 0) {
+    return false;
+  }
+  /*
+   * A facet is written under its own heading, so anything that is not one of
+   * the named keys is accepted only when it looks like a facet rather than
+   * like a page identity: no path-ish or tracking-ish key gets through.
+   */
+  const facetLike = (key: string): boolean =>
+    key.length > 0 &&
+    key.indexOf('/') === -1 &&
+    !key.startsWith('utm_') &&
+    key !== 'variant' &&
+    key !== 'redirect';
+
+  let sawSearchtapKey = false;
+  for (const key of changed) {
+    if (SEARCHTAP_QUERY_KEYS.indexOf(key) !== -1) {
+      sawSearchtapKey = true;
+      continue;
+    }
+    if (!facetLike(key)) {
+      return false;
+    }
+    sawSearchtapKey = true;
+  }
+  return sawSearchtapKey;
+};
+
 /** The layer on top, or null when the dashboard is showing. */
 export const visibleLayer = (stack: PageStack): PageLayer | null => {
   const top = stack.history[stack.history.length - 1];

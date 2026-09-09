@@ -9,9 +9,21 @@
  * drawn from Views and a tagline underneath, which was two departures from the
  * real app at the first thing anyone sees: the wrong ground, and a line of copy
  * ("Everything your pet needs") that this app had written for itself. Both are
- * gone. The mark is the real one -- ../assets/zigly-logo.png is the launcher
- * icon's own artwork, at every density -- so the splash, the launcher icon and
- * the site's header now show the same logo.
+ * gone.
+ *
+ * THE MARK IS ../assets/logo.png, AND WHICH FILE IT IS MATTERS. That is the
+ * tight wordmark lock-up -- 493x124 -- and it is deliberately the one asset
+ * with no @2x/@3x siblings. This used to require zigly-logo.png, which does
+ * have them, and every one of those siblings is the SQUARE launcher icon
+ * (162/216/324/432px). React Native resolves an asset by density, so the base
+ * wordmark was only ever drawn in a simulator: on a real phone the splash was
+ * painting the padded square icon, which is why the customer saw a small square
+ * mark and then a wide wordmark -- two different logos, back to back, at launch.
+ * ../components/NativeHeader hit the identical bug and records the same fix.
+ *
+ * The Android launch screen (android/.../drawable/zigly_splash.xml) now draws
+ * that same wordmark at a matching size, so the hand-off from the window
+ * manager to this component is one continuous image rather than a swap.
  *
  * The white matters beyond taste. The page behind this is white while it loads,
  * and so is the app's ground, so lifting the splash is now a fade between two
@@ -30,21 +42,23 @@ import {Animated, Easing, StyleSheet, View} from 'react-native';
 import {COLORS} from '../constants/appConstants';
 
 /**
- * Zigly's own mark, from the launcher icon set.
+ * Zigly's own wordmark.
  *
- * `require` rather than a URI, so Metro picks the density it needs from the
- * @1.5x/@2x/@3x/@4x siblings and the file is in the bundle -- a splash that
+ * `require` rather than a URI, so the file is in the bundle -- a splash that
  * had to fetch its own logo would be showing nothing at the one moment it
- * exists for.
+ * exists for. And ../assets/logo.png rather than zigly-logo.png: see the note
+ * at the top on why the latter resolves to the square launcher icon on a real
+ * device.
  */
-const LOGO = require('../assets/zigly-logo.png');
+const LOGO = require('../assets/logo.png');
 
 /**
- * The artwork is square with the wordmark across its middle, so this is the
- * width the wordmark gets; the height follows from `contain`. Sized to sit
- * comfortably inside the narrowest phone this app supports.
+ * The wordmark's drawn size. 493x124 is 3.976:1, so the height follows the
+ * width rather than being guessed; `contain` would letterbox anything else.
+ * 240dp wide sits comfortably inside the narrowest phone this app supports.
  */
-const LOGO_SIZE = 240;
+const LOGO_W = 240;
+const LOGO_H = Math.round(LOGO_W * (124 / 493));
 
 /** How far the mark grows at the top of each breath. 1.04 reads as alive, not as motion. */
 const BREATHE_SCALE = 1.04;
@@ -114,7 +128,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  logo: {width: LOGO_SIZE, height: LOGO_SIZE},
+  logo: {width: LOGO_W, height: LOGO_H},
 });
 
 export default SplashScreen;

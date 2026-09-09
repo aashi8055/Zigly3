@@ -61,6 +61,22 @@ export type SingleBanner = {
    * picture.
    */
   readonly ratio: number;
+  /**
+   * Inset this banner from the page edges, in dp. Full-bleed when absent.
+   *
+   * THE DEFAULT IS FULL-BLEED AND STAYS THAT WAY. ./SingleBanner's own note
+   * says the site's 20px inset and rounded corners are stripped because on a
+   * phone they read as "a card floating in a gutter rather than the full-width
+   * banner the reference app shows". That holds for the campaign banners, whose
+   * artwork is a photograph with lettering over it.
+   *
+   * The brand-claims strip is the exception this field exists for. It is not a
+   * campaign banner: it is a row of small monochrome claim marks, and at full
+   * width they are drawn far larger than anything else of their kind on the
+   * page while carrying the least information -- the strip ends up the loudest
+   * thing above the footer. Inset, it reads as the quiet closing note it is.
+   */
+  readonly inset?: number;
 };
 
 /** 600x210, the `custom-single-banner` mobile crop. */
@@ -72,12 +88,14 @@ const banner = (
   label: string,
   path: string,
   key: string,
+  inset?: number,
 ): SingleBanner => ({
   storeKey,
   sectionId: DOG + section,
   fragment: 'custom_single_banner',
   tiles: [{label, path, key}],
   ratio: SINGLE_RATIO,
+  inset,
 });
 
 /**
@@ -112,6 +130,10 @@ export const LOGOS_BANNER = banner(
   'Zigly brand promises',
   '',
   '600X210_BrandClaims_1_bc7011c7-2cc8-47a6-ab90-7de4d1357bc9.png',
+  // Inset, unlike every other banner. See `inset` above: this is a row of small
+  // claim marks, not a campaign image, and full-bleed made it the loudest thing
+  // above the footer.
+  28,
 );
 
 /**

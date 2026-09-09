@@ -134,11 +134,17 @@ export const styles = StyleSheet.create({
   circle: {width: '100%', aspectRatio: 1, borderRadius: 999, marginBottom: 8},
   circleLabel: {height: 8, width: '76%', borderRadius: 4},
   /**
-   * The banner carousel. Close to 2:1, which is the ratio Zigly's homepage
-   * banners are cut to -- the one shape here big enough that getting the
-   * proportion wrong would be legible as the page settling.
+   * The banner carousel, at 3:2 -- the ratio Zigly's mobile banners are
+   * actually cut to (600x400). The one shape here big enough that getting the
+   * proportion wrong is legible as the page settling.
+   *
+   * THIS SAID 2:1 AND THAT WAS WRONG. The two places the ratio was written down
+   * agreed with each other and not with the artwork, so the error was invisible
+   * from either one: this block reserved a 2:1 box, ../native/BannerCarousel
+   * cited this block as its reason for drawing at 2:1, and the 3:2 images were
+   * cropped by a quarter of their height to fit. Corrected in both, together.
    */
-  banner: {width: '100%', aspectRatio: 2, borderRadius: 14},
+  banner: {width: '100%', aspectRatio: 1.5, borderRadius: 14},
   /** The coupon strip: one short wide bar directly below the banner. */
   strip: {width: '100%', height: 54, borderRadius: 12},
   /** A section heading, above a rail. */

@@ -174,8 +174,12 @@ first.
       failure to look for.
 - [ ] **Add to Bag from a rail** — must reach the same cart the WebView has.
       Add natively, then open the cart: the count must agree.
-- [ ] **A product with variants** — its card must say "View Options" and open
-      the product page, never add a size nobody chose.
+- [ ] **A product with variants** — its card must say "Add to Bag", same as
+      every other card, and add its first in-stock variant. This is what the
+      website's own cards do; the card used to say "View Options" here and
+      navigate instead, which is the bug this replaced.
+- [ ] **A product whose lead variant is sold out** — the variant that lands in
+      the cart must be an in-stock one, not the sold-out first.
 
 ## 4. Wired — what to check about the switch-over itself
 

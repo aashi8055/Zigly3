@@ -211,12 +211,22 @@ export const parseIcons = (
   if (!html) {
     return out;
   }
-  const tags = html.match(/<img\b[^>]*>/gi) || [];
+  /*
+   * Both element kinds, in document order. `<video ...>` is matched as an open
+   * tag rather than with its content: the poster is on the opening tag and the
+   * `<source>` inside it is an mp4, which no tile wants.
+   */
+  const tags = html.match(/<(?:img|video)\b[^>]*>/gi) || [];
   for (const tag of tags) {
     const candidates: string[] = [];
     const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag);
     if (src) {
       candidates.push(src[1]);
+    }
+    // The video block's artwork. Only ever present on a <video>.
+    const poster = /\bposter\s*=\s*["']([^"']+)["']/i.exec(tag);
+    if (poster) {
+      candidates.push(poster[1]);
     }
     const srcset = /\bsrcset\s*=\s*["']([^"']+)["']/i.exec(tag);
     if (srcset) {
