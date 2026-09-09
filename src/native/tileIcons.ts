@@ -71,6 +71,17 @@ export type TileRail = {
   readonly fragment: string;
   /** The tiles this rail draws. */
   readonly tiles: readonly Tile[];
+  /**
+   * Which page this rail's section lives on. Defaults to `/`.
+   *
+   * The Section Rendering API only returns sections that are actually on the
+   * page asked for: `/?sections=x` answers with an empty body for a section the
+   * homepage does not render, which is indistinguishable here from a stale id.
+   * The three original rails are all on the homepage, so this was implicit
+   * until ./collectionCards -- whose section is on `/collections` and nowhere
+   * else -- had to say so.
+   */
+  readonly page?: string;
 };
 
 /**
@@ -285,7 +296,9 @@ const fetchSection = async (
   sectionId: string,
   signal?: AbortSignal,
 ): Promise<IconMap | null> => {
-  const url = `${ZIGLY_ORIGIN}/?sections=${encodeURIComponent(sectionId)}`;
+  const url = `${ZIGLY_ORIGIN}${rail.page ?? '/'}?sections=${encodeURIComponent(
+    sectionId,
+  )}`;
   try {
     const res = await fetch(url, {credentials: 'omit', signal});
     if (!res.ok) {
@@ -322,7 +335,10 @@ const discoverAndFetch = async (
   signal?: AbortSignal,
 ): Promise<IconMap | null> => {
   try {
-    const res = await fetch(`${ZIGLY_ORIGIN}/`, {credentials: 'omit', signal});
+    const res = await fetch(`${ZIGLY_ORIGIN}${rail.page ?? '/'}`, {
+      credentials: 'omit',
+      signal,
+    });
     if (!res.ok) {
       return null;
     }
