@@ -10,8 +10,10 @@
  * each fetch resolves whatever its own page's section carries and the filenames
  * decide which, so neither needs to know which tiles are "its own".
  *
- * The tabs wrap: four labels including "Smart Petcare" will not fit one line on
- * a narrow phone.
+ * The tabs stay on ONE LINE and scroll sideways: four labels including "Smart
+ * Petcare" will not fit a narrow phone. They used to wrap onto a second line,
+ * which read as a block of chips landing on the tiles rather than as a tab
+ * strip -- see `scrollTabs` in ./TabbedTileSection.
  */
 import React from 'react';
 import TabbedTileSection from './TabbedTileSection';
@@ -30,14 +32,32 @@ const RAILS: readonly TileRail[] = [
 
 type Props = {
   onOpen: (path: string) => void;
+  /** The screen's width, for the `wide` tile. See ./TileRow. */
+  width?: number;
 };
 
-const ExploreSection = ({onOpen}: Props) => (
+const ExploreSection = ({onOpen, width}: Props) => (
   <TabbedTileSection
     title={EXPLORE_TITLE}
     tabs={EXPLORE_TABS}
     rails={RAILS}
-    wrapTabs
+    scrollTabs
+    /*
+     * `wide`, not the default square: these tiles are photographs of a whole
+     * category and at 104dp they were thumbnails. Two and a quarter now fit the
+     * row, which is what the heading and the tab strip above them are sized
+     * against. See ./TileRow.
+     */
+    variant="wide"
+    /*
+     * Heading and pills ranged left, which is where every other section
+     * heading in the dashboard sits -- the rails and tile rows all range left
+     * at the same gutter, so a centred heading here was the odd one out.
+     * "Everything For Your Pet" keeps the centred default. See
+     * ./TabbedTileSection's `align`.
+     */
+    align="left"
+    width={width}
     onOpen={onOpen}
   />
 );

@@ -167,7 +167,27 @@ const ProductRail = ({title, tabs, onOpen, onAdd}: Props) => {
       <Text style={styles.title}>{title}</Text>
 
       {showTabs ? (
-        <View style={styles.tabs}>
+        /*
+         * The tab row SCROLLS, because the pills grew and the labels are long.
+         *
+         * It was a plain flex row. At the pill's new size Hot Picks' own two
+         * labels -- "Hot Picks of The Week" and "New Arrivals" -- come to more
+         * than a 360dp screen holds once the gutters and the gap are counted,
+         * and in a fixed row that overflow is spent on the pills themselves:
+         * flex shrinks them and `numberOfLines={1}` truncates the label to
+         * "Hot Picks of The W...". A tab the customer cannot read is worse
+         * than one they have to reach for.
+         *
+         * `alwaysBounceHorizontal={false}` so a pair that DOES fit -- which is
+         * most sections, all of which pass two short labels or one -- does not
+         * rubber-band as though something were hidden.
+         */
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          alwaysBounceHorizontal={false}
+          contentContainerStyle={styles.tabs}
+        >
           {tabs.map((tab, index) => (
             <Tab
               key={tab.label}
@@ -176,7 +196,7 @@ const ProductRail = ({title, tabs, onOpen, onAdd}: Props) => {
               onPress={() => select(index)}
             />
           ))}
-        </View>
+        </ScrollView>
       ) : null}
 
       {tabs.map((tab, index) =>
@@ -240,37 +260,79 @@ const styles = StyleSheet.create({
   root: {
     marginBottom: 22,
   },
+  /**
+   * The section heading, at the same 20 the tabbed tile sections use.
+   *
+   * 17 before, which is the figure a plain rail's heading takes -- a label
+   * above a row of cards. This component draws a heading with a row of PILLS
+   * under it, and that pair reads as one unit introducing the section rather
+   * than as a caption: at 17 over a 20px-tall pill the heading was the
+   * quieter of the two. ../native/TabbedTileSection's own note argues 20 for
+   * exactly this shape, so the two tabbed sections now agree.
+   *
+   * Rails with no tab row are unaffected in kind -- Bestsellers and the offer
+   * rails pass a single tab and draw no pills -- but they take the same 20, so
+   * every section heading on the dashboard is one size.
+   */
   title: {
     fontFamily: FONT_FAMILY,
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 20,
+    lineHeight: 26,
     fontWeight: '700',
     color: COLORS.ink,
     paddingHorizontal: GUTTER,
     marginBottom: 10,
   },
+  /*
+   * On the CONTENT container of the scroller above, not on a View. Same reason
+   * `track` below carries the rail's padding: a scroll container's own start
+   * padding scrolls away and older Android drops the end padding.
+   */
   tabs: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     paddingHorizontal: GUTTER,
     marginBottom: 12,
   },
+  /**
+   * A tab pill: RED outline, red text, white ground -- and bigger.
+   *
+   * Navy before, at 12.5/600 with a hairline border. Two things were wrong
+   * with that pair and both are the same mistake:
+   *
+   *   - The colour was the odd one out. Red is the app's active colour
+   *     everywhere else on the dashboard -- the card buttons, and
+   *     ./TabbedTileSection's pills, whose own note records them being moved
+   *     off navy for this reason. Hot Picks and New Arrivals were the last
+   *     navy pair, so the customer met two different colours for the same
+   *     control on one scroll.
+   *   - They were too quiet to read as tabs. A hairline border at 12.5 is a
+   *     caption with a line round it; the two-state control needs to be
+   *     legible as a choice before it is tapped.
+   *
+   * 13/700 on a full-weight 1px border, matching ./TabbedTileSection exactly,
+   * so the dashboard has ONE pill rather than two that nearly agree.
+   */
   tab: {
     fontFamily: FONT_FAMILY,
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: COLORS.navy,
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.red,
+    backgroundColor: COLORS.white,
     // Padding on the Text itself: the tap target is the pill, and a wrapping
     // Pressable would need its own layout to stay the same size.
-    paddingVertical: 7,
-    paddingHorizontal: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
     borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.navy,
+    borderWidth: 1,
+    borderColor: COLORS.red,
     overflow: 'hidden',
   },
+  /** The selected tab: filled red, white text. */
   tabActive: {
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
     color: COLORS.white,
   },
   track: {

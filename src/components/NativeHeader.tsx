@@ -95,6 +95,23 @@ interface Props {
    */
   searchOffset?: Animated.Value;
   /**
+   * True once the travel has carried the band out of sight.
+   *
+   * Distinct from `searchCollapsed`, and the distinction is the whole reason
+   * this prop exists. Collapsed means "the band has no layout height" -- the
+   * drawer's case. This means "the band still owns its space but has been
+   * scrolled off it", which is what a section does and what `searchOffset`
+   * made possible.
+   *
+   * It matters for one thing: the typewriter. `SearchPrompt` re-renders several
+   * times a second and its note above assumed the band was collapsed for the
+   * whole time the user was scrolling -- true when scrolling collapsed it, and
+   * no longer true now that scrolling carries it instead. Without this the
+   * prompt would keep typing into a band nobody can see, spending frames
+   * exactly when they are worth most.
+   */
+  searchOffscreen?: boolean;
+  /**
    * Inner pages swap the hamburger for a back arrow, as the reference app does.
    * The menu stays reachable from the home dashboard.
    */
@@ -207,6 +224,80 @@ const SearchPrompt = React.memo(({phrases, typeMs, running}: PromptProps) => {
 });
 SearchPrompt.displayName = 'SearchPrompt';
 
+/**
+ * The pale blue search band, as a SECTION OF THE SCROLLING PAGE.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM THE BAND INSIDE `NativeHeader`.
+ *
+ * The header's own band is pinned above the list and reserves SEARCH_BAND_H of
+ * layout height so the field has a slot to travel out of. That slot is the
+ * defect: it is not painted -- the clipping box has no background, so it takes
+ * the header's white ground -- and once the field has been carried off by
+ * `searchOffset`, what is left behind is an empty white panel stuck under the
+ * bar, the height of the search field and in its place.
+ *
+ * Both obvious repairs make something else worse, and both were tried:
+ *
+ *   - Giving the box's height back on scroll shifts the whole list up by 64px
+ *     while its scroll offset stays put, because the header sits in normal
+ *     flow above `body` in ../screens/ZiglyWebViewScreen. That is the mid-drag
+ *     jump the note on `searchCollapsed` there warns about.
+ *   - Hanging a spare body of blue BELOW `searchBandPaint` fills the vacated
+ *     slot with pale blue instead of white -- which is the "blue box stuck
+ *     under the bar" that the note on that style records as already fixed.
+ *
+ * Both are consequences of the band living outside the scroller. A section of
+ * the page has no reserved slot and needs no travel: it scrolls away because
+ * the content above it scrolls away, which is what every other section does.
+ * So this draws the same field, from the same styles, with no `bandHeight`, no
+ * `bandLift` and no absolutely-positioned paint -- the blue is simply this
+ * block's own background.
+ *
+ * `SEARCH_BAND_H` is still the height, so the band occupies exactly the space
+ * it always did and ../webview/searchBandSection's figure still matches.
+ */
+export const SearchBandSection = ({
+  onSearchPress,
+  searchPlaceholders,
+  // Same default as the header's own band, from the same constant, so the two
+  // type at the same speed if both are ever drawn.
+  searchTypeMs = TYPE_MS,
+  /**
+   * Stop the typewriter once the band has scrolled out of sight.
+   *
+   * Same purpose as `searchOffscreen` on the header, and the dashboard drives
+   * it from the same `bandGone`: a prompt typing ten times a second into a
+   * band nobody can see spends frames exactly when they are worth most. It is
+   * only an optimisation here -- unlike the header's band, nothing about this
+   * one's layout depends on it.
+   */
+  offscreen = false,
+}: {
+  onSearchPress: () => void;
+  searchPlaceholders: string[];
+  searchTypeMs?: number;
+  offscreen?: boolean;
+}) => (
+  <View style={styles.searchBandFlow}>
+    <View style={styles.searchBandInner}>
+      <Pressable
+        onPress={onSearchPress}
+        accessibilityRole="search"
+        accessibilityLabel="Search Zigly"
+        style={styles.searchField}
+      >
+        <SearchIcon />
+        <SearchPrompt
+          phrases={searchPlaceholders}
+          typeMs={searchTypeMs}
+          running={!offscreen && searchPlaceholders.length > 0}
+        />
+      </Pressable>
+    </View>
+  </View>
+);
+SearchBandSection.displayName = 'SearchBandSection';
+
 const NativeHeader = ({
   onMenuPress,
   onBackPress,
@@ -219,6 +310,7 @@ const NativeHeader = ({
   showSearch,
   searchCollapsed,
   searchOffset,
+  searchOffscreen = false,
   showBack,
   showWishlist,
   showCartIcon,
@@ -484,7 +576,16 @@ const NativeHeader = ({
               <SearchPrompt
                 phrases={searchPlaceholders}
                 typeMs={searchTypeMs}
-                running={!searchCollapsed && searchPlaceholders.length > 0}
+                /*
+                 * Stopped when the band has no height (the drawer) and when it
+                 * has been scrolled off its space (the dashboard). See
+                 * `searchOffscreen` for why those are two different states.
+                 */
+                running={
+                  !searchCollapsed &&
+                  !searchOffscreen &&
+                  searchPlaceholders.length > 0
+                }
               />
             </Pressable>
           </Animated.View>
@@ -495,8 +596,16 @@ const NativeHeader = ({
 };
 
 const BAR_H = 52;
-/** Search band height: field plus its padding. */
-const SEARCH_BAND_H = 64;
+/**
+ * Search band height: field plus its padding.
+ *
+ * Exported because the band's travel is driven from outside now. The dashboard
+ * derives `searchOffset` from its own scroll and has to clamp that offset to
+ * the band's height -- so the figure has to be the same one on both sides, and
+ * a second copy of `64` in the screen would be the kind of duplicate that
+ * drifts the first time this changes.
+ */
+export const SEARCH_BAND_H = 64;
 /** How long the band's own fade-and-lift runs; see the effect above. */
 const BAND_FADE_MS = 160;
 /**
@@ -608,16 +717,68 @@ const styles = StyleSheet.create({
     // field's border show as a sliver. It belongs on the inner view.
     overflow: 'hidden',
   },
-  // Pale blue band, matching the reference app.
+  /**
+   * Pale blue band, matching the reference app.
+   *
+   * THE SPARE BODY IS ABOVE, NOT BELOW, and having it below is what left a
+   * blue box stuck under the bar once the band started travelling.
+   *
+   * It was `top: 0; bottom: -SEARCH_BAND_H` -- the box's own height plus a
+   * second band's worth of blue hanging below it, so an overscroll bounce at
+   * the top of the page showed more blue rather than bare ground. That holds
+   * only for a band that stays put. Once `searchOffset` carries this up by a
+   * full SEARCH_BAND_H, the spare body below arrives exactly in the slot the
+   * field just vacated: the field leaves and its blue backing stays behind as
+   * a pale rectangle under the header, which is exactly how it looked.
+   *
+   * Now it still covers the box at rest (`bottom: 0` and a height that starts
+   * SEARCH_BAND_H above the top edge), but the spare half is on the other
+   * side. A bounce drags content DOWN, so the blue that fills the gap has to
+   * come from above anyway -- and on the way out it is the spare half that
+   * slides into the clipping box, so what is left behind is nothing.
+   */
   searchBandPaint: {
     position: 'absolute',
     left: 0,
     right: 0,
-    top: 0,
-    // Extra body below, so a bounce at the top of the page shows more blue
-    // rather than the ground behind it.
-    bottom: -SEARCH_BAND_H,
+    // Spare body ABOVE the box, and flush with its bottom edge, so the band's
+    // own slot is painted at rest and the spare is what follows it out.
+    top: -SEARCH_BAND_H,
+    bottom: 0,
     backgroundColor: '#BFD3EE',
+  },
+  /**
+   * The in-flow band, for `SearchBandSection`.
+   *
+   * The blue is the block's OWN background rather than an absolutely
+   * positioned layer, which is the whole simplification of moving the band
+   * into the list: with no travel there is nothing for the paint to keep up
+   * with, so it does not need a body of its own to lift. Height comes from
+   * `searchBandInner` below, exactly as the pinned band's does.
+   */
+  searchBandFlow: {
+    backgroundColor: '#BFD3EE',
+    /*
+     * Air below the band, between the blue and whatever section follows it.
+     *
+     * On the dashboard that is the row of category circles, and they started
+     * hard against the bottom edge of the blue: the band's own
+     * `paddingVertical` ends 10dp under the search field, and the category
+     * rail draws no heading (see `case 'categories'` in
+     * ../native/NativeDashboard), so it has no top spacing of its own to
+     * supply the gap.
+     *
+     * Put here rather than on ../native/TileRailView because this is the
+     * boundary that was tight -- the band's, not the rail's. TileRailView also
+     * draws both breed rails, which sit between other sections and already
+     * read correctly; giving IT the margin would open a second gap in two
+     * places that did not ask for one.
+     *
+     * Margin, not padding: padding would extend the blue field itself, which
+     * is the "blue box" defect the note on `searchBandPaint` records. This
+     * leaves the blue exactly the height it was and puts white beneath it.
+     */
+    marginBottom: 14,
   },
   searchBandInner: { paddingHorizontal: 14, paddingVertical: 10 },
   searchField: {

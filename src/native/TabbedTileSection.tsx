@@ -22,7 +22,7 @@
  * settles once instead of filling in two visible steps.
  */
 import React, {useState} from 'react';
-import {StyleSheet, Text, View} from 'react-native';
+import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import TileRow, {type TileVariant} from './TileRow';
 import {
@@ -55,14 +55,42 @@ type Props = {
   /** The tile shape. See ./TileRow. */
   variant?: TileVariant;
   /**
-   * Wrap the tab row instead of keeping it on one line.
+   * Keep the tab row on ONE LINE and let it scroll sideways.
    *
    * Explore's four tabs include "Smart Petcare" and will not fit a narrow
-   * phone; Everything For has two short ones and should not wrap. A
-   * horizontally scrolling tab strip is the wrong answer for either -- it
-   * hides tabs behind an edge with nothing to say they are there.
+   * phone. This was `wrapTabs`, which broke them onto a second line, and the
+   * note here used to argue against scrolling on the grounds that it "hides
+   * tabs behind an edge with nothing to say they are there".
+   *
+   * The wrap is the worse of the two in practice, which is why it is gone. Two
+   * lines of pills stop reading as a tab strip at all -- they read as a block
+   * of chips above the rail, and the second line lands directly on the tiles
+   * with no boundary of its own. A partly-visible fourth pill at the right
+   * edge is the standard, understood signal that a strip continues, and it is
+   * what the app already does with every rail on the dashboard.
+   *
+   * Off by default: "Everything For Your Pet" has two short labels that fit
+   * with room to spare, and a scroller for content that fits only adds a
+   * bounce.
    */
-  wrapTabs?: boolean;
+  scrollTabs?: boolean;
+  /**
+   * Which edge the heading and the tab strip sit against.
+   *
+   * `center` by default, which is how both sections read when this component
+   * was written -- a heading over a row of pills, centred as a unit. Explore
+   * asks for `left`, which also puts it in line with every other section
+   * heading in the dashboard: the rails, the product sections and the tile
+   * rows all range their headings left at the same gutter, so a centred one
+   * was the odd section out. Left-aligned, the heading sits directly above the
+   * first tile of the rail beneath it.
+   */
+  align?: 'center' | 'left';
+  /**
+   * The screen's width. Required by the width-derived tile variants (`wide`,
+   * `breed`) and ignored by the fixed ones. See ./TileRow.
+   */
+  width?: number;
   onOpen: (path: string) => void;
 };
 
@@ -73,9 +101,12 @@ const TabbedTileSection = ({
   tabs,
   rails,
   variant = 'square',
-  wrapTabs = false,
+  scrollTabs = false,
+  align = 'center',
+  width,
   onOpen,
 }: Props) => {
+  const left = align === 'left';
   const [active, setActive] = useState(0);
 
   const {data: icons} = useSectionData<IconMap>({
@@ -97,11 +128,11 @@ const TabbedTileSection = ({
 
   return (
     <View style={styles.root}>
-      <Text style={styles.title}>{title}</Text>
+      <Text style={[styles.title, left && styles.titleLeft]}>{title}</Text>
 
       {/* One tab is a label that states nothing; the heading already says it. */}
       {tabs.length > 1 ? (
-        <View style={[styles.tabs, wrapTabs && styles.tabsWrap]}>
+        <TabStrip scroll={scrollTabs} left={left}>
           {tabs.map((tab, index) => (
             <Text
               key={tab.label}
@@ -114,7 +145,7 @@ const TabbedTileSection = ({
               {tab.label}
             </Text>
           ))}
-        </View>
+        </TabStrip>
       ) : null}
 
       {/*
@@ -131,47 +162,137 @@ const TabbedTileSection = ({
         icons={icons}
         onOpen={onOpen}
         variant={variant}
+        width={width}
       />
     </View>
   );
 };
 
+/**
+ * The tab row: one scrolling line, or a centred static row.
+ *
+ * Two containers rather than one with conditional styles, because the padding
+ * has to go in a different place in each. A `ScrollView` keeps the gutter on
+ * its CONTENT container -- a scroll container's own start padding is scrolled
+ * away and older Android drops the end padding, the defect the coupon strip
+ * hit -- while a plain View takes it directly. Sharing one style object across
+ * both would put the gutter on whichever of the two is wrong.
+ *
+ * `numberOfLines={1}` on the pills is what makes the scrolling case correct:
+ * inside a horizontal scroller the row is unbounded, so a long label sets the
+ * pill's width instead of being squeezed and truncated.
+ */
+const TabStrip = ({
+  scroll,
+  left,
+  children,
+}: {
+  scroll: boolean;
+  left: boolean;
+  children: React.ReactNode;
+}) =>
+  scroll ? (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      /*
+       * No rubber-band when the pills already fit. Explore's four do not on a
+       * narrow phone and do on a wide one, so this is the same component
+       * behaving correctly at both sizes rather than a guess about either.
+       */
+      alwaysBounceHorizontal={false}
+      contentContainerStyle={[styles.tabs, styles.tabsScroll]}
+    >
+      {children}
+    </ScrollView>
+  ) : (
+    <View style={[styles.tabs, left && styles.tabsLeft]}>{children}</View>
+  );
+
 const styles = StyleSheet.create({
   root: {
     marginBottom: 22,
   },
+  /**
+   * The section heading, centred over its tabs.
+   *
+   * 20 rather than a plain rail's 17: both sections that use this component
+   * lead with a heading and a row of pills, and that pair reads as a unit
+   * centred on the page rather than as a label above a left-aligned rail. The
+   * same treatment ./BrandRail gives its own heading, for the same reason.
+   */
   title: {
     fontFamily: FONT_FAMILY,
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 20,
+    lineHeight: 26,
     fontWeight: '700',
     color: COLORS.ink,
     paddingHorizontal: GUTTER,
-    marginBottom: 10,
-  },
-  tabs: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: GUTTER,
+    textAlign: 'center',
     marginBottom: 12,
   },
-  tabsWrap: {
-    flexWrap: 'wrap',
+  /** Centred under the heading. Wrapped rows stay centred too. */
+  tabs: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: GUTTER,
+    marginBottom: 14,
   },
+  /**
+   * Ranged left, for the heading and the pills together.
+   *
+   * The horizontal padding is untouched: GUTTER is the same figure every rail
+   * on the dashboard uses, so the heading lands exactly above the first tile
+   * of the row beneath it rather than proud of it.
+   */
+  titleLeft: {
+    textAlign: 'left',
+  },
+  tabsLeft: {
+    justifyContent: 'flex-start',
+  },
+  /**
+   * The scrolling strip's own content container.
+   *
+   * `justifyContent` is overridden back to the start: the base `tabs` centres
+   * its children, which inside a horizontal scroller would centre a row that
+   * is wider than the screen -- clipping the FIRST pill off the left edge
+   * rather than leaving the last one peeking off the right.
+   *
+   * This replaced `tabsWrap` (`flexWrap: 'wrap'`), which put Explore's four
+   * tabs on two lines. See the `scrollTabs` prop for why the wrap was the
+   * worse of the two.
+   */
+  tabsScroll: {
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+  },
+  /**
+   * A tab pill: red outline, red text, white ground.
+   *
+   * Navy before. Red is the app's active colour everywhere else -- the card
+   * buttons, ./ProductRail's tabs -- and these were the odd pair out. See
+   * ./BrandRail, which carries the same pills.
+   */
   tab: {
     fontFamily: FONT_FAMILY,
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: COLORS.navy,
-    paddingVertical: 7,
-    paddingHorizontal: 14,
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.red,
+    backgroundColor: COLORS.white,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
     borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.navy,
+    borderWidth: 1,
+    borderColor: COLORS.red,
+    // Android paints a Text's background square without this.
     overflow: 'hidden',
   },
+  /** The selected tab: filled red, white text. */
   tabActive: {
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.red,
+    borderColor: COLORS.red,
     color: COLORS.white,
   },
 });
