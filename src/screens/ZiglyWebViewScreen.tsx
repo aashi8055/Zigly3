@@ -81,6 +81,7 @@ import {
   parseUrl,
   showsSortFilterBar,
   isCollectionsIndexUrl,
+  isBreedVerseUrl,
   collectionHandleOf,
 } from '../utils/urlUtils';
 import {RESTYLE_REPEAT, getInjectionForUrl} from '../webview/injectedScripts';
@@ -161,6 +162,7 @@ import BottomNav from '../components/BottomNav';
 import NativeDashboard from '../native/NativeDashboard';
 import CollectionList from '../native/CollectionList';
 import CollectionScreen from '../native/CollectionScreen';
+import BreedVerseScreen from '../native/BreedVerseScreen';
 import {
   DEFAULT_SORT,
   SORTS,
@@ -409,6 +411,23 @@ ${OTP_DRIVER}`;
 const OTP_SEND_TIMEOUT_MS = 25000;
 
 /**
+ * How long the widget's success panel may sit there before the app asks the
+ * site what actually happened.
+ *
+ * Measured against the widget's own sequence, read from the live otp-login.js:
+ * it unhides `.success-login-container`, waits 1000ms, then decodes the login
+ * token and submits `sotp-form` to /account/login, which redirects. So the
+ * floor is that 1s plus one post and one redirect.
+ *
+ * Ten seconds, because the cost of the two errors is not symmetric. Too long
+ * and a customer waits a few extra seconds in the rare case the post never
+ * fires at all; too short and the app probes /account before Shopify has set
+ * the cookie, which is the very stale read the whole confirm ladder exists to
+ * absorb -- and this timer is not meant to add another source of it.
+ */
+const LOGIN_POST_TIMEOUT_MS = 10000;
+
+/**
  * Where each step of the widget puts the customer.
  *
  * Written as whole stacks rather than as pushes and pops. The login flow has
@@ -424,14 +443,37 @@ const OTP_SEND_TIMEOUT_MS = 25000;
 /**
  * How long a completed login outranks a probe that says otherwise.
  *
- * The window only has to cover the gap between Shopify setting the session
- * cookie in the login WebView and Android's CookieManager making it visible to
- * the dashboard WebView that does the probing -- a flush, not a network round
- * trip. Six seconds is far longer than that gap and far shorter than any
- * session, so it cannot mask a real expiry: the re-probe applyAuth schedules
- * lands at the end of it and is believed whatever it says.
+ * The window covers the gap between Shopify setting the session cookie in the
+ * login WebView and Android's CookieManager making it visible to the dashboard
+ * WebView that does the probing -- a flush, not a network round trip.
+ *
+ * IT MUST OUTLAST THE CONFIRM LADDER, and that is why it is computed rather
+ * than typed. It was a flat 6000 while CONFIRM_PROBE_DELAYS grew to four rungs
+ * totalling 20.5s, so the last two retries answered AFTER the window had
+ * closed. `believeAuth` gates on `now - since >= window`, so those late
+ * answers were believed on arrival -- the app asked again precisely because it
+ * did not trust the reply, then trusted the reply because it had taken a while
+ * to come back. A device slow enough to need the third rung was therefore
+ * signed out by the very mechanism built to protect it, which is the reported
+ * bounce back to the login screen.
+ *
+ * So the window is the whole ladder plus a margin for the last reply's round
+ * trip. Nothing is masked that was not already going to be re-asked: the ladder
+ * gives up on its own (see scheduleConfirmProbe), and every route that carries
+ * real evidence -- the customer's own Log Out, a rejected write, the next cold
+ * start -- bypasses this window entirely.
  */
-const FRESH_LOGIN_MS = 6000;
+export const CONFIRM_PROBE_DELAYS = [1500, 3000, 6000, 10000];
+
+/**
+ * Exported so a test can hold the two to their contract.
+ *
+ * The invariant is the point: the window must outlast the ladder, and a comment
+ * saying so is what let them drift apart in the first place. See
+ * __tests__/loginFlow.test.tsx.
+ */
+export const FRESH_LOGIN_MS =
+  CONFIRM_PROBE_DELAYS.reduce((total, delay) => total + delay, 0) + 5000;
 
 /**
  * How long the native cart may be held over the page while Shiprocket opens.
@@ -467,8 +509,10 @@ const CHECKOUT_HOLD_CAP_MS = 5000;
  */
 const CART_TOAST_COALESCE_MS = ADD_VERIFY_BUDGET_MS + 1000;
 
-/**
- * When to re-ask the site to confirm a login, until it does.
+/*
+ * CONFIRM_PROBE_DELAYS -- when to re-ask the site to confirm a login, until it
+ * does -- is declared above, next to FRESH_LOGIN_MS, because that window is now
+ * derived from it and the two must be read together.
  *
  * A single re-probe was not enough. It was armed when the stale reply arrived
  * rather than when the login happened, so its answer landed just past
@@ -478,9 +522,9 @@ const CART_TOAST_COALESCE_MS = ADD_VERIFY_BUDGET_MS + 1000;
  *
  * Widening, and finite. The gap being waited on is a cookie flush, so the first
  * retry catches nearly every case and the later ones are there for a device
- * under load. After the last one the app stops insisting and believes the site.
+ * under load. After the last one the app stops insisting -- and keeps the
+ * watched login rather than believing the site; see scheduleConfirmProbe.
  */
-const CONFIRM_PROBE_DELAYS = [1500, 3000, 6000, 10000];
 
 const STACK_FOR_PHASE: Record<'phone' | 'otp' | 'details', AccountStack> = {
   phone: ['login'],
@@ -1023,6 +1067,14 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   const probeAccountRef = useRef<() => void>(() => {});
   /** Fires when a send goes unanswered. See OTP_SEND_TIMEOUT_MS. */
   const sendWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Waiting for the widget's success panel to turn into its login post.
+   *
+   * Separate from sendWatchdog because the success branch clears that one on
+   * its way in, and this is the timer that covers what happens after. See
+   * armLoginPostWatchdog.
+   */
+  const loginPostWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * The Change Password screen's WebView. Its own ref, and its own navigation
    * handler below, because its URL is itself an account URL -- see
@@ -2660,6 +2712,48 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     }
   }, []);
 
+  /** Stop waiting on the widget's own login post. */
+  const clearLoginPostWatchdog = useCallback(() => {
+    if (loginPostWatchdog.current !== null) {
+      clearTimeout(loginPostWatchdog.current);
+      loginPostWatchdog.current = null;
+    }
+  }, []);
+
+  /**
+   * Wait for the widget's success panel to become an actual login.
+   *
+   * The panel is a spinner shown ~1s before the widget submits `sotp-form` --
+   * see the 'success' branch of applyLoginPhase for the whole sequence. The app
+   * now waits for that post's redirect instead of acting on the panel, which is
+   * correct but introduces one new way to be stuck: if the post never happens
+   * (the token's JWT did not decode, the form was removed by a theme update,
+   * the tab was throttled) then no navigation ever lands and the customer is
+   * left watching "One sec!" for ever, with the section still open and no timer
+   * running -- the success branch clears the send watchdog on its way in.
+   *
+   * So this asks the site directly. It does NOT force a screen: probeAccount is
+   * the same read every other route uses, and it settles honestly either way --
+   * a session that did materialise closes the section through applyAuth, and
+   * one that did not leaves the login screen up with the widget's own panel
+   * still on it, which is recoverable by trying again.
+   *
+   * The budget is the widget's 1s delay plus room for the post and its
+   * redirect. Deliberately generous: firing early would probe before the
+   * cookie exists and log a spurious 'signedOut'.
+   */
+  const armLoginPostWatchdog = useCallback(() => {
+    clearLoginPostWatchdog();
+    loginPostWatchdog.current = setTimeout(() => {
+      loginPostWatchdog.current = null;
+      warn('success panel never became a login post; asking the site');
+      probeAccountRef.current();
+    }, LOGIN_POST_TIMEOUT_MS);
+  }, [clearLoginPostWatchdog]);
+
+  /** Nor must the login-post watchdog outlive the screen that armed it. */
+  useEffect(() => clearLoginPostWatchdog, [clearLoginPostWatchdog]);
+
   /**
    * Wait for an answer, and give up if none comes.
    *
@@ -2722,6 +2816,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     (why: string) => {
       verifyingRef.current = false;
       clearSendWatchdog();
+      // The post this was waiting for has landed, so its rescue probe must not
+      // fire behind it. See armLoginPostWatchdog.
+      clearLoginPostWatchdog();
       setLoginBusy(false);
       setLoginError(null);
       /*
@@ -2734,11 +2831,40 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
        */
       sessionConfirmed.current = false;
       signedInAt.current = Date.now();
-      flushCookies();
+      /*
+       * WAIT FOR THE FLUSH BEFORE ASKING. This ordering is the bug, not a
+       * tidying.
+       *
+       * `flushCookies` is async -- it awaits the native cookie manager's own
+       * flush -- and this used to call it without awaiting, then probe on the very
+       * next line. So the probe's fetch left the DASHBOARD WebView while the
+       * LOGIN WebView's session cookie was still only in the login jar: the
+       * fetch went out unauthenticated, /account 302'd to /account/login, and
+       * the reply was a 'signedOut' that the app had itself raced into
+       * existence. Every retry then paid the same 1.5s+ penalty for a flush
+       * that a few milliseconds of waiting would have completed.
+       *
+       * The suppression window still exists and still matters -- CookieManager
+       * makes no promise that a flushed cookie is instantly visible to a second
+       * WebView -- but it is no longer being asked to cover a wait this app
+       * could simply have done. The first answer is now the first MEANINGFUL
+       * answer.
+       *
+       * `.catch` rather than `await` on the caller: flushCookies swallows its
+       * own errors and resolves, but a rejection here must still probe rather
+       * than leave the section closed with no read outstanding.
+       */
       closeAccountSection();
-      probeAccount();
+      flushCookies()
+        .catch(() => undefined)
+        .then(() => probeAccount());
     },
-    [clearSendWatchdog, closeAccountSection, probeAccount],
+    [
+      clearLoginPostWatchdog,
+      clearSendWatchdog,
+      closeAccountSection,
+      probeAccount,
+    ],
   );
 
   /**
@@ -2798,10 +2924,41 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
          * principle -- a step that moved is a question answered.
          */
         setLoginError(null);
-        // A session this app has watched appear but nothing has confirmed yet.
-        // Until a probe agrees, a 'signedOut' is a cookie jar that has not
-        // caught up rather than an answer -- see believeAuth.
-        watchedLogin('widget success panel');
+        /*
+         * THE SUCCESS PANEL IS NOT A SESSION, AND MUST NOT END THE FLOW.
+         *
+         * This is the fault behind "sign in, and it goes straight back to the
+         * login screen", and it is a mistake about the widget's own order of
+         * operations rather than about cookies.
+         *
+         * Read from the live otp-login.js: on a correct code the widget unhides
+         * `.success-login-container` -- whose text is literally "One sec! Your
+         * login is being confirmed..." -- and only then, after a 1000ms
+         * setTimeout, runs performLoginAction. That decodes credentials out of
+         * the login token's JWT and calls createLoginFormAndSubmit, which
+         * submits `sotp-form` (action="/account/login",
+         * form_type=customer_login). THAT post is the login: Shopify answers it
+         * with the session's Set-Cookie and a redirect to the form's
+         * return_url. The panel this phase reports is a spinner shown a whole
+         * second BEFORE any of it starts.
+         *
+         * So calling watchedLogin here was calling it before the login had
+         * begun -- and watchedLogin closes the section, which flips
+         * `loginFlowOpen` false and UNMOUNTS this very WebView. The pending
+         * setTimeout died with it, the form was never submitted, no cookie was
+         * ever set, and the probe that followed asked /account with no session
+         * and was told 'signedOut' -- accurately. The app was cancelling its
+         * own login and then believing the result.
+         *
+         * The flow is therefore left running. `handleLoginNav` finishes it when
+         * the POST's redirect has actually LANDED and loaded -- the first
+         * moment a session demonstrably exists. Nothing is lost by waiting:
+         * that handler performs the same watchedLogin, and the customer keeps
+         * looking at the widget's own confirmation panel meanwhile, which is
+         * exactly what it is for.
+         */
+        log('widget success panel; awaiting its login post');
+        armLoginPostWatchdog();
         return;
       }
 
@@ -2828,7 +2985,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         setLoginError(null);
       }
     },
-    [clearSendWatchdog, watchedLogin],
+    // No watchedLogin here any more: the success panel deliberately does not
+    // end the flow -- see the 'success' branch above -- so handleLoginNav is
+    // the only caller, and it has its own dependency on it.
+    [armLoginPostWatchdog, clearSendWatchdog],
   );
 
   /**
@@ -3796,6 +3956,36 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       if (parsed.path.toLowerCase().indexOf('/account/login') === 0) {
         return;
       }
+      /*
+       * WAIT FOR THE LANDING PAGE TO FINISH. This is the fault behind "sign in,
+       * and the app goes straight back to the login screen".
+       *
+       * The real login on this store is not a widget state at all -- it is a
+       * FORM POST. `sotp-form` (action="/account/login", form_type=
+       * customer_login) is submitted by the widget's own
+       * createLoginFormAndSubmit, and Shopify answers it with 302 -> the
+       * form's `return_url` and the session's Set-Cookie. The live widget
+       * config settles which path it takes: account_version is "legacy" and
+       * multipass_enabled is false, so there is no multipass token and no
+       * homepage rewrite -- just an ordinary POST, redirect and cookie.
+       *
+       * `onNavigationStateChange` fires when that navigation BEGINS. So this
+       * handler used to run while the redirect to /account was still in
+       * flight, and its `closeAccountSection()` emptied the account stack --
+       * which flips `loginFlowOpen` false and UNMOUNTS the login WebView, the
+       * very view performing the navigation. The load was cancelled before the
+       * response was committed, so Shopify's Set-Cookie never reached the
+       * shared jar, and the probe that followed asked /account with no session
+       * and was told 'signedOut' -- correctly. The app was destroying its own
+       * login and then believing the evidence of the destruction.
+       *
+       * `nav.loading` is false only once the landing page has actually loaded,
+       * which is after the cookie is committed. Acting only then means the
+       * session exists before anything is torn down or asked.
+       */
+      if (nav.loading) {
+        return;
+      }
       log('login completed, landed on', nav.url);
       // The other ending. Both go through watchedLogin, which asks the site
       // rather than asserting a session off a url -- see its comment.
@@ -4160,6 +4350,27 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /** Whether either native collection screen is the thing on screen. */
   const onNativeCollection =
     (onCollectionsIndex || gridHandle !== null) &&
+    !searchOpen &&
+    !menuOpen &&
+    !inCheckout &&
+    !showCart &&
+    !wishlistOpen &&
+    !onAccountScreen &&
+    !showError;
+
+  /**
+   * Whether the native Breed-verse index is the thing on screen.
+   *
+   * The same set of exclusions the collection screens carry, and for the same
+   * reason: each names a layer that is drawn OVER this one, so without them a
+   * grid of breeds would paint through the cart, the search or an error.
+   *
+   * Only the index. A breed's own page stays the WebView's -- see
+   * ../utils/urlUtils' `isBreedVerseUrl`.
+   */
+  const onNativeBreedVerse =
+    headerUrl !== null &&
+    isBreedVerseUrl(headerUrl) &&
     !searchOpen &&
     !menuOpen &&
     !inCheckout &&
@@ -5434,6 +5645,25 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 <CollectionList onOpen={openFromDashboard} />
               )}
             </WishlistProvider>
+          </View>
+        ) : null}
+
+        {/*
+          THE NATIVE BREED-VERSE INDEX.
+
+          Drawn over its layer with the WebView left mounted underneath, the
+          same arrangement as the two screens above -- but here it is
+          incidental rather than load-bearing: nothing on this screen reads the
+          page. It is left mounted because tapping a breed navigates that same
+          layer to the breed's own page, which is still the site's, and
+          replacing the WebView would mean reloading it to get there.
+
+          No WishlistProvider: there is no product and no heart on this screen,
+          only 32 breeds and a tab bar.
+        */}
+        {onNativeBreedVerse ? (
+          <View style={styles.pageLayer}>
+            <BreedVerseScreen onOpen={openFromDashboard} />
           </View>
         ) : null}
 

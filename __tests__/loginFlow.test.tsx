@@ -53,6 +53,12 @@ import {
   topScreen,
 } from '../src/navigation/accountStack';
 import type {AccountStack} from '../src/navigation/accountStack';
+// The real constants, not a copy: see the describe that uses them for why a
+// local WINDOW is exactly what let these two drift apart.
+import {
+  CONFIRM_PROBE_DELAYS,
+  FRESH_LOGIN_MS,
+} from '../src/screens/ZiglyWebViewScreen';
 import {
   OTP_DRIVER,
   driveEditPhone,
@@ -766,6 +772,49 @@ describe('a login just watched outranks a probe that has not caught up', () => {
       );
     });
   });
+
+  /*
+   * THE WINDOW MUST OUTLAST THE LADDER, tested against the real constants.
+   *
+   * Every test above passes a local WINDOW of 6000, which is what the app used
+   * to use -- so none of them noticed when CONFIRM_PROBE_DELAYS grew to four
+   * rungs totalling 20.5s. The app was then re-asking the site up to 20.5s
+   * after a login while only suppressing disbelief for the first 6s of that, so
+   * its own last two retries answered into a window that had already closed and
+   * were believed on arrival.
+   *
+   * That is the reported bounce, and it is a bug about two numbers rather than
+   * about any one function: `believeAuth` was correct, `scheduleConfirmProbe`
+   * was correct, and the pair was wrong. Hence a test on the constants
+   * themselves -- the invariant now fails here rather than on a slow device.
+   */
+  describe('the suppression window and the confirm ladder', () => {
+    const ladderTotal = CONFIRM_PROBE_DELAYS.reduce((a, b) => a + b, 0);
+
+    it('suppresses for longer than the last retry can take to answer', () => {
+      expect(FRESH_LOGIN_MS).toBeGreaterThan(ladderTotal);
+    });
+
+    it("believes none of the ladder's own replies while it is still asking", () => {
+      // Walk the real ladder: each rung's reply lands at the running total, and
+      // an unconfirmed 'signedOut' at that moment must never be believed.
+      let elapsed = 0;
+      CONFIRM_PROBE_DELAYS.forEach(delay => {
+        elapsed += delay;
+        expect(
+          believeAuth('signedOut', 0 + 1, 1 + elapsed, FRESH_LOGIN_MS, true),
+        ).toBe(false);
+      });
+    });
+
+    it('still lets go afterwards, so a real expiry signs the customer out', () => {
+      // The window is finite: past it, a confirmed session believes a
+      // 'signedOut' exactly as before.
+      expect(
+        believeAuth('signedOut', 1, 1 + FRESH_LOGIN_MS, FRESH_LOGIN_MS, true),
+      ).toBe(true);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1029,11 +1078,82 @@ describe('the section wires the flow the way the brief asks', () => {
   it('lands a verified existing customer on the dashboard', () => {
     // Scenario A: no signup form, no account screen they did not ask for.
     //
-    // The success ending hands to watchedLogin, which is what closes the
-    // section. The assertion moved off applyAuth('signedIn') deliberately --
-    // see the next test.
-    expect(handler('applyLoginPhase')).toContain('watchedLogin(');
+    // The ending is handleLoginNav's, not the success panel's -- see the
+    // describe below for why the panel must not end the flow. watchedLogin is
+    // still what closes the section; only its caller changed.
+    expect(handler('handleLoginNav')).toContain('watchedLogin(');
     expect(handler('watchedLogin')).toContain('closeAccountSection()');
+  });
+
+  /*
+   * THE SUCCESS PANEL IS NOT THE LOGIN. Read off the live widget, not guessed.
+   *
+   * `otp-login.js` (the real implementation, a theme file asset on
+   * cdn.shopify.com) does this on a correct code:
+   *
+   *   1. unhide `.success-login-container` -- "One sec! Your login is being
+   *      confirmed..."
+   *   2. setTimeout 1000ms
+   *   3. performLoginAction: decode the login token's JWT
+   *   4. createLoginFormAndSubmit: submit `sotp-form`, action="/account/login",
+   *      form_type=customer_login, return_url=/account
+   *   5. Shopify answers with Set-Cookie and a redirect
+   *
+   * The live config settles which branch runs: account_version is "legacy" and
+   * multipass_enabled is false, so it is that ordinary form post -- not a
+   * multipass token, and not the `m = "/"` homepage rewrite that only fires
+   * when account_version is "shopify".
+   *
+   * Step 1 is what the driver reports as 'success'. Acting on it meant calling
+   * watchedLogin -> closeAccountSection() a full second before step 4, which
+   * emptied the account stack, flipped `loginFlowOpen` false and UNMOUNTED the
+   * login WebView -- taking the pending setTimeout with it. The form was never
+   * submitted, no cookie was ever set, and the probe that followed was told
+   * 'signedOut' quite correctly. That is the reported "back to the login
+   * screen", and no amount of cookie-flush or window tuning could fix it,
+   * because there was no session to find.
+   */
+  describe('the widget’s success panel', () => {
+    it('does not end the login flow', () => {
+      // The panel arrives ~1s before the post. Ending here unmounts the
+      // WebView that still has to make it.
+      const phase = handler('applyLoginPhase');
+      const at = phase.indexOf("phase === 'success'");
+      expect(at).toBeGreaterThan(-1);
+      expect(phase.slice(at, at + 5000)).not.toContain('watchedLogin(');
+    });
+
+    it('does not close the account section', () => {
+      const phase = handler('applyLoginPhase');
+      const at = phase.indexOf("phase === 'success'");
+      expect(phase.slice(at, at + 5000)).not.toContain('closeAccountSection()');
+    });
+
+    it('arms a watchdog so a post that never happens is not a dead end', () => {
+      // The success branch clears the send watchdog on its way in, so without
+      // this the customer could watch "One sec!" for ever.
+      const phase = handler('applyLoginPhase');
+      const at = phase.indexOf("phase === 'success'");
+      expect(phase.slice(at, at + 5000)).toContain('armLoginPostWatchdog()');
+      // And it asks the site rather than declaring an outcome of its own.
+      expect(handler('armLoginPostWatchdog')).toContain('probeAccountRef');
+    });
+  });
+
+  /*
+   * And the other half of the same bug: onNavigationStateChange fires when a
+   * navigation BEGINS. Acting on the redirect's start tore the WebView down
+   * mid-flight, before Shopify's Set-Cookie was committed to the shared jar.
+   */
+  it('waits for the landing page to finish before ending the login', () => {
+    const nav = handler('handleLoginNav');
+    // The GUARD, not a mention of it: this file's own prose says "nav.loading"
+    // several times, and a substring test that a comment can satisfy is a test
+    // that passes while the code is wrong.
+    const guard = nav.indexOf('if (nav.loading) {');
+    expect(guard).toBeGreaterThan(-1);
+    // And it must come BEFORE the ending, or it guards nothing.
+    expect(guard).toBeLessThan(nav.indexOf('watchedLogin('));
   });
 
   it('asks the site rather than declaring the session itself', () => {

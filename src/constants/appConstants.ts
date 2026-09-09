@@ -426,10 +426,21 @@ export interface Tab {
   url?: string;
 }
 
+/**
+ * The Breed-verse index.
+ *
+ * Stated once because four places need the same answer: the tab below, the
+ * native screen's data (../native/breedVerse), the url test that decides when
+ * to draw it (../utils/urlUtils' `isBreedVerseUrl`), and ../webview/breedPage,
+ * which hides the Book An Appointment button on exactly this page. It used to
+ * be spelled out in each.
+ */
+export const BREED_VERSE_PATH = '/pages/pet-breeds';
+
 export const TABS: Tab[] = [
   {key: 'home', label: 'Zigly', url: `${ZIGLY_ORIGIN}/`},
   {key: 'collections', label: 'Collection', url: `${ZIGLY_ORIGIN}/collections`},
-  {key: 'breeds', label: 'Breed-verse', url: `${ZIGLY_ORIGIN}/pages/pet-breeds`},
+  {key: 'breeds', label: 'Breed-verse', url: `${ZIGLY_ORIGIN}${BREED_VERSE_PATH}`},
   {key: 'wishlist', label: 'Wishlist'},
   {key: 'account', label: 'Account'},
 ];

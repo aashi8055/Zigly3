@@ -24,6 +24,7 @@ import {
   CHECKOUT_PATH_MARKERS,
   APP_INTENT_SCHEMES,
   LISTING_PATHS,
+  BREED_VERSE_PATH,
 } from '../constants/appConstants';
 import {warn} from './logger';
 
@@ -279,6 +280,27 @@ export const isCollectionsIndexUrl = (raw: string): boolean => {
   }
   const path = withoutMarket(parsed.path.toLowerCase());
   return path === '/collections' || path === '/collections/';
+};
+
+/**
+ * True on the Breed-verse index -- the grid of 32 breeds to choose from.
+ *
+ * The exact page and not its descendants: `/pages/beagle` is a breed's own
+ * page, which is still the WebView's (it carries the Book An Appointment
+ * button ../webview/breedPage pins, and 200-odd products in themed rails).
+ * Only this one path is drawn natively, by ../native/BreedVerseScreen.
+ *
+ * An exact match rather than a prefix, for the reason above: a prefix test
+ * would be identical here today -- no page hangs below `/pages/pet-breeds` --
+ * and would quietly claim one the day Zigly adds it.
+ */
+export const isBreedVerseUrl = (raw: string): boolean => {
+  const parsed = parseUrl(raw);
+  if (!parsed || !isInternalHost(parsed.host)) {
+    return false;
+  }
+  const path = withoutMarket(parsed.path.toLowerCase());
+  return path === BREED_VERSE_PATH || path === `${BREED_VERSE_PATH}/`;
 };
 
 /**

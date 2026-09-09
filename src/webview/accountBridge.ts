@@ -84,9 +84,39 @@ const HELPERS = `
     } catch (e) {}
   };
 
-  /** True when a url landed on the login page, i.e. there is no session. */
+  /**
+   * True when a url landed on the login page, i.e. there is no session.
+   *
+   * THE PATH ONLY, AND THAT IS THE WHOLE POINT.
+   *
+   * This used to search the entire url for '/account/login', which is a
+   * substring test over the query string as well as the path -- and Shopify
+   * puts the page you were going to in a \`return_url\` parameter on every
+   * customer redirect. Signed OUT, /account 302s to
+   *
+   *   /account/login?return_url=/account
+   *
+   * which this reads correctly. But the store signs people in through
+   * SimplyOTP, whose hand-off bounces back the other way and lands on
+   *
+   *   /account?return_url=/account/login
+   *
+   * -- a signed-IN customer, on their own account page, whose url merely
+   * *mentions* the login page in a parameter. The old test found the substring
+   * and reported 'signedOut'. That answer went to applyAuth as a probe verdict,
+   * resolveAuth collapsed the section to ['login'], and the customer was thrown
+   * back to the login screen seconds after signing in -- the reported fault.
+   *
+   * Everything after '?' or '#' is therefore cut before the test. A parameter
+   * can now name any page it likes without being mistaken for the destination.
+   */
   ZA.isLoginUrl = function (url) {
-    return String(url || '').indexOf('/account/login') !== -1;
+    var path = String(url || '');
+    var query = path.indexOf('?');
+    if (query !== -1) { path = path.slice(0, query); }
+    var hash = path.indexOf('#');
+    if (hash !== -1) { path = path.slice(0, hash); }
+    return path.indexOf('/account/login') !== -1;
   };
 
   /**
@@ -162,10 +192,24 @@ const HELPERS = `
     return path.indexOf('/addresses') !== -1 ? 'main-addresses' : 'main-account';
   };
 
-  /** The part of a document the customer's own content is in. */
+  /**
+   * The part of a document the customer's own content is in.
+   *
+   * \`.main-account\` is Zigly's own wrapper (sections/main-account.liquid) and
+   * is tried first; \`.customer\` is Dawn's. Both are listed because this file
+   * has to work against the store it ships for AND the stock theme its
+   * fallbacks are written for.
+   *
+   * The last resort, \`doc.body\`, is not a lazy default: a Section Rendering
+   * reply is a FRAGMENT, so it has no \`<main>\` and no \`#MainContent\`, and
+   * on a full-page read the body is still a superset of whatever the customer's
+   * content is in. Every reader below is selector-driven, so a wider root costs
+   * nothing but never yields less.
+   */
   ZA.main = function (doc) {
     if (!doc) { return null; }
-    return doc.querySelector('.customer') ||
+    return doc.querySelector('.main-account') ||
+      doc.querySelector('.customer') ||
       doc.querySelector('main') ||
       doc.querySelector('#MainContent') ||
       doc.body;
@@ -278,30 +322,98 @@ export const ACCOUNT_PROBE = `
   ${HELPERS}
 
   /**
+   * The value of a form field, by id, when the theme printed one.
+   *
+   * Zigly's account page states the customer in DISABLED INPUTS rather than in
+   * text -- see profile() below for why that matters. \`textContent\` cannot
+   * see an attribute, so this reads \`value\` directly.
+   */
+  function fieldValue(root, id) {
+    var el = root.querySelector('#' + id);
+    if (!el) { return ''; }
+    // .value for a real input, the attribute for anything parsed but not live.
+    return ZA.norm(el.value || el.getAttribute('value') || '');
+  }
+
+  /**
    * The customer's own details, as far as the theme prints them.
    *
-   * This is the honest weak point of the account screen, and it is worth
-   * knowing why rather than discovering it on a device. Dawn's account section
-   * renders a heading, the order table and \`customer.default_address |
-   * format_address\`. It does not render \`customer.email\` or
-   * \`customer.phone\`, and Shopify's classic storefront has no customer JSON
-   * endpoint that would -- so on a stock theme the only name available is the
-   * one on the default address, and a customer with no saved address has none.
+   * ZIGLY'S ACCOUNT PAGE IS NOT DAWN'S, and every selector below is chosen
+   * from the real template rather than from the stock one. This is the fault
+   * that left the account screen showing its skeleton with no name on it.
    *
-   * So each field is looked for in the places a theme might have put it, and
-   * anything not found stays empty. The screen then shows less. What it must
-   * never do is show a plausible-looking address that belongs to nobody.
+   * \`sections/main-account.liquid\` is a custom tabbed page. It renders NO
+   * mailto link, NO tel link and NO link to /account/addresses -- Saved
+   * Addresses is a tab, \`href="#address"\`, not a route. So all three of the
+   * anchors the stock reader keyed on are simply absent, and the
+   * format_address block it walked for a name does not exist either.
+   *
+   * What the page does render, and where:
+   *
+   *   snippets/user-information.liquid   the sidebar card
+   *       \`.user-name\`   "Hey, First Last"  -- the greeting, so the literal
+   *                       "Hey," is stripped below rather than shown as a name
+   *       \`.user-initials\` first initials, already computed by the theme
+   *       \`.user-login-info\` the phone, but MASKED ("+9198*****21"), which is
+   *                       why it is never read: a masked number is not the
+   *                       customer's number and must not be shown as one.
+   *
+   *   snippets/profile-right-content.liquid   the My Profile tab
+   *       \`#fullName\`  value="{{ customer.name }}"   <- disabled input
+   *       \`#email\`     value="{{ customer.email }}"  <- disabled input
+   *       \`#mobileNumber\` value="{{ customer.phone }}" <- the UNMASKED phone
+   *
+   * The inputs are the authority: they carry the real values straight off the
+   * \`customer\` object, unmasked and unprefixed. They are read first, and the
+   * sidebar greeting is only a fallback for the name.
+   *
+   * The Dawn reader is kept underneath, unchanged in behaviour, so this still
+   * works against a stock theme -- but it now runs only when the Zigly fields
+   * found nothing. Anything not found stays empty and the screen shows less;
+   * what it must never do is show a plausible-looking detail belonging to
+   * nobody.
    */
   function profile(root) {
     var found = {name: '', email: '', phone: '', nameFrom: 'none'};
     if (!root) { return found; }
 
-    // Email: a mailto link is unambiguous, so it wins.
-    var mail = root.querySelector('a[href^="mailto:"]');
+    /* ---- Zigly's own fields, which are the real customer object ---- */
+    found.name = fieldValue(root, 'fullName');
+    if (found.name) { found.nameFrom = 'field'; }
+    found.email = fieldValue(root, 'email');
+    var mobile = fieldValue(root, 'mobileNumber');
+    // Only if it is really a number: the field is empty for a customer who
+    // signed up by email, and an empty string must not become a phone.
+    if (mobile && ZA.digits(mobile) >= 10) { found.phone = mobile; }
+
+    // The sidebar greeting, when the profile tab gave no name. "Hey, Lux" is a
+    // greeting rather than a name, so the greeting word is taken off the front.
+    if (!found.name) {
+      var greetingCard = ZA.text(root.querySelector('.user-name'));
+      if (greetingCard) {
+        var comma = greetingCard.indexOf(',');
+        if (comma !== -1 && comma < 12) {
+          greetingCard = ZA.norm(greetingCard.slice(comma + 1));
+        }
+        if (greetingCard && greetingCard.toLowerCase() !== 'user') {
+          found.name = greetingCard;
+          found.nameFrom = 'card';
+        }
+      }
+    }
+
+    // Everything found already: no need to walk a stock theme that is not here.
+    if (found.name && found.email && found.phone) { return found; }
+
+    /* ---- Dawn's stock account page, for any theme that is not Zigly's ---- */
+
+    // Email: a mailto link is unambiguous, so it wins -- over anything except
+    // the customer's own field above, which is the value this link is made of.
+    var mail = found.email ? null : root.querySelector('a[href^="mailto:"]');
     if (mail) {
       found.email = mail.getAttribute('href').slice(7).split('?')[0].trim();
     }
-    var tel = root.querySelector('a[href^="tel:"]');
+    var tel = found.phone ? null : root.querySelector('a[href^="tel:"]');
     if (tel) {
       found.phone = tel.getAttribute('href').slice(4).trim();
     }
@@ -334,11 +446,22 @@ export const ACCOUNT_PROBE = `
       }
     }
 
-    // Some themes greet the customer by name in the heading; take that in
-    // preference, since it is the customer's name rather than an address's.
-    var greeting = root.querySelector(
-      '[class*="customer-name"], [class*="account-name"], [class*="greeting"]'
-    );
+    /*
+     * Some themes greet the customer by name in the heading; take that in
+     * preference to a name lifted off an address, since it is the customer's
+     * own rather than the addressee's.
+     *
+     * Never over a name from the profile field, though: 'field' IS
+     * \`customer.name\`, and this heading is at best a rendering of it. The
+     * check is on nameFrom rather than on emptiness because that is the
+     * distinction being made -- an address name is worth replacing, a field
+     * name is not.
+     */
+    var greeting = found.nameFrom === 'field' || found.nameFrom === 'card'
+      ? null
+      : root.querySelector(
+          '[class*="customer-name"], [class*="account-name"], [class*="greeting"]'
+        );
     var greetingText = ZA.text(greeting);
     if (greetingText && greetingText.length < 60) {
       found.name = greetingText;
@@ -367,9 +490,56 @@ export const ACCOUNT_PROBE = `
    * would otherwise silently swap the date and the total. Positional order is
    * the fallback, and only that.
    */
+  /**
+   * Zigly's own order list: cards, not a table.
+   *
+   * \`snippets/orders-right-content.liquid\` renders one \`.order-card\` per
+   * order, so the \`<tr>\` walk below finds nothing at all on this store and
+   * the Orders screen came back permanently empty. What each card carries:
+   *
+   *   \`.order-number\`      \`{{ order.name }}\`, e.g. "#1234"
+   *   \`.total-main-price\`  \`{{ order.total_price | money_without_trailing_zeros }}\`
+   *   \`[data-order-status]\` \`{{ order.fulfillment_status }}\` on the card itself
+   *   the Order Details link  \`{{ order.customer_url }}#order\`
+   *
+   * Two fields the table had are simply not on the card, and are left empty
+   * rather than guessed: there is no order DATE and no PAYMENT status printed
+   * anywhere in the snippet. The screen shows less; it does not invent.
+   *
+   * The link is \`order.customer_url\` -- an absolute, tokenised url, not the
+   * \`/account/orders/{id}\` path the table reader keys on -- so it is matched
+   * by '/orders/' and passed through whole for the WebView to open.
+   */
+  function ziglyOrders(root) {
+    var out = [];
+    var cards = root.querySelectorAll('.order-card');
+    for (var i = 0; i < cards.length && out.length < ${ORDER_LIMIT}; i++) {
+      var card = cards[i];
+      var link = card.querySelector('a[href*="/orders/"]');
+      var name = ZA.text(card.querySelector('.order-number'));
+      // Nothing to open and nothing to name it: not an order card we can use.
+      if (!link && !name) { continue; }
+      out.push({
+        name: name,
+        url: link ? link.getAttribute('href') || '' : '',
+        // Not rendered on the card. See above.
+        date: '',
+        paymentStatus: '',
+        fulfillmentStatus: ZA.norm(card.getAttribute('data-order-status') || ''),
+        // The theme's own money string, passed through unparsed -- same rule
+        // as the table reader below.
+        total: ZA.text(card.querySelector('.total-main-price'))
+      });
+    }
+    return out;
+  }
+
   function orders(root) {
     var out = [];
     if (!root) { return out; }
+    // Zigly's cards first; the stock table only when this store has none.
+    var cards = ziglyOrders(root);
+    if (cards.length > 0) { return cards; }
     var rows = root.querySelectorAll('tr');
     for (var i = 0; i < rows.length && out.length < ${ORDER_LIMIT}; i++) {
       var row = rows[i];

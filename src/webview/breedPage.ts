@@ -23,8 +23,16 @@
  * own placement until someone has looked at it.
  */
 
-/** The Breed-verse index. The same path the Breed-verse tab opens. */
-export const BREED_INDEX_PATH = '/pages/pet-breeds';
+/**
+ * The Breed-verse index. The same path the Breed-verse tab opens.
+ *
+ * Re-exported rather than restated so this script and the native screen that
+ * now draws that page (../native/BreedVerseScreen) cannot disagree about which
+ * page it is.
+ */
+import {BREED_VERSE_PATH} from '../constants/appConstants';
+
+export const BREED_INDEX_PATH = BREED_VERSE_PATH;
 
 /** Set where the button is the site's answer to "nothing chosen yet". */
 export const APPOINTMENT_HIDE_FLAG = 'zigly-appointment-hidden';
