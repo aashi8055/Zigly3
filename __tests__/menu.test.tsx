@@ -468,18 +468,30 @@ describe('the hamburger', () => {
      *      (../src/webview/searchBandSection), inside the WebView the drawer
      *      draws over, so `showSearch={false}` everywhere made the folding
      *      unnecessary. This test asserted that literal.
-     *   3. Now the dashboard is native and drawn OVER that WebView, so the
-     *      injected band is invisible there and the native one is turned back
-     *      on for the dashboard alone. The defect is live again.
+     *   3. Then the dashboard became native and drawn OVER that WebView, so
+     *      the injected band was invisible there and the native one was turned
+     *      back on for the dashboard alone. The defect was live again, and the
+     *      remedy -- not the absence -- was what this test checked.
+     *   4. Now the dashboard draws the band as the first section of its own
+     *      scrolling list (`searchBand` on ../src/native/NativeDashboard).
+     *      That is inside `body`, so the drawer covers it exactly as it covers
+     *      the injected band, and the defect is dead the same way stage 2
+     *      killed it. The band moved for a different reason -- pinned above
+     *      the scroller it had to reserve layout height it could not paint,
+     *      and left a white panel under the bar once it travelled off -- but
+     *      the drawer is a beneficiary.
      *
-     * So what is checked is the remedy rather than the absence: the band must
-     * collapse when the drawer opens. Asserting `showSearch={false}` would
-     * now fail for the right reason and pass for the wrong one.
+     * So this is back to asserting the absence, plus the fact that makes the
+     * absence safe: the band is a child of the list, not a sibling of the
+     * header. `searchCollapsed={menuOpen}` is deliberately NOT required any
+     * more -- the header's own band is drawn on no screen at all.
      */
     const s = src();
-    expect(s).toContain('searchCollapsed={menuOpen}');
-    // And the band is only ever drawn on the dashboard -- a page layer's own
-    // injected band is still the one the customer sees there.
-    expect(s).toContain('showSearch={onDashboard(stack)');
+    expect(s).toContain('showSearch={false}');
+    // The band the customer sees on the dashboard, inside the scroller the
+    // drawer draws over. Without this the assertion above would pass for a
+    // dashboard with no band at all.
+    expect(s).toContain('searchBand={');
+    expect(s).toContain('<SearchBandSection');
   });
 });

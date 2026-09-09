@@ -24,7 +24,7 @@
  * plain GETs to zigly.com do not, which is why the section-parsing suites use
  * hand-written markup and this one does not have to).
  */
-import {isVisible, parseCoupons} from '../src/native/coupons';
+import {isVisible, looksLikeCode, parseCoupons} from '../src/native/coupons';
 import {flattenFields} from '../src/native/storefront';
 
 /** Shape one metaobject edge the way the API returns it. */
@@ -235,5 +235,83 @@ describe('flattening a metaobject', () => {
   it('survives a missing or non-array field list', () => {
     expect(flattenFields(undefined)).toEqual({});
     expect(flattenFields(null)).toEqual({});
+  });
+});
+
+/**
+ * Whether a `discount_code` value is actually a code.
+ *
+ * THE FIELD IS NAMED FOR A CODE AND ALMOST NEVER HOLDS ONE. Every live value is
+ * offer copy -- "INR 50 off on orders between INR 1500 - INR 1999" -- with "No
+ * code required" beside it, and zigly.com renders a copy button for those
+ * anyway: tapping it puts a whole sentence on the clipboard and calls it a
+ * coupon code. The app shows a copy button only when there is something to
+ * copy, and this predicate is the entire difference between a useful button and
+ * a misleading one.
+ */
+describe('telling a discount code from offer copy', () => {
+  it('rejects the offer copy every live coupon actually carries', () => {
+    // These are real values from the metaobject, and not one is a code.
+    expect(looksLikeCode('INR 50 off on orders between INR 1500 - INR 1999')).toBe(false);
+    expect(looksLikeCode('Extra 10% off on orders above ₹1,799')).toBe(false);
+    expect(looksLikeCode('INR 750 Off on orders between INR 10000 - INR 14999')).toBe(false);
+  });
+
+  it('rejects a bare number, which is a threshold and not a code', () => {
+    expect(looksLikeCode('1500')).toBe(false);
+    expect(looksLikeCode('10')).toBe(false);
+  });
+
+  it('accepts the shape a real code has', () => {
+    expect(looksLikeCode('ZIGLY50')).toBe(true);
+    expect(looksLikeCode('NEW-USER')).toBe(true);
+    expect(looksLikeCode('WELCOME_10')).toBe(true);
+  });
+
+  it('rejects anything too short or too long to be one', () => {
+    expect(looksLikeCode('AB')).toBe(false);
+    expect(looksLikeCode('A'.repeat(25))).toBe(false);
+  });
+
+  it('leaves every live coupon with a null code, so no button is drawn', () => {
+    const parsed = parseCoupons({
+      metaobjects: {
+        edges: [
+          {
+            node: {
+              handle: 'offer-1',
+              fields: [
+                {key: 'discount_code', value: 'INR 50 off on orders between INR 1500 - INR 1999'},
+                {key: 'code_description', value: 'No code required'},
+                {key: 'show_offer_on_homepage', value: 'true'},
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].code).toBeNull();
+    // The headline is still the offer copy -- it is what the strip draws.
+    expect(parsed[0].headline).toContain('INR 50 off');
+  });
+
+  it('carries a real code through when the merchant starts issuing them', () => {
+    const parsed = parseCoupons({
+      metaobjects: {
+        edges: [
+          {
+            node: {
+              handle: 'offer-2',
+              fields: [
+                {key: 'discount_code', value: 'ZIGLY50'},
+                {key: 'show_offer_on_homepage', value: 'true'},
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(parsed[0].code).toBe('ZIGLY50');
   });
 });

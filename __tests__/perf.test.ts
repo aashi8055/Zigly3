@@ -1,48 +1,98 @@
 /**
  * Guards on homepage load cost.
  *
- * The transplanted sections pull real markup from other Zigly pages, and the
- * arrival section alone is ~562 KB. These assertions keep the cheap-by-default
- * behaviour from being quietly undone later.
+ * THIS FILE USED TO GUARD THE OPPOSITE PROPERTY, and the inversion is the
+ * point. The dashboard was assembled inside the page out of ~20 of Zigly's
+ * theme sections, so what mattered was that those fetches were batched, chunked
+ * to Shopify's five-per-call limit, deferred by IntersectionObserver and cached
+ * per source page. Six tests here asserted exactly that.
+ *
+ * ../src/native/NativeDashboard draws that dashboard as React Native
+ * components now, reading the Storefront GraphQL API directly, so none of that
+ * machinery exists any more -- it was deleted along with the thirteen section
+ * modules that used it. Guarding how it batched would be guarding nothing.
+ *
+ * What replaces it is the guard that it stays gone. 404 KB of dashboard
+ * assembly per home load is the kind of thing that comes back one import at a
+ * time, each looking locally reasonable, so the assertions below name the
+ * modules and the globals rather than a byte count.
  */
 import {getInjectionForUrl} from '../src/webview/injectedScripts';
 import {MOBILE_CSS, RESTYLE_REPEAT} from '../src/webview/injectedStyles';
 
 const home = () => getInjectionForUrl('https://zigly.com/') as string;
 
-describe('homepage load cost', () => {
-  it('batches section requests instead of one call each', () => {
-    // Shopify accepts ?sections=a,b,c; six round trips become two.
-    expect(home()).toContain("ids.join(',')");
+describe('the dashboard is not built in the page any more', () => {
+  it('ships no section fetcher', () => {
+    /*
+     * `__ziglyFetchSection` was the entry point every section module called,
+     * and the one thing that has to be absent for the rest to be dead: a
+     * module re-added without it cannot fetch, and a fetcher re-added without
+     * a caller is the first half of putting all thirteen back.
+     */
+    expect(home()).not.toContain('__ziglyFetchSection');
+    expect(home()).not.toContain('__ziglySectionIds');
   });
 
-  it('defers the heavy below-the-fold sections until they near the viewport', () => {
+  it('ships no section markup pipeline', () => {
+    // The batching, chunking and deferral this file used to assert. Their
+    // absence is now the assertion.
     const s = home();
-    expect(s).toContain('IntersectionObserver');
-    expect(s).toContain('whenNear');
+    expect(s).not.toContain("ids.join(',')");
+    expect(s).not.toContain('CHUNK = 5');
+    expect(s).not.toContain('sectionCache[key]');
   });
 
-  it('still loads deferred sections where IntersectionObserver is missing', () => {
-    // Degrade to immediate loading rather than showing nothing at all.
-    expect(home()).toContain('if (!window.IntersectionObserver) { run(); return; }');
-  });
-
-  it('fetches each source page at most once', () => {
-    expect(home()).toContain('sectionCache[key]');
-    expect(home()).toContain('pageCache[path]');
-  });
-
-  it('chunks section requests to Shopify’s five-per-call limit', () => {
-    // Six or more ids in one ?sections= call returns HTTP 400.
-    expect(home()).toContain('CHUNK = 5');
-  });
-
-  it('requests every section from one origin', () => {
-    // Sections resolve by id against any page, so '/' serves them all and
-    // unrelated sections can share a batch.
+  it('creates none of the dashboard section slots', () => {
+    /*
+     * The transplanted sections announced themselves with `zigly-x-` slot ids,
+     * and each was created by the module that filled it -- so the thing to
+     * assert gone is the CREATION, not the string.
+     *
+     * `[id^="zigly-x-"]` rules do still survive in ../src/webview/
+     * injectedStyles: about forty of them, now styling slots nothing builds.
+     * They are dead weight rather than a defect -- CSS for absent nodes
+     * matches nothing -- and trimming them is a separate pass over a 2,279-line
+     * stylesheet that has its own uncommitted work in flight. Asserted by
+     * construction rather than by substring so that pass is not blocked on
+     * rewriting this test.
+     */
     const s = home();
-    expect(s).not.toContain("'/pages/dog'");
-    expect(s).not.toContain("'/pages/zigly-cat'");
+    for (const slot of [
+      'zigly-x-bestsellers',
+      'zigly-x-everything',
+      'zigly-x-instagram',
+      'zigly-x-coupon',
+    ]) {
+      // The slot may be styled; it must not be built.
+      expect(s).not.toContain(`id = "${slot}"`);
+      expect(s).not.toContain(`id="${slot}"`);
+      expect(s).not.toContain(`'${slot}'`);
+    }
+  });
+
+  it('ships no Instagram cover bytes', () => {
+    /*
+     * The single largest thing in the old payload: 318 KB of base64 covers,
+     * inflating ~33% inside a JavaScript string, for a rail the native
+     * version loads from ../src/assets/instagram as real JPEGs. If a
+     * data: URI ever appears in this payload again it is almost certainly
+     * these.
+     */
+    expect(home()).not.toContain('data:image/jpeg;base64');
+  });
+
+  it('is a fraction of the payload it replaced', () => {
+    /*
+     * A number, because the guards above are all "absent" and absence is
+     * satisfied by an empty string too. The old home payload was ~570 KB; the
+     * pages still shown in a WebView need the stylesheet and five page
+     * modules. The bound is deliberately loose -- this is a smoke test against
+     * the whole dashboard reappearing, not a byte budget to be tuned.
+     */
+    expect(home().length).toBeLessThan(250 * 1024);
+    // And it is not empty: the stylesheet and the page modules are still there.
+    expect(home().length).toBeGreaterThan(MOBILE_CSS.length);
   });
 });
 

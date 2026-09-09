@@ -114,12 +114,16 @@ describe('the card fields the rail needs', () => {
   });
 
   /**
-   * `variants(first: 2)` is what lets a card tell a one-variant product from
-   * one with choices -- and the cart bridge must never be handed a guess. The
-   * fragment carries it; asserted here because this query is where a
-   * hand-written field list would most plausibly have been written instead.
+   * The fragment must ask for a RANGE of variants, not one, because a card's
+   * button adds the first variant in stock and so has to see past a sold-out
+   * lead variant. Asserted here because this query is where a hand-written
+   * field list would most plausibly have been written instead of the fragment.
+   *
+   * Pinned as "more than one" rather than exactly 20: the cap is a judgement
+   * about Zigly's catalogue and may be tuned, but dropping back to 1 would
+   * silently start adding sold-out variants.
    */
-  it('carries the variant cap the cart safety depends on', () => {
+  it('asks for enough variants to find one in stock', () => {
     const source = fs.readFileSync(
       require.resolve('../src/native/products'),
       'utf8',
@@ -128,6 +132,8 @@ describe('the card fields the rail needs', () => {
       source,
     );
     expect(fragment).not.toBeNull();
-    expect(fragment![1]).toContain('variants(first: 2)');
+    const cap = /variants\(first: (\d+)\)/.exec(fragment![1]);
+    expect(cap).not.toBeNull();
+    expect(Number(cap![1])).toBeGreaterThan(1);
   });
 });

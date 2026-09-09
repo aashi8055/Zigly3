@@ -129,10 +129,13 @@ describe('the variant id is never a guess', () => {
   /**
    * THE FAILURE THIS SUITE EXISTS FOR.
    *
-   * A product with choices must yield NO id, so the card sends the customer to
-   * the product page instead of adding a size nobody chose.
+   * A product with choices must still yield an id, so its card reads "Add to
+   * Bag" and adds -- as the website's own cards do. This used to assert the
+   * opposite (null, so the card read "View Options" and navigated), which is
+   * what made every multi-variant New Arrivals card in Hot Picks and
+   * Bestsellers disagree with the site.
    */
-  it('refuses an id when the product has more than one variant', () => {
+  it('takes the first variant when the product has more than one', () => {
     const p = parseProduct(
       node({
         variants: {
@@ -143,7 +146,41 @@ describe('the variant id is never a guess', () => {
         },
       }),
     )!;
-    expect(p.variantId).toBeNull();
+    expect(p.variantId).toBe(1);
+  });
+
+  /** In stock beats first: a sold-out lead variant must not be the one added. */
+  it('skips a sold-out variant to reach the first one in stock', () => {
+    const p = parseProduct(
+      node({
+        variants: {
+          edges: [
+            {node: {id: 'gid://shopify/ProductVariant/1', availableForSale: false}},
+            {node: {id: 'gid://shopify/ProductVariant/2', availableForSale: true}},
+          ],
+        },
+      }),
+    )!;
+    expect(p.variantId).toBe(2);
+  });
+
+  /**
+   * All sold out still yields the first id, matching the theme's own fallback.
+   * The card will not post it -- `available` is false and the button is
+   * disabled -- but the id being present is what the theme does.
+   */
+  it('falls back to the first variant when every variant is sold out', () => {
+    const p = parseProduct(
+      node({
+        variants: {
+          edges: [
+            {node: {id: 'gid://shopify/ProductVariant/7', availableForSale: false}},
+            {node: {id: 'gid://shopify/ProductVariant/8', availableForSale: false}},
+          ],
+        },
+      }),
+    )!;
+    expect(p.variantId).toBe(7);
   });
 
   /** A malformed gid must be null, not NaN: NaN would be posted and fail. */

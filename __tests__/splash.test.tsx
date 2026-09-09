@@ -95,20 +95,45 @@ describe('when the splash comes down', () => {
     require('fs').readFileSync('src/screens/ZiglyWebViewScreen.tsx', 'utf8');
   const app = () => require('fs').readFileSync('App.tsx', 'utf8');
 
-  it('waits for the dashboard to report itself assembled', () => {
+  it('lifts on the native dashboard’s first layout', () => {
     /*
-     * The bug this pins. The splash used to lift on the dashboard's own
-     * onLoadEnd, and a load ending is the *document* arriving, not the page:
-     * the sections this app transplants are assembled by scripts that run at
-     * that moment and after it. So the customer was handed a home page still
-     * filling itself in -- the 100-300ms "twitch" the whole splash exists to
-     * prevent. It now waits for `dashboard-ready`; see ../src/webview/
-     * readySignal.
+     * THE SIGNAL MOVED, AND THIS IS THE ASSERTION THAT MOVED WITH IT.
+     *
+     * Two bugs are pinned here, one old and one that replaced it.
+     *
+     * The old one: the splash lifted on the dashboard's onLoadEnd, and a load
+     * ending is the *document* arriving, not the page -- the sections were
+     * assembled by scripts running at that moment and after it, so the
+     * customer was handed a home page still filling itself in. The fix was to
+     * wait for the page's own `dashboard-ready` instead.
+     *
+     * The one that replaced it: the dashboard became React Native components
+     * (../src/native/NativeDashboard) and `dashboard-ready` kept the splash.
+     * That signal now reports on a WebView page nobody looks at, so the logo
+     * was held over a dashboard that was already drawn, for the length of a
+     * page load with nothing on screen waiting for it. The splash now lifts
+     * from `handleDashboardPainted` -- the native list's own first layout,
+     * which is the moment the store is really visible.
+     */
+    const s = shell();
+    const at = s.indexOf('const handleDashboardPainted = useCallback(');
+    expect(at).toBeGreaterThan(-1);
+    const handler = s.slice(at, s.indexOf('  }, [', at));
+    expect(handler).toContain('retireSplash()');
+  });
+
+  it('no longer waits on the page’s own ready signal', () => {
+    /*
+     * The regression this exists for is a quiet one. Putting `retireSplash()`
+     * back into the `dashboard-ready` branch would fail nothing else here --
+     * the splash would still come down, just seconds late, on a load the
+     * customer never sees. That is the second bug above, and in the diff it
+     * reads as a safety net rather than a fault.
      */
     const s = shell();
     const at = s.indexOf("data.tag === 'dashboard-ready'");
     expect(at).toBeGreaterThan(-1);
-    expect(s.slice(at, at + 400)).toContain('retireSplash()');
+    expect(s.slice(at, at + 1600)).not.toContain('retireSplash()');
   });
 
   it('does not lift on the document load event', () => {
@@ -219,5 +244,118 @@ describe('the launcher icon is the real one', () => {
     for (const suffix of ['', '@1.5x', '@2x', '@3x', '@4x']) {
       expect(() => png(`src/assets/zigly-logo${suffix}.png`)).not.toThrow();
     }
+  });
+});
+
+/**
+ * ONE LOGO AT LAUNCH, NOT TWO.
+ *
+ * The reported defect: "a small icon also shown before the icon". Two different
+ * marks were drawn back to back.
+ *
+ *   1. The window manager drew @mipmap/zigly_splash_logo -- the SQUARE launcher
+ *      artwork (162/216/324/432px).
+ *   2. React mounted and SplashScreen drew a WIDE 493x124 wordmark.
+ *
+ * And SplashScreen's own `require` made it worse: it asked for zigly-logo.png,
+ * whose @1.5x-@4x siblings are all the square icon, so React Native resolved
+ * the SQUARE art by density on any real device -- the wide base file was only
+ * ever seen in a simulator. ../src/components/NativeHeader hit the identical
+ * bug and records the same fix.
+ *
+ * The fix is that both frames now draw the same wordmark at the same size, so
+ * the hand-off is one continuous image. These are the guards.
+ */
+describe('the launch shows a single mark', () => {
+  const read = (path: string) => require('fs').readFileSync(path);
+  const text = (path: string) => read(path).toString('utf8');
+
+  /** logo.png is the tight wordmark lock-up, and has no density siblings. */
+  it('uses the wordmark asset, which cannot resolve to the square icon', () => {
+    const src = text('src/screens/SplashScreen.tsx');
+    expect(src).toContain("require('../assets/logo.png')");
+    // The file whose siblings are the square launcher icon.
+    expect(src).not.toContain("require('../assets/zigly-logo.png')");
+  });
+
+  /**
+   * The asset it now points at must genuinely have no @Nx siblings -- that
+   * absence is the whole mechanism, not an incidental fact.
+   */
+  it('ships the wordmark with no density siblings to resolve instead', () => {
+    const logo = read('src/assets/logo.png');
+    expect(logo.readUInt32BE(16)).toBe(493);
+    expect(logo.readUInt32BE(20)).toBe(124);
+    for (const suffix of ['@1.5x', '@2x', '@3x', '@4x']) {
+      expect(() => read(`src/assets/logo${suffix}.png`)).toThrow();
+    }
+  });
+
+  /** Drawn at the artwork's own ratio, so it is never stretched. */
+  it('draws the wordmark at its own aspect ratio', () => {
+    const src = text('src/screens/SplashScreen.tsx');
+    expect(src).toContain('const LOGO_W = 240');
+    expect(src).toContain('LOGO_W * (124 / 493)');
+  });
+
+  /** The pre-React frame draws the same wordmark, not the launcher icon. */
+  it('gives the Android launch screen the same wordmark', () => {
+    const drawable = text(
+      'android/app/src/main/res/drawable/zigly_splash.xml',
+    );
+    expect(drawable).toContain('@drawable/zigly_wordmark');
+    expect(drawable).not.toContain('@mipmap/zigly_splash_logo');
+  });
+
+  /**
+   * At xhdpi a 493px bitmap is drawn at ~246dp, which is the 240dp the React
+   * splash gives it. Placed in any other bucket the two frames differ in size
+   * and the hand-off reads as the logo jumping.
+   */
+  it('places that wordmark where it renders at the React splash size', () => {
+    const art = read(
+      'android/app/src/main/res/drawable-xhdpi/zigly_wordmark.png',
+    );
+    expect(art.readUInt32BE(16)).toBe(493);
+    expect(art.readUInt32BE(20)).toBe(124);
+    // 493 / 2 = 246dp, against SplashScreen's 240dp.
+    expect(Math.round(493 / 2)).toBeGreaterThanOrEqual(240);
+    expect(Math.round(493 / 2)).toBeLessThan(260);
+  });
+
+  /**
+   * Android 12+ ignores windowBackground and draws its own splash, masking the
+   * icon to a circle -- so a wordmark cannot be handed to it. It is given no
+   * icon at all rather than the square one, leaving a plain white field until
+   * React draws the wordmark on it.
+   */
+  it('draws no square icon on the Android 12+ platform splash', () => {
+    const styles = text('android/app/src/main/res/values/styles.xml');
+    expect(styles).not.toContain(
+      '<item name="android:windowSplashScreenAnimatedIcon">',
+    );
+    // The ground stays the same white as both other frames.
+    expect(styles).toContain(
+      '<item name="android:windowSplashScreenBackground">@color/zigly_splash_ground</item>',
+    );
+  });
+
+  /**
+   * The hold, which is the other half of the report ("lifts up so fast").
+   *
+   * The floor was 400ms, chosen when the splash waited on the WebView
+   * assembling a dozen section fetches -- it was never the binding constraint.
+   * The native dashboard retires the splash on its own `onLayout`, within a
+   * couple of frames of mount, so the floor became the entire duration and the
+   * logo flashed. It is a real hold now.
+   *
+   * The window is 2-3s: on a warm launch this floor IS the splash, and 1200ms
+   * still read as a glance. The upper bound is what keeps a deliberate hold
+   * from becoming a wait.
+   */
+  it('holds the mark long enough to be read', () => {
+    const {SPLASH_MIN_MS} = require('../src/constants/appConstants');
+    expect(SPLASH_MIN_MS).toBeGreaterThanOrEqual(2000);
+    expect(SPLASH_MIN_MS).toBeLessThanOrEqual(3000);
   });
 });

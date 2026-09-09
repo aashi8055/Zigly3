@@ -30,21 +30,39 @@ import {
   postUrl,
 } from '../src/native/instagram';
 
-/** The web module's source, as the reference for parity. */
-const webSource = (): string =>
-  fs.readFileSync(
-    require.resolve('../src/webview/instagramSection'),
-    'utf8',
-  );
+/**
+ * The eight posts, written down here as the reference the deleted web module
+ * used to be.
+ *
+ * Written down rather than derived, deliberately: the point of this list is to
+ * fail when the rail's contents change, so reading it out of the same file
+ * under test would assert nothing at all. Read off @ziglypetcare on 2026-08-31,
+ * every cover verified `200 image/jpeg` (DATA-SOURCES.md §9). Refreshing the
+ * rail means editing both this list and ../src/native/instagram, and that
+ * second edit is the intended friction.
+ */
+const EXPECTED_ORDER: string[] = [
+  'DckoBPbsv7S',
+  'DcivNaap81K',
+  'Dcim_m3uAF_',
+  'DcdyTRxgdyu',
+  'DcbTqEBA5lX',
+  'DcYOOO2K6_N',
+  'DcTeBeggVFK',
+  'DcSsGr8Td5R',
+];
 
-/** The POSTS array the web rail ships, read out of its source. */
-const webPosts = (): {id: string; isVideo: boolean}[] => {
-  const source = webSource();
-  const block = /const POSTS[\s\S]*?\n\];/.exec(source);
-  expect(block).not.toBeNull();
-  const entries = [...block![0].matchAll(/id:\s*"([A-Za-z0-9_-]+)"[\s\S]*?isVideo:\s*(true|false)/g)];
-  return entries.map(m => ({id: m[1], isVideo: m[2] === 'true'}));
-};
+/** Six reels and two photos, in the account's own order. */
+const EXPECTED_VIDEO_FLAGS: boolean[] = [
+  true,
+  true,
+  true,
+  true,
+  false,
+  false,
+  true,
+  true,
+];
 
 describe('the same eight posts the web rail ships', () => {
   it('carries eight cards', () => {
@@ -57,14 +75,11 @@ describe('the same eight posts the web rail ships', () => {
    * editing Zigly's feed.
    */
   it('keeps the account’s own order, not grouped by type', () => {
-    expect(INSTAGRAM_POSTS.map(p => p.id)).toEqual(webPosts().map(p => p.id));
+    expect(INSTAGRAM_POSTS.map(p => p.id)).toEqual(EXPECTED_ORDER);
   });
 
   it('marks the same posts as videos', () => {
-    const web = webPosts();
-    for (let i = 0; i < web.length; i++) {
-      expect(INSTAGRAM_POSTS[i].isVideo).toBe(web[i].isVideo);
-    }
+    expect(INSTAGRAM_POSTS.map(p => p.isVideo)).toEqual(EXPECTED_VIDEO_FLAGS);
     // Six reels and two photos, as the account had them.
     expect(INSTAGRAM_POSTS.filter(p => p.isVideo)).toHaveLength(6);
   });
@@ -77,9 +92,8 @@ describe('the same eight posts the web rail ships', () => {
     expect(flags.slice(firstPhoto).some(Boolean)).toBe(true);
   });
 
-  it('is headed as the web rail heads it', () => {
+  it('is headed as the account is', () => {
     expect(INSTAGRAM_TITLE).toBe('From Our Instagram');
-    expect(webSource()).toContain("'From Our Instagram'");
   });
 });
 

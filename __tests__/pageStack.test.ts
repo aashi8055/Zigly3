@@ -15,6 +15,7 @@ import {
   onDashboard,
   openPage,
   sameDocument,
+  sameListingResults,
   visibleLayer,
 } from '../src/navigation/pageStack';
 import type {PageStack} from '../src/navigation/pageStack';
@@ -218,5 +219,97 @@ describe('sameDocument', () => {
     expect(sameDocument(at('/search?q=food'), at('/search?q=toys'))).toBe(
       false,
     );
+  });
+});
+
+/**
+ * The fifth kind of load: SearchTap re-sorting the page already on screen.
+ *
+ * It applies a sort by writing it into the url, which is a pushState -- and
+ * Android reports a pushState exactly like a real navigation. Without this
+ * test the app covered a page the customer was reading and re-ran its whole
+ * injection, and because a pushState loads no document nothing ever posted
+ * `page-ready` to lift that cover again.
+ */
+describe('sameListingResults', () => {
+  it('recognises a sort written into the url', () => {
+    expect(
+      sameListingResults(
+        at('/collections/dog-food'),
+        at('/collections/dog-food?sort=price-ascending'),
+      ),
+    ).toBe(true);
+  });
+
+  it('recognises a facet, whatever its heading is called', () => {
+    // Facets are written under their own heading, which Zigly can add in the
+    // admin any afternoon -- so the shape is what is tested, not a list.
+    expect(
+      sameListingResults(
+        at('/collections/dog-food'),
+        at('/collections/dog-food?Flavor=chicken'),
+      ),
+    ).toBe(true);
+  });
+
+  it('recognises a sort changing to another sort', () => {
+    expect(
+      sameListingResults(
+        at('/collections/dog-food?sort=price-ascending'),
+        at('/collections/dog-food?sort=price-descending'),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps the search term, which is a re-query of the same page', () => {
+    expect(
+      sameListingResults(at('/search?q=food'), at('/search?q=food&sort=new')),
+    ).toBe(true);
+  });
+
+  it('is not a different path', () => {
+    // The whole point: this says "the same page, re-sorted", never "some other
+    // page". A real navigation must still cover and re-inject.
+    expect(
+      sameListingResults(
+        at('/collections/dog-food'),
+        at('/collections/cat-food?sort=price-ascending'),
+      ),
+    ).toBe(false);
+  });
+
+  it('is not the same url, which sameDocument already covers', () => {
+    expect(
+      sameListingResults(
+        at('/collections/dog-food'),
+        at('/collections/dog-food'),
+      ),
+    ).toBe(false);
+  });
+
+  it('refuses a key that identifies a different thing, not a filter', () => {
+    // A variant selects a different product, and a redirect is a different
+    // destination. Neither is this page re-sorted.
+    expect(
+      sameListingResults(
+        at('/collections/dog-food'),
+        at('/collections/dog-food?variant=123'),
+      ),
+    ).toBe(false);
+    expect(
+      sameListingResults(
+        at('/collections/dog-food'),
+        at('/collections/dog-food?redirect=/account'),
+      ),
+    ).toBe(false);
+  });
+
+  it('refuses a campaign parameter, which is not a filter either', () => {
+    expect(
+      sameListingResults(
+        at('/collections/dog-food'),
+        at('/collections/dog-food?utm_source=email'),
+      ),
+    ).toBe(false);
   });
 });

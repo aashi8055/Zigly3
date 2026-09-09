@@ -1,22 +1,31 @@
 /**
  * The dashboard's own reveal.
  *
- * Every other page in this app is covered by `PageCover` and released by its own
- * `page-ready`. The dashboard was the exception: covered by the splash, released
- * by `dashboard-ready`, and that signal was not telling the truth. It fired once
- * the banner and the category rail had images, at which point the app had still
- * to swap the category rail for a different one and land the coupon strip -- so
- * the splash lifted and the top of the store then rearranged itself in full view.
+ * WHAT THIS FILE DEFENDED HAS HALVED, AND THE HALF THAT WENT IS WORTH RECORDING
+ * rather than quietly deleting.
  *
- * Three things are defended here:
+ * The dashboard used to be assembled inside the WebView, so its reveal was a
+ * negotiation with the page: `dashboard-ready` fired once the banner and the
+ * category rail had images, and it was not telling the truth -- the app had
+ * still to swap that rail for a different one and land the coupon strip, so the
+ * splash lifted and the top of the store rearranged itself in full view. Two
+ * describes here defended the fix: that the signal waited for the app's own
+ * work and not just the site's, and that every slot settled even when its
+ * section failed.
  *
- *   **The signal waits for the app's own work, not just the site's.** A rail the
- *   app is about to replace is not a rail that is ready.
+ * ../src/native/NativeDashboard draws those sections as components now, and the
+ * modules that built them in the page -- `homeLayout`, `extraSections` and
+ * eleven others -- are deleted. There is no in-page assembly left to wait for,
+ * and the splash no longer waits on `dashboard-ready` at all: it lifts on the
+ * native list's first layout (`handleDashboardPainted`, guarded in
+ * ./splash.test.tsx). Both of those describes tested deleted machinery, so they
+ * are gone with it.
  *
- *   **Every slot settles, including the ones that fail.** This is the same
- *   property the paint gate has, for the same reason: a slot that never settles
- *   does not delay the reveal, it holds it to the deadline. A section Zigly has
- *   removed is a final answer.
+ * WHAT REMAINS IS STILL LOAD-BEARING: the cover itself. `PageCover` continues to
+ * draw the dashboard's shape -- and the failsafe behind the native layout signal
+ * still dissolves into it -- so which shape a destination claims, and the fact
+ * that the wait is shapes rather than a spinner, are properties nothing else
+ * checks.
  *
  *   **The wait has a shape.** A logo held for five seconds reads as stuck, so it
  *   becomes the outline of the dashboard.
@@ -27,10 +36,6 @@ import {ActivityIndicator} from 'react-native';
 import PageCover from '../src/components/PageCover';
 import {FILL} from '../src/components/Skeleton';
 import {coverVariantFor} from '../src/screens/ZiglyWebViewScreen';
-import {READY_SIGNAL_SCRIPT} from '../src/webview/readySignal';
-import {HOME_LAYOUT_SCRIPT} from '../src/webview/homeLayout';
-import {EXTRA_SECTIONS_SCRIPT} from '../src/webview/extraSections';
-import {MOBILE_CSS} from '../src/webview/injectedStyles';
 import {START_URL, ZIGLY_ORIGIN} from '../src/constants/appConstants';
 
 const trees: ReactTestRenderer.ReactTestRenderer[] = [];
@@ -117,8 +122,14 @@ describe('the dashboard placeholder', () => {
   it('carries one banner, not a column of them', () => {
     // The banner is the single largest shape on the screen; two would read as a
     // layout this app does not have.
+    //
+    // 1.5, not 2: the placeholder reserves the ratio Zigly's mobile banners are
+    // actually cut to (600x400). It reserved 2:1 and ../src/native/BannerCarousel
+    // drew at 2:1 citing this block as its reason -- so the two agreed with each
+    // other and not with the artwork, and every banner was cropped by a quarter
+    // of its height. Corrected in both together; this is the guard.
     const wide = shapes(render({variant: 'home'})).filter(
-      node => styleOf(node).aspectRatio === 2,
+      node => styleOf(node).aspectRatio === 1.5,
     );
     expect(wide).toHaveLength(1);
   });
@@ -130,122 +141,5 @@ describe('the dashboard placeholder', () => {
     const tree = render({variant: 'plain'});
     expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
     expect(shapes(tree).length).toBeGreaterThan(0);
-  });
-});
-
-describe('the signal waits for the app’s own work', () => {
-  it('is not satisfied by a category rail it is about to replace', () => {
-    // The image test passes on the site's own rail immediately; this is the check
-    // that waits for the one the app is going to keep.
-    expect(READY_SIGNAL_SCRIPT).toContain('if (!settled(cats)) { return false; }');
-  });
-
-  it('no longer waits for the coupon strip, which is below the fold', () => {
-    /*
-     * This assertion is the inverse of what it used to be, and the reversal is
-     * the point.
-     *
-     * The strip was described here as "the one transplant above the fold". It is
-     * not: it sits below the banner, and the breed rail below that, so holding
-     * the splash for either meant holding it for content the customer cannot see
-     * at the moment it lifts. On a cold first launch that was seconds of white
-     * screen bought for nothing.
-     *
-     * The shift that waiting used to hide is now prevented properly -- both
-     * slots reserve their height in ../src/webview/injectedStyles, so the
-     * sections land into space already held and nothing moves. See homeReady in
-     * ../src/webview/readySignal.
-     */
-    expect(READY_SIGNAL_SCRIPT).not.toContain("getElementById('zigly-x-coupon')");
-    expect(READY_SIGNAL_SCRIPT).not.toContain('zigly-breed-dogs');
-  });
-
-  it('still waits for everything that IS above the fold', () => {
-    // The banner and the category rail, which are what the reveal exposes.
-    expect(READY_SIGNAL_SCRIPT).toContain('homepage_banner');
-    expect(READY_SIGNAL_SCRIPT).toContain('home_category_section');
-  });
-
-  it('reserves the height of the two slots it stopped waiting for', () => {
-    /*
-     * The other half of that trade, and it must not be dropped independently:
-     * revealing before these land is only safe because the space is held. If
-     * these rules go, the sections shove the dashboard down under the thumb.
-     */
-    expect(MOBILE_CSS).toContain('#zigly-x-coupon:not([data-state="ready"])');
-    expect(MOBILE_CSS).toContain('[id^="zigly-breed-"]:not([data-state="ready"])');
-  });
-
-  it('treats an absent slot as settled, not as pending', () => {
-    /*
-     * Load bearing. Every one of these sections is one Zigly can remove, and a
-     * missing section must not be something the reveal waits for -- that would
-     * make deleting a section from the theme hang the app to its deadline.
-     */
-    expect(READY_SIGNAL_SCRIPT).toContain(
-      "return !el || el.getAttribute('data-state') === 'ready';",
-    );
-  });
-
-  it('still refuses to wait on the sections below the fold', () => {
-    // Above-the-fold only, on purpose: waiting for what the customer cannot see
-    // yet would make this app slower than the website it replaces.
-    for (const below of [
-      'zigly-x-bestsellers',
-      'zigly-x-instagram',
-      'zigly-x-everything',
-      'zigly-x-price',
-    ]) {
-      expect(READY_SIGNAL_SCRIPT).not.toContain(below);
-    }
-  });
-});
-
-describe('every slot settles, including the ones that fail', () => {
-  /**
-   * The paths out of an async fill, counted in the shipped script.
-   *
-   * Asserting on the text rather than running it, in the style of the other
-   * injection tests: these scripts are template literals with no module boundary
-   * to reach into, and what ships is the string.
-   */
-  it('settles the category rail on success, absence and error', () => {
-    expect(HOME_LAYOUT_SCRIPT).toContain("current.setAttribute('data-state', 'loading')");
-    // The copy that landed...
-    expect(HOME_LAYOUT_SCRIPT).toContain('settle(replacement)');
-    // ...the section having been withdrawn, and the request having failed. Both
-    // leave the site's own rail on screen, which is a final state.
-    expect(HOME_LAYOUT_SCRIPT).toContain('if (!sec) { settle(current); return; }');
-    expect(HOME_LAYOUT_SCRIPT).toContain(
-      "warn('category swap failed: ' + e); settle(current);",
-    );
-  });
-
-  it('settles a transplanted slot on success, absence and error', () => {
-    expect(EXTRA_SECTIONS_SCRIPT).toContain(
-      "slot.setAttribute('data-state', 'loading')",
-    );
-    expect(EXTRA_SECTIONS_SCRIPT).toContain(
-      "try { slot.setAttribute('data-state', 'ready'); } catch (e) {}",
-    );
-    expect(EXTRA_SECTIONS_SCRIPT).toContain(
-      "warn('unavailable: ' + spec.key); settle(); return;",
-    );
-    expect(EXTRA_SECTIONS_SCRIPT).toContain(
-      "warn('failed ' + spec.key + ': ' + e); settle();",
-    );
-  });
-
-  it('parses, so a mangled escape cannot silently disable any of it', () => {
-    for (const script of [
-      HOME_LAYOUT_SCRIPT,
-      EXTRA_SECTIONS_SCRIPT,
-      READY_SIGNAL_SCRIPT,
-    ]) {
-      expect(() => {
-        // eslint-disable-next-line no-new-func
-        new Function(script);
-      }).not.toThrow();
-    }
   });
 });

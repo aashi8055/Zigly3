@@ -23,7 +23,11 @@
  * little untidy in the ways real Shopify output is: mixed casing, attributes in
  * varying order, a lazy-loaded image whose `src` is a placeholder.
  */
-import {CATEGORIES, CATEGORY_RAIL} from '../src/native/categoryIcons';
+import {
+  CATEGORIES,
+  CATEGORY_RAIL,
+  DASHBOARD_CATEGORIES,
+} from '../src/native/categoryIcons';
 import {
   CAT_BREED_RAIL,
   CAT_BREED_TITLE,
@@ -76,6 +80,42 @@ describe('the category rail is complete without a network', () => {
     expect(dogs?.path).toBe('/pages/dog');
     expect(CATEGORIES.some(c => c.path.includes('shopify://'))).toBe(false);
   });
+
+  /**
+   * THE RAIL DRAWS SIX, WHILE THE BLOCK LIST KEEPS EIGHT.
+   *
+   * The two dropped circles are the theme's last two blocks. "All" links to
+   * `/` -- the dashboard the customer is already on, so it is a circle that
+   * goes nowhere -- and "New Pet Parent" is a guide page rather than a
+   * category. Six is also what fits a narrow phone at 60dp plus a 12dp pitch.
+   *
+   * The full list stays complete on purpose: it is what the rendered section is
+   * matched against when artwork is learned, so shortening it would mean the
+   * app disagreeing with the page it reads from.
+   */
+  it('draws six circles while keeping all eight theme blocks', () => {
+    expect(CATEGORIES).toHaveLength(8);
+    expect(DASHBOARD_CATEGORIES.map(c => c.label)).toEqual([
+      'Dogs',
+      'Cats',
+      'Small Pets',
+      'Pharmacy',
+      'Vet Care',
+      'Grooming',
+    ]);
+  });
+
+  it('is the shortened list that the rail actually renders', () => {
+    expect(CATEGORY_RAIL.tiles).toEqual(DASHBOARD_CATEGORIES);
+    expect(CATEGORY_RAIL.tiles).toHaveLength(6);
+  });
+
+  it('drops exactly the two that do not belong on a phone rail', () => {
+    const shown = DASHBOARD_CATEGORIES.map(c => c.label);
+    expect(shown).not.toContain('All');
+    expect(shown).not.toContain('New Pet Parent');
+  });
+
 });
 
 describe('reading the icons out of a rendered rail', () => {
@@ -114,6 +154,24 @@ describe('reading the icons out of a rendered rail', () => {
     for (const item of CATEGORIES) {
       expect(icons[item.key]).toBeDefined();
     }
+  });
+
+  /**
+   * The six the rail actually draws still get their pictures.
+   *
+   * `parseIcons` walks the rendered images and finds a tile for each, so a
+   * shortened tile list means the two dropped stems are simply never claimed --
+   * it does not cost the remaining six their artwork. That is what makes it
+   * safe for CATEGORY_RAIL to carry six tiles while the section renders eight.
+   */
+  it('still finds an icon for each of the six the rail draws', () => {
+    const icons = parseIcons(RAIL, DASHBOARD_CATEGORIES);
+    for (const item of DASHBOARD_CATEGORIES) {
+      expect(icons[item.key]).toBeDefined();
+    }
+    // And nothing was learned for the two that are not drawn.
+    expect(icons.All).toBeUndefined();
+    expect(icons.petparent).toBeUndefined();
   });
 
   /** Shopify's most common form, and it is not a usable `Image` source. */

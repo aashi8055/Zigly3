@@ -32,9 +32,13 @@ import {
 import {
   VIDEO_BACKGROUND,
   VIDEO_DESCRIPTION,
-  VIDEO_RAIL,
+  VIDEO_ID,
+  VIDEO_POSTER,
+  VIDEO_POSTER_FALLBACK,
   VIDEO_TITLE,
+  VIDEO_WATCH_URL,
 } from '../src/native/video';
+import {parseIcons} from '../src/native/tileIcons';
 import {INTERNAL_HOSTS} from '../src/constants/appConstants';
 
 const CDN = 'https://cdn.shopify.com/s/files/1/0923/1204/3836/files';
@@ -47,23 +51,22 @@ describe('all three read the homepage, not the dog page', () => {
    * THE ID TRAP. Three prefixes appear in the captured list and only one is
    * right for a homepage template section.
    */
+  /*
+   * The video block is no longer in this list: it fetches no section at all.
+   * See the poster tests below -- its artwork comes from the YouTube video id,
+   * so it has no sectionId to get wrong.
+   */
   it('uses the homepage template prefix', () => {
-    for (const id of [VIDEO_RAIL.sectionId, COMMUNITY_RAIL.sectionId]) {
-      expect(id.startsWith(HOME_PREFIX)).toBe(true);
-    }
+    expect(COMMUNITY_RAIL.sectionId.startsWith(HOME_PREFIX)).toBe(true);
   });
 
   it('does not use the dog page’s prefix', () => {
-    for (const id of [VIDEO_RAIL.sectionId, COMMUNITY_RAIL.sectionId]) {
-      expect(id).not.toContain('26530973942076');
-    }
+    expect(COMMUNITY_RAIL.sectionId).not.toContain('26530973942076');
   });
 
   /** `sections--` is the header and announcement bar, not a template section. */
   it('does not use the layout’s sections-- prefix', () => {
-    for (const id of [VIDEO_RAIL.sectionId, COMMUNITY_RAIL.sectionId]) {
-      expect(id.startsWith('sections--')).toBe(false);
-    }
+    expect(COMMUNITY_RAIL.sectionId.startsWith('sections--')).toBe(false);
   });
 });
 
@@ -201,14 +204,61 @@ describe('the video block', () => {
     expect(VIDEO_DESCRIPTION).not.toContain('…');
   });
 
-  /** The poster is a play control, not a link -- so it has no destination. */
-  it('gives the poster no path', () => {
-    expect(VIDEO_RAIL.tiles[0].path).toBe('');
+  /**
+   * THE SECTION IS A YOUTUBE EMBED, AND HAS NO POSTER IMAGE TO FIND.
+   *
+   * These four tests replace four that asserted the opposite -- that
+   * `video_poster` was `shopify://shop_images/zigly-thumbnail.jpg` and that
+   * ../src/native/tileIcons had to read it off a `<video poster>` attribute.
+   * That was the HOMEPAGE's copy of the section. The dashboard is the dog page
+   * (see ../src/native/dashboardSections), whose copy sets `video_link` to a
+   * YouTube URL and no poster at all, so the section renders a bare `<iframe>`
+   * and there is no image in its markup for any parser to reach.
+   *
+   * The consequence was not a missing picture but a missing SECTION: with no
+   * candidate resolved, VideoBlock's `poster ? ... : null` returned null and
+   * the heading and copy went with it. So this describe block now pins the
+   * derived-URL contract instead.
+   */
+  it('derives the poster from the video id, with no section fetch', () => {
+    expect(VIDEO_ID).toBe('1vIjfkud5MQ');
+    expect(VIDEO_POSTER).toBe(
+      'https://i.ytimg.com/vi/1vIjfkud5MQ/maxresdefault.jpg',
+    );
   });
 
-  it('resolves the poster, not the mp4', () => {
-    expect(VIDEO_RAIL.tiles[0].key).toBe('zigly-thumbnail.jpg');
-    expect(VIDEO_RAIL.tiles[0].key).not.toContain('.mp4');
+  /**
+   * `maxresdefault` is the one YouTube still that is not guaranteed -- it is
+   * generated only for uploads above 720p. `hqdefault` exists for every video,
+   * so it is what VideoBlock falls back to on an image error.
+   */
+  it('carries an hqdefault fallback for a video with no HD still', () => {
+    expect(VIDEO_POSTER_FALLBACK).toBe(
+      'https://i.ytimg.com/vi/1vIjfkud5MQ/hqdefault.jpg',
+    );
+    expect(VIDEO_POSTER_FALLBACK).not.toBe(VIDEO_POSTER);
+  });
+
+  /** Both stills come from YouTube's own image host, which needs no API key. */
+  it('reads the stills from i.ytimg.com', () => {
+    for (const url of [VIDEO_POSTER, VIDEO_POSTER_FALLBACK]) {
+      expect(url.startsWith('https://i.ytimg.com/vi/')).toBe(true);
+      expect(url).toContain(VIDEO_ID);
+    }
+  });
+
+  /**
+   * The watch URL carries the same id as the poster.
+   *
+   * Asserted together because they are two derivations of one setting: an id
+   * updated in one place and not the other would show the still from one video
+   * above a tap that opens a different one.
+   */
+  it('points the tap at the same video the poster shows', () => {
+    expect(VIDEO_WATCH_URL).toBe(
+      'https://www.youtube.com/watch?v=1vIjfkud5MQ',
+    );
+    expect(VIDEO_WATCH_URL).toContain(VIDEO_ID);
   });
 });
 

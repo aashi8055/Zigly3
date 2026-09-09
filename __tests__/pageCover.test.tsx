@@ -394,7 +394,7 @@ describe('the screen owns the deadline', () => {
     // its own separate cover, released by its own signal, not this one.
     const at = s.indexOf('onLoadStart={e => {');
     expect(at).toBeGreaterThan(-1);
-    expect(s.slice(at, at + 1800)).toContain('unmarkPainted(layer.key)');
+    expect(s.slice(at, at + 3200)).toContain('unmarkPainted(layer.key)');
   });
 
   it('leaves a page alone when the load is not going anywhere new', () => {
@@ -410,9 +410,17 @@ describe('the screen owns the deadline', () => {
     // no argument, so this signature belongs to exactly one handler.
     const at = s.indexOf('onLoadStart={e => {');
     expect(at).toBeGreaterThan(-1);
-    const handler = s.slice(at, at + 2200);
+    const handler = s.slice(at, at + 3600);
     expect(handler).toContain('committedUrls.current.get(layer.key)');
     expect(handler).toContain('!sameDocument(committed, url)');
+    /*
+     * And the fifth kind of load, which is the same page re-sorted: SearchTap
+     * writes a sort or a filter into the url as a pushState, which Android
+     * reports here exactly like a navigation. Covering that throws away the
+     * results it holds in memory, and no `page-ready` is coming to lift the
+     * cover because no document loaded.
+     */
+    expect(handler).toContain('sameListingResults(committed, url)');
     // And a url that is not a document at all is not a load to report: the
     // guard comes before the header is even re-injected for it.
     expect(handler.indexOf('isDocumentUrl(url)')).toBeLessThan(
