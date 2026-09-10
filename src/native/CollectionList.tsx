@@ -140,9 +140,26 @@ type Props = {
    * the caller's fact.
    */
   bottomInset?: number;
+  /**
+   * The search band, above the first card.
+   *
+   * Same slot and the same reasoning as ./CollectionScreen's: this screen is
+   * drawn on an opaque layer over the WebView, so the band injected into the
+   * page (../webview/searchBandSection) is underneath it and cannot be seen.
+   * A node rather than a callback, so this file knows nothing about the
+   * search wiring -- it renders what it is handed.
+   *
+   * Inside the scroller, so it travels with the cards as it does everywhere
+   * else in the app.
+   */
+  searchBand?: React.ReactNode;
 };
 
-const CollectionList = ({onOpen, bottomInset = 0}: Props) => {
+const CollectionList = ({
+  onOpen,
+  bottomInset = 0,
+  searchBand = null,
+}: Props) => {
   /*
    * Only the pictures load. The cards themselves are constants, so there is no
    * loading state and no skeleton -- the same reasoning as ./TileRailView.
@@ -163,6 +180,17 @@ const CollectionList = ({onOpen, bottomInset = 0}: Props) => {
         {paddingBottom: EDGE + bottomInset},
       ]}
       showsVerticalScrollIndicator={false}>
+      {/*
+        Pulled out to the screen's edges, because the band's ground is a
+        full-bleed blue and this scroller's content is inset by EDGE either
+        side. Left in the padding it would draw the blue as a floating panel
+        with white gutters, which is not how the band looks on any other
+        screen. The band supplies its own internal padding, so this only
+        cancels the container's.
+      */}
+      {searchBand ? (
+        <View style={styles.bandBleed}>{searchBand}</View>
+      ) : null}
       {COLLECTION_CARDS.map(card => (
         <Card
           key={card.path}
@@ -178,6 +206,15 @@ const CollectionList = ({onOpen, bottomInset = 0}: Props) => {
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: COLORS.white},
   content: {paddingHorizontal: EDGE, paddingTop: EDGE, gap: GAP},
+  /**
+   * Cancels `content`'s horizontal inset for the band alone.
+   *
+   * The negative margins are exactly EDGE, so the band spans the full width
+   * whatever EDGE becomes. `marginTop` cancels the container's `paddingTop`
+   * too: the band sits against the header above it on every other screen, and
+   * a strip of white above the blue here would be the one place it floats.
+   */
+  bandBleed: {marginHorizontal: -EDGE, marginTop: -EDGE},
   card: {
     height: CARD_HEIGHT,
     borderRadius: 12,

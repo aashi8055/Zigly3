@@ -128,6 +128,27 @@ type Props = {
    * the customer a full grid after they filtered it down to none.
    */
   filteredHandles?: readonly string[] | null;
+  /**
+   * The search band, drawn above the heading.
+   *
+   * A NODE rather than a callback, for the same reason ../native/NativeDashboard
+   * takes one: the band is the header's own component
+   * (../components/NativeHeader's SearchBandSection) with the site's own
+   * rotating placeholders threaded into it, and this screen has no business
+   * knowing about either. It renders what it is handed, in the one place on
+   * this screen where a band belongs.
+   *
+   * WHY IT HAS TO BE NATIVE HERE. Every WebView page gets its band injected
+   * into the page itself (../webview/searchBandSection). This screen is drawn
+   * on an opaque layer OVER that WebView, so the injected band is underneath
+   * it and invisible -- which is why a collection grid had no search bar at
+   * all while the dashboard and /search both did.
+   *
+   * Inside the FlatList's header, so it scrolls away with the heading exactly
+   * as the dashboard's does. A band pinned above a scrolling grid would be the
+   * one search field in the app that behaves differently from the others.
+   */
+  searchBand?: React.ReactNode;
 };
 
 const CollectionScreen = ({
@@ -138,6 +159,7 @@ const CollectionScreen = ({
   onAdd,
   bottomInset = 0,
   filteredHandles = null,
+  searchBand = null,
 }: Props) => {
   const [products, setProducts] = useState<readonly ListingProduct[]>([]);
   const [heading, setHeading] = useState(title ?? '');
@@ -302,27 +324,36 @@ const CollectionScreen = ({
       ]}
       showsVerticalScrollIndicator={false}
       ListHeaderComponent={
-        <View style={styles.header}>
-          {heading ? <Text style={styles.title}>{heading}</Text> : null}
+        <View>
           {/*
-            The count, or nothing.
+            The band above the heading, outside `styles.header` so it keeps its
+            own full-width ground and its own internal padding rather than
+            inheriting the heading block's inset.
+          */}
+          {searchBand}
+          <View style={styles.header}>
+            {heading ? <Text style={styles.title}>{heading}</Text> : null}
+            {/*
+              The count, or nothing.
 
-            Never a guess: ./listing returns null when it could not establish
-            the total, and a wrong number under a collection heading is the kind
-            of small false statement the standing design rule exists to prevent.
-          */}
-          {/*
-            While a filter is applied the number is the filtered set's own
-            size, because that is what is on screen -- printing the
-            collection's total under a filtered grid would be a caption that
-            contradicts the products beneath it. `shownCount` is null only
-            when neither number is known yet.
-          */}
-          {shownCount !== null ? (
-            <Text style={styles.count}>
-              {shownCount} {shownCount === 1 ? 'Product' : 'Products'}
-            </Text>
-          ) : null}
+              Never a guess: ./listing returns null when it could not establish
+              the total, and a wrong number under a collection heading is the
+              kind of small false statement the standing design rule exists to
+              prevent.
+            */}
+            {/*
+              While a filter is applied the number is the filtered set's own
+              size, because that is what is on screen -- printing the
+              collection's total under a filtered grid would be a caption that
+              contradicts the products beneath it. `shownCount` is null only
+              when neither number is known yet.
+            */}
+            {shownCount !== null ? (
+              <Text style={styles.count}>
+                {shownCount} {shownCount === 1 ? 'Product' : 'Products'}
+              </Text>
+            ) : null}
+          </View>
         </View>
       }
       renderItem={({item}) => (

@@ -20,6 +20,7 @@ import {
   REPORT_WISHLIST_COUNT,
   WISHLIST_LIMIT,
   WISHLIST_SCRIPT,
+  WISHLIST_VARIANT_LIMIT,
   removeFromWishlistScript,
 } from '../src/webview/wishlistBridge';
 import {httpsUrl, parseWishlist} from '../src/wishlist/wishlistItems';
@@ -65,7 +66,16 @@ const press = (
   if (!target) {
     throw new Error('no pressable labelled ' + label);
   }
-  target.props.onPress();
+  /*
+   * Inside act(), because a press can now change this screen's own state: Add
+   * to Bag on a product with choices opens the picker. Without it the state
+   * update is queued and never flushed, so the assertion runs against the
+   * tree as it was before the tap -- which looks exactly like a button that
+   * did nothing.
+   */
+  ReactTestRenderer.act(() => {
+    target.props.onPress();
+  });
 };
 
 /** One row as the bridge posts it, straight out of /products/{handle}.js. */
@@ -85,6 +95,18 @@ const item = (over: Partial<WishlistItem> = {}): WishlistItem => ({
   ...parseWishlist({items: [RAW]}, ORIGIN).items[0],
   ...over,
 });
+
+/**
+ * Three real-shaped choices: Shopify's own variant labels and paise prices,
+ * with one sold out. Prices differ per row on purpose -- a variant priced
+ * differently from its product is normal on this store, and the picker shows
+ * the variant's own price.
+ */
+const CHOICES = [
+  {id: 51, title: '1 kg', price: 39900, available: true},
+  {id: 52, title: '3 kg', price: 89900, available: true},
+  {id: 53, title: '5 kg', price: 129900, available: false},
+];
 
 const noop = () => {};
 
@@ -343,19 +365,139 @@ describe('the wishlist screen', () => {
   });
 
   it('adds a single-variant product straight to the bag', () => {
-    const added: string[] = [];
-    const tree = render(screen({items: [item()], onAddToBag: product => added.push(product.handle)}));
+    const added: number[] = [];
+    const tree = render(
+      screen({
+        items: [item()],
+        onAddToBag: (_product, variantId) => added.push(variantId),
+      }),
+    );
     press(tree, 'Add to Bag: ' + RAW.title);
-    expect(added).toEqual([RAW.handle]);
+    // The product's only variant, and the screen stayed where it was.
+    expect(added).toEqual([RAW.variantId]);
   });
 
-  it('sends a multi-variant product to its page instead of guessing', () => {
-    const added: string[] = [];
+  /*
+   * ADD TO BAG ALWAYS ADDS.
+   *
+   * It used to navigate for a product with choices: the tile's button was
+   * labelled "Choose options" and opened the product page, which reads as the
+   * button having failed. The rule it was protecting stands -- this app never
+   * picks a size for the customer -- but the asking now happens in a picker on
+   * this screen. See src/components/VariantSheet.
+   */
+  it('offers the choices rather than opening the page, for a multi-variant product', () => {
+    const added: number[] = [];
     const opened: string[] = [];
-    const tree = render(screen({items: [item({variantId: null})], onOpenItem: product => opened.push(product.handle), onAddToBag: product => added.push(product.handle)}));
-    press(tree, 'Choose options for ' + RAW.title);
+    const tree = render(
+      screen({
+        items: [item({variantId: null, variants: CHOICES})],
+        onOpenItem: product => opened.push(product.handle),
+        onAddToBag: (_product, variantId) => added.push(variantId),
+      }),
+    );
+
+    // The tile's button says Add to Bag, not "Choose options".
+    press(tree, 'Add to Bag: ' + RAW.title);
+    // Nothing added yet and, crucially, no navigation.
+    expect(added).toEqual([]);
+    expect(opened).toEqual([]);
+    // The picker is up, showing Shopify's own labels and prices.
+    const text = textOf(tree);
+    expect(text).toContain('Select an option');
+    expect(text).toContain('1 kg');
+    expect(text).toContain('3 kg');
+
+    // Picking one adds THAT variant.
+    press(tree, '3 kg, ₹899');
+    expect(added).toEqual([CHOICES[1].id]);
+    expect(opened).toEqual([]);
+  });
+
+  it('never adds a variant the customer did not choose', () => {
+    const added: number[] = [];
+    const tree = render(
+      screen({
+        items: [item({variantId: null, variants: CHOICES})],
+        onAddToBag: (_product, variantId) => added.push(variantId),
+      }),
+    );
+    // Opening the picker is not itself an add -- the whole point of the rule.
+    press(tree, 'Add to Bag: ' + RAW.title);
+    expect(added).toEqual([]);
+  });
+
+  it('shows a sold-out choice without letting it be added', () => {
+    const added: number[] = [];
+    const tree = render(
+      screen({
+        items: [item({variantId: null, variants: CHOICES})],
+        onAddToBag: (_product, variantId) => added.push(variantId),
+      }),
+    );
+    press(tree, 'Add to Bag: ' + RAW.title);
+    // Listed, so a customer who saved this product for the 5 kg knows it is
+    // gone -- and not tappable, so it cannot be added.
+    expect(textOf(tree)).toContain('5 kg');
+    expect(textOf(tree)).toContain('Sold out');
+    const row = tree.root
+      .findAll(
+        node => node.props?.accessibilityLabel === '5 kg, sold out',
+      )
+      .shift();
+    expect(row).toBeDefined();
+    expect(row?.props.disabled).toBe(true);
+  });
+
+  /*
+   * The last resort, and the behaviour every multi-variant product used to
+   * get: a product with choices whose variant rows could not be read has
+   * nothing to offer in a picker, so its page is the only honest answer.
+   */
+  it('falls back to the product page when the choices could not be read', () => {
+    const added: number[] = [];
+    const opened: string[] = [];
+    const tree = render(
+      screen({
+        items: [item({variantId: null, variants: []})],
+        onOpenItem: product => opened.push(product.handle),
+        onAddToBag: (_product, variantId) => added.push(variantId),
+      }),
+    );
+    press(tree, 'Add to Bag: ' + RAW.title);
     expect(added).toEqual([]);
     expect(opened).toEqual([RAW.handle]);
+  });
+
+  /*
+   * The bridge carries at most WISHLIST_VARIANT_LIMIT choices per product, so
+   * a list that reached the cap may be short of one. Only then is the product
+   * page offered -- a complete list must not invite the customer to leave.
+   */
+  it('offers the product page only when the choice list was capped', () => {
+    const full = Array.from({length: WISHLIST_VARIANT_LIMIT}, (_, i) => ({
+      id: 900 + i,
+      title: 'Size ' + i,
+      price: 10000,
+      available: true,
+    }));
+    const capped = render(
+      screen({
+        items: [item({variantId: null, variants: full})],
+        variantLimit: WISHLIST_VARIANT_LIMIT,
+      }),
+    );
+    press(capped, 'Add to Bag: ' + RAW.title);
+    expect(textOf(capped)).toContain('See all options');
+
+    const complete = render(
+      screen({
+        items: [item({variantId: null, variants: CHOICES})],
+        variantLimit: WISHLIST_VARIANT_LIMIT,
+      }),
+    );
+    press(complete, 'Add to Bag: ' + RAW.title);
+    expect(textOf(complete)).not.toContain('See all options');
   });
 
   it('does not offer to add something out of stock', () => {

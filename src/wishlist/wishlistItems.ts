@@ -7,6 +7,16 @@
  * missing something a tile needs, so a half-known product never renders.
  */
 
+/** One choice on a product that has them, as the picker draws it. */
+export interface WishlistVariant {
+  id: number;
+  /** Shopify's own label -- "M", "1 kg". Never composed by this app. */
+  title: string;
+  /** Paise, like every other price from this endpoint. */
+  price: number;
+  available: boolean;
+}
+
 export interface WishlistItem {
   handle: string;
   title: string;
@@ -19,11 +29,29 @@ export interface WishlistItem {
   compareAt: number | null;
   available: boolean;
   /**
-   * The variant to add, or null when the product has more than one. With
-   * several, the app opens the product page rather than picking for the
-   * customer — adding the wrong size is worse than one extra tap.
+   * The variant to add, or null when the product has more than one.
+   *
+   * Null is not "cannot be added" any more — it means "ask first". The
+   * standing rule is unchanged: this app never picks a size on the customer's
+   * behalf, because adding a 3 kg bag when they wanted 1 kg is worse than an
+   * extra tap. What changed is where the asking happens — a picker on the
+   * wishlist itself (../components/VariantSheet) rather than a trip to the
+   * product page. See `variants`.
    */
   variantId: number | null;
+  /**
+   * The choices, when there are any; empty when there is nothing to choose.
+   *
+   * Empty for a one-variant product (`variantId` already says what to add) and
+   * empty when the reply carried no usable variant rows — a product whose
+   * choices could not be read falls back to opening its page, which is the one
+   * answer that is always right.
+   *
+   * Capped by the bridge at WISHLIST_VARIANT_LIMIT, so this is not necessarily
+   * every variant a product has. The picker says so rather than implying the
+   * list is complete.
+   */
+  variants: readonly WishlistVariant[];
 }
 
 export interface Wishlist {
@@ -44,6 +72,47 @@ const asNumber = (value: unknown): number =>
 /** Shopify serves protocol-relative image urls; Android will not load those. */
 export const httpsUrl = (raw: string): string =>
   raw.indexOf('//') === 0 ? 'https:' + raw : raw;
+
+/** One shared empty list, so an item with no choices allocates nothing. */
+const EMPTY_VARIANTS: readonly WishlistVariant[] = Object.freeze([]);
+
+/**
+ * The variant rows, dropping any that could not furnish a whole row.
+ *
+ * A choice with no id cannot be added and a choice with no label cannot be
+ * described, so either one missing means the row is not shown — the same
+ * discipline parseItem applies to a half-known product. A price of 0 is
+ * dropped for the same reason a product's is: a picker offering a size at no
+ * price is worse than one fewer row.
+ *
+ * Returns a frozen empty array for anything that is not a list, so callers
+ * never have to distinguish "no variants" from "no reply".
+ */
+const parseVariants = (raw: unknown): readonly WishlistVariant[] => {
+  if (!Array.isArray(raw)) {
+    return EMPTY_VARIANTS;
+  }
+  const out: WishlistVariant[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const row = entry as Record<string, unknown>;
+    const id = row.id;
+    const title = asString(row.title);
+    const price = asNumber(row.price);
+    if (typeof id !== 'number' || !Number.isFinite(id) || !title || price <= 0) {
+      continue;
+    }
+    out.push({
+      id,
+      title,
+      price,
+      available: row.available !== false,
+    });
+  }
+  return out.length > 0 ? out : EMPTY_VARIANTS;
+};
 
 const parseItem = (raw: unknown, origin: string): WishlistItem | null => {
   if (typeof raw !== 'object' || raw === null) {
@@ -75,6 +144,7 @@ const parseItem = (raw: unknown, origin: string): WishlistItem | null => {
       typeof row.variantId === 'number' && row.variantCount === 1
         ? row.variantId
         : null,
+    variants: parseVariants(row.variants),
   };
 };
 

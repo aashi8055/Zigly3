@@ -116,6 +116,7 @@ import {
   REPORT_WISHLIST_HANDLES,
   toggleWishlistScript,
   removeFromWishlistScript,
+  WISHLIST_VARIANT_LIMIT,
 } from '../webview/wishlistBridge';
 import {parseWishlist} from '../wishlist/wishlistItems';
 import type {WishlistItem} from '../wishlist/wishlistItems';
@@ -489,6 +490,40 @@ export const FRESH_LOGIN_MS =
 const CHECKOUT_HOLD_CAP_MS = 5000;
 
 /**
+ * How long Add to Bag may spin before the bar gives itself back.
+ *
+ * A FAILSAFE, exactly as CHECKOUT_HOLD_CAP_MS is, and derived from the same
+ * place the real answer comes from: ../webview/productActions retries its
+ * /cart.js confirmation on a widening schedule totalling
+ * ADD_VERIFY_BUDGET_MS, and then reports -- either `cart-added` or
+ * `product-action-unavailable`. Past that budget the script has already
+ * spoken, so this only fires when the message never arrived: a page navigated
+ * out from under the injection, a WebView reloaded mid-flight.
+ *
+ * Derived rather than written as a number, so adding a retry to that schedule
+ * widens this instead of quietly escaping it. The margin covers the round trip
+ * the last attempt still has to make.
+ */
+const ADD_BUSY_CAP_MS = ADD_VERIFY_BUDGET_MS + 1500;
+
+/**
+ * How long Buy Now may spin.
+ *
+ * Not a failsafe -- this IS the mechanism, because nothing reports back.
+ * ../webview/productActions clicks Shiprocket's control and returns; on a
+ * product page there is no cart to re-read and no paint watcher (that exists
+ * only for the cart's Checkout, where an overlay has to be held over the
+ * page). So the spin is a fixed pause covering the hand-off: long enough to
+ * cover the second Shiprocket's signed session takes to arrive, short enough
+ * that a Buy Now which silently did nothing gives the button back quickly.
+ *
+ * Matched to CHECKOUT_HOLD_CAP_MS on purpose. It is the same wait, on the same
+ * embed, started by the same script -- two different numbers for it would be
+ * two different guesses at one thing.
+ */
+const BUY_BUSY_CAP_MS = CHECKOUT_HOLD_CAP_MS;
+
+/**
  * How long after a toast another `cart-added` may still be the same add.
  *
  * One tap on Add to Bag produces up to three reports -- the drawer watcher, the
@@ -820,6 +855,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * tap; what is delayed is uncovering it.
    */
   const [checkoutPending, setCheckoutPending] = useState(false);
+  /**
+   * A checkout was started from the dashboard, so the native dashboard has to
+   * stand aside to let it be seen.
+   *
+   * THIS IS THE "CHECKOUT GOES BACK TO THE DASHBOARD" BUG, and the cause was
+   * not the checkout. Shiprocket paints into the document the script ran in;
+   * with no page layer open that document is the dashboard's WebView, which is
+   * covered for the entire life of the app by ../native/NativeDashboard on an
+   * opaque layer. So the flow opened correctly, in a WebView nobody can see;
+   * the hold expired; the cart came off; and what was revealed was the native
+   * dashboard sitting on top of a working checkout.
+   *
+   * The WebView underneath is not a blank or a stand-in -- it is /pages/dog,
+   * a real page of the store carrying Shiprocket's script and their own
+   * checkout container (verified live 2026-09-10). So nothing has to be
+   * navigated or loaded: the layer above it comes down, and the checkout that
+   * was always there becomes visible.
+   *
+   * Cleared by `endCheckoutHold`, which every exit from a checkout goes
+   * through -- so the dashboard comes back whether the checkout finished, was
+   * abandoned, or never opened at all.
+   */
+  const [checkoutOnDashboard, setCheckoutOnDashboard] = useState(false);
   /**
    * Releases the hold if no paint is ever reported.
    *
@@ -2099,6 +2157,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   /**
+   * The checkout is over: put the native dashboard back over its WebView.
+   *
+   * Deliberately NOT part of `endCheckoutHold`. That runs when the HOLD ends,
+   * which is the moment the checkout becomes visible -- clearing the flag
+   * there would drop the native dashboard straight back on top of it, which
+   * is the very bug this exists to fix. The dashboard comes back when the
+   * customer LEAVES the checkout: closing the cart, going back, or the
+   * checkout reporting it could not open at all.
+   */
+  const endCheckoutOnDashboard = useCallback(() => {
+    setCheckoutOnDashboard(false);
+  }, []);
+
+  /**
    * Uncover the page: Shiprocket is there, or it is never going to say so.
    *
    * One place for both, because the overlay must come off exactly once and on
@@ -2130,6 +2202,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * close whatever they opened next.
      */
     endCheckoutHold();
+    /*
+     * And the dashboard takes its WebView back.
+     *
+     * Only reached when the customer closed the cart THEMSELVES -- the
+     * checkout's own release goes through releaseCheckoutHold, not this. So
+     * this is the case where they backed out of the cart rather than paying,
+     * and leaving the dashboard parked would show them the bare WebView.
+     */
+    endCheckoutOnDashboard();
     // Either badge may have changed while the cart was open.
     injectInto('home', REPORT_CART_COUNT);
     injectInto('home', REPORT_WISHLIST_COUNT);
@@ -2142,7 +2223,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
      */
     injectInto('home', REPORT_WISHLIST_HANDLES);
-  }, [endCheckoutHold, injectInto]);
+  }, [endCheckoutHold, endCheckoutOnDashboard, injectInto]);
 
   const openCart = useCallback(() => {
     setCart(null);
@@ -2309,6 +2390,98 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       if (checkoutHoldTimer.current) {
         clearTimeout(checkoutHoldTimer.current);
         checkoutHoldTimer.current = null;
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------ the product bar's spinner
+  /**
+   * Which of the sticky bar's two buttons is waiting on an answer, or null.
+   *
+   * ONE piece of state for two buttons, deliberately: only one of them can be
+   * in flight, because ../components/ProductActionBar disables both while
+   * either is working. Two independent booleans could represent "both
+   * spinning", which is a state this app has no way to be in and would only
+   * ever be reached by a bug.
+   *
+   * Why it is needed at all: neither button's work is local or instant.
+   * Add to Bag clicks the theme's real button and then re-reads /cart.js to
+   * confirm the line landed, retrying for up to ADD_VERIFY_BUDGET_MS; Buy Now
+   * hands off to Shiprocket, whose signed session takes about a second to
+   * paint. In both windows the only feedback was the press opacity, which
+   * ends with the finger -- so a tap on a slow connection was indistinguishable
+   * from a tap that had done nothing.
+   */
+  const [productBusy, setProductBusy] = useState<'add' | 'buy' | null>(null);
+  /**
+   * The failsafe that ends a spin nothing else ended.
+   *
+   * Not optional, and it is the whole reason this is a timer and not just a
+   * flag cleared by a message. Every path that resolves one of these actions
+   * is a message from inside the WebView -- `cart-added`,
+   * `product-action-unavailable`, a checkout that paints -- and a message is
+   * exactly the thing that can fail to arrive: a page navigated away
+   * mid-flight, a script that threw before its own reporter ran, a WebView
+   * reloaded under it. A spinner with no deadline is then permanent, and it
+   * has disabled both buttons on the way, so the customer cannot buy the
+   * product at all. Being wrong for a moment is recoverable; a dead bar is
+   * not.
+   */
+  const productBusyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Stop whichever spinner is running, and disarm its failsafe.
+   *
+   * Every exit from a spin goes through here -- success, failure, timeout, and
+   * the customer leaving the page -- for the same reason `endCheckoutHold`
+   * exists: the path that forgets the timer is the one that fires a stale
+   * clear later and stops a spinner belonging to the NEXT tap.
+   */
+  const clearProductBusy = useCallback(() => {
+    if (productBusyTimer.current) {
+      clearTimeout(productBusyTimer.current);
+      productBusyTimer.current = null;
+    }
+    setProductBusy(null);
+  }, []);
+
+  /**
+   * Start a spin on one of the two buttons, armed with the failsafe above.
+   *
+   * The budget differs per button because the waits are different things.
+   * Add to Bag is bounded by its own verify schedule, so its deadline is
+   * that budget plus a margin for the round trip the last attempt still has
+   * to make -- past it, productActions has already given up and sent
+   * `product-action-unavailable`, so this only ever fires if that message was
+   * lost. Buy Now has no verify at all: nothing reports back when Shiprocket
+   * paints on a product page, so the spin is a fixed pause that covers the
+   * hand-off and then stops on its own.
+   */
+  const startProductBusy = useCallback(
+    (which: 'add' | 'buy') => {
+      if (productBusyTimer.current) {
+        clearTimeout(productBusyTimer.current);
+        productBusyTimer.current = null;
+      }
+      setProductBusy(which);
+      productBusyTimer.current = setTimeout(
+        () => {
+          productBusyTimer.current = null;
+          setProductBusy(null);
+        },
+        which === 'add' ? ADD_BUSY_CAP_MS : BUY_BUSY_CAP_MS,
+      );
+    },
+    [],
+  );
+
+  /** The spinner's timer must not outlive the screen, as the hold's must not. */
+  useEffect(
+    () => () => {
+      if (productBusyTimer.current) {
+        clearTimeout(productBusyTimer.current);
+        productBusyTimer.current = null;
       }
     },
     [],
@@ -4043,6 +4216,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       // away from abandoning a paid-for basket.
       setInCheckout(nowInCheckout);
       log(nowInCheckout ? 'entered checkout flow' : 'left checkout flow');
+      /*
+       * Out of checkout and back on the store: the native dashboard takes its
+       * WebView back. This is the normal way home from a Shiprocket checkout
+       * that was opened from the dashboard -- their flow navigates this
+       * WebView, so leaving it is a navigation like any other.
+       */
+      if (!nowInCheckout) {
+        setCheckoutOnDashboard(false);
+      }
     }
   }, []);
 
@@ -4401,6 +4583,27 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !showError;
 
   /**
+   * A spin belongs to the product page it was started on.
+   *
+   * ../components/ProductActionBar is unmounted the moment `onProductPage`
+   * goes false -- the customer went back, opened the cart, tapped a tab -- and
+   * an unmounted button can neither show a spinner nor be given back. Without
+   * this the flag would survive that, so the NEXT product page would mount
+   * with both buttons already disabled and spinning for an action that
+   * finished on a screen the customer has left.
+   *
+   * Keyed on `onProductPage` itself rather than on a second test of its own,
+   * because that is the exact condition the bar is rendered under -- see the
+   * bar's own block far below. Placed here, immediately after it is derived,
+   * for the same reason.
+   */
+  useEffect(() => {
+    if (!onProductPage) {
+      clearProductBusy();
+    }
+  }, [onProductPage, clearProductBusy]);
+
+  /**
    * Whether the search band is on screen at all.
    *
    * Named rather than written inline on the header, because two things now
@@ -4412,17 +4615,60 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    *
    * Dashboard and shopping pages carry the band; breed and content pages show
    * only the back arrow and the logo. The search screen brings its own field,
-   * so the band stands down. A product's own page drops it too: ProductActionBar
-   * already takes the screen's bottom slot, and the reference app's product page
-   * shows no search band either.
+   * so the band stands down.
+   *
+   * A PRODUCT PAGE CARRIES IT TOO, and that is a change. It used to be
+   * excluded on the argument that ProductActionBar takes the screen's bottom
+   * slot and the reference app's product page shows no band -- but the bar is
+   * at the FOOT and the band is at the head, so they never contended for the
+   * same space, and a customer who has just looked at one product and wants
+   * another had no way to search without going back first. Every shopping
+   * surface in the app now offers the same field in the same place.
+   *
+   * The wishlist is the one shopping screen still without it: it is a short,
+   * finite list the customer assembled themselves, and there is nothing there
+   * to search.
    */
   const showSearchBand =
     (headerUrl === null || onShopPage) &&
-    !onProductPage &&
     !showCart &&
     !searchOpen &&
     !wishlistOpen &&
-    !onAccountScreen;
+    !onAccountScreen &&
+    /*
+     * Not where a native screen is drawn over the page.
+     *
+     * A collection is `onShopPage`, so it qualified above -- but its grid is
+     * ../native/CollectionScreen on an opaque layer over the WebView, so the
+     * injected band would be built into a document nobody can see. The band
+     * there is native, from the same component the dashboard uses; see
+     * `nativeSearchBand` below. Left in, this would only be a band the
+     * customer cannot see, but it would also be a second one to keep in step.
+     */
+    !onNativeCollection;
+
+  /**
+   * The band the two native collection screens draw, or null.
+   *
+   * The same component the dashboard's list carries, with the same site-read
+   * placeholders and the same tap, so all three are one field rather than
+   * three that agree by luck. Built here rather than inside either screen
+   * because the placeholders and the search screen are this file's business
+   * (../components/NativeHeader's SearchBandSection is deliberately ignorant
+   * of both).
+   *
+   * `offscreen` is not driven here. The dashboard has a scroll offset to read
+   * (`bandGone`) and these screens do not; the typewriter running while the
+   * band is scrolled off is an economy, not a correctness matter -- see the
+   * note on SearchBandSection's own prop.
+   */
+  const nativeSearchBand = onNativeCollection ? (
+    <SearchBandSection
+      onSearchPress={openSearch}
+      searchPlaceholders={searchPlaceholders}
+      searchTypeMs={searchTypeMs}
+    />
+  ) : null;
 
   /**
    * Whether the DASHBOARD draws its own native band.
@@ -4813,6 +5059,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   );
                 }
               } else if (data && data.tag === 'cart-added') {
+                /*
+                 * The sticky bar's spinner stops here too.
+                 *
+                 * This is the DASHBOARD's WebView, which is not where a
+                 * product page's Add to Bag runs -- but it is where the
+                 * wishlist's and the cards' adds run, and one shared clear is
+                 * safer than one that only fires for the layer it expects. A
+                 * clear for a spinner that is not running is a no-op; a
+                 * spinner nobody clears disables both buttons until its
+                 * failsafe fires.
+                 */
+                clearProductBusy();
                 reportCartAdded(typeof data.n === 'number' ? data.n : undefined);
               } else if (data && data.tag === 'cart-checkout-started') {
                 /*
@@ -4853,6 +5111,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  * otherwise close the cart five seconds after the toast.
                  */
                 endCheckoutHold();
+                // No checkout opened, so there is nothing under the dashboard
+                // to reveal: it keeps its WebView.
+                endCheckoutOnDashboard();
                 setToastMessage("Couldn't open checkout — please try again");
               } else if (data && data.tag === 'wishlist-count') {
                 /*
@@ -4995,7 +5256,22 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           sections are components. The first layout is the moment there is
           something real on screen.
         */}
-        <View style={styles.pageLayer}>
+        <View
+          /*
+           * Parked off screen while a checkout started from the dashboard is
+           * up, so Shiprocket -- which paints into the WebView underneath this
+           * layer -- can actually be seen. See `checkoutOnDashboard`.
+           *
+           * PARKED, not unmounted and not display:none. The same technique the
+           * page layers use for a kept-alive page (`styles.parked`), and for
+           * the same reason: the dashboard is expensive to assemble and holds
+           * its own scroll position, so it must come back exactly as it was
+           * rather than being rebuilt when the customer returns from checkout.
+           */
+          style={[
+            styles.pageLayer,
+            checkoutOnDashboard ? styles.parked : null,
+          ]}>
           {/*
             The wishlist, for every product card the dashboard draws.
 
@@ -5433,6 +5709,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   try {
                     const data = JSON.parse(nativeEvent.data);
                     if (data && data.tag === 'cart-added') {
+                      /*
+                       * The line landed, so the sticky bar's spinner stops.
+                       *
+                       * Cleared unconditionally rather than only when
+                       * productBusy is 'add': an add reports itself up to
+                       * three times (see reportCartAdded) and the toast
+                       * coalescer already sorts the repeats out, so this only
+                       * needs to be the first one to arrive. Clearing a
+                       * spinner that is not running is a no-op.
+                       */
+                      clearProductBusy();
                       reportCartAdded(
                         typeof data.n === 'number' ? data.n : undefined,
                       );
@@ -5481,6 +5768,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       // could not confirm) the site's real button -- see
                       // ../webview/productActions. Say so rather than leaving
                       // a tap that visibly did nothing.
+                      //
+                      // The spinner stops first: the customer is about to be
+                      // told this failed, and a button still spinning under
+                      // that message would contradict it.
+                      clearProductBusy();
                       setToastMessage(
                         data.action === 'buy'
                           ? "Buy Now isn't available for this item right now"
@@ -5640,9 +5932,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   filteredHandles={gridResults}
                   onOpen={openFromDashboard}
                   onAdd={addFromGrid}
+                  // The injected band cannot be seen under this layer, so the
+                  // band here is native -- see `nativeSearchBand`.
+                  searchBand={nativeSearchBand}
                 />
               ) : (
-                <CollectionList onOpen={openFromDashboard} />
+                <CollectionList
+                  onOpen={openFromDashboard}
+                  searchBand={nativeSearchBand}
+                />
               )}
             </WishlistProvider>
           </View>
@@ -5718,10 +6016,48 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   releaseCheckoutHold,
                   CHECKOUT_HOLD_CAP_MS,
                 );
+                /*
+                 * INTO A WEBVIEW THE CUSTOMER WILL ACTUALLY SEE.
+                 *
+                 * This is the fix for "Checkout takes me back to the
+                 * dashboard", and the cause was not the script -- it was the
+                 * target. Shiprocket paints into the document the script ran
+                 * in, and 'home' is the dashboard's WebView, which is covered
+                 * for the whole life of the app by an opaque native layer
+                 * (../native/NativeDashboard, mounted on `styles.pageLayer`
+                 * unconditionally). So the checkout opened correctly, in a
+                 * document nobody can see, the hold expired, the cart came
+                 * off, and what was revealed was the native dashboard. Every
+                 * part of that worked as written; the checkout was simply
+                 * behind the wrong screen.
+                 *
+                 * `showing` -- the visible page layer -- is the right target
+                 * whenever there is one, and that is why Checkout has always
+                 * worked when the cart was opened from a product page.
+                 *
+                 * When there is none the customer is on the dashboard, and the
+                 * fix is NOT to navigate somewhere: the dashboard's WebView is
+                 * a real page of the store (/pages/dog) with Shiprocket's
+                 * script and their checkout container already on it, verified
+                 * live on 2026-09-10. It is only hidden. So the target stays
+                 * 'home' and the native dashboard steps aside instead -- see
+                 * `checkoutNeedsPage`. Nothing loads, nothing navigates, and
+                 * the session behind the checkout is the one already there.
+                 */
                 injectInto(
                   showing ? showing.key : 'home',
                   CART_CHECKOUT_SCRIPT,
                 );
+                /*
+                 * Remember that this checkout has no page layer of its own, so
+                 * the layer covering the dashboard's WebView can come down
+                 * when the cart does. Set only in that case: when a page layer
+                 * IS showing, Shiprocket paints there and the dashboard
+                 * underneath is irrelevant.
+                 */
+                if (!showing) {
+                  setCheckoutOnDashboard(true);
+                }
               }}
               checkoutPending={checkoutPending}
               onOpenItem={url => {
@@ -5750,17 +6086,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 closeWishlist();
                 showPage(item.url);
               }}
-              onAddToBag={item => {
-                if (item.variantId === null) {
-                  // More than one variant: the customer picks, not us.
-                  closeWishlist();
-                  showPage(item.url);
-                  return;
-                }
-                // Into the same cart as everything else, via the dashboard
-                // WebView. The toast and the badge follow from its reply.
-                injectInto('home', addToCartScript(item.variantId));
+              onAddToBag={(_item, variantId) => {
+                /*
+                 * Into the same cart as everything else, via the dashboard
+                 * WebView. The toast and the badge follow from its reply.
+                 *
+                 * The variant is decided before this runs and the screen
+                 * stays put -- a one-variant product adds its only variant, a
+                 * product with choices adds the one picked in
+                 * ../components/VariantSheet. This used to navigate to the
+                 * product page for the second case, which is why a tap on Add
+                 * to Bag looked like it had opened a product page instead of
+                 * adding anything.
+                 */
+                injectInto('home', addToCartScript(variantId));
               }}
+              /*
+               * The cap the bridge applied, so the picker can tell a complete
+               * list of choices from a truncated one. Passed as the NUMBER
+               * rather than as a boolean: cappedness is a property of each
+               * product (nine variants is not capped, thirteen is), so the
+               * comparison belongs beside the product it is about, not here.
+               */
+              variantLimit={WISHLIST_VARIANT_LIMIT}
             />
           </View>
         ) : null}
@@ -5869,14 +6217,31 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         <ProductActionBar
           onAddToBag={() => {
             if (showing) {
+              /*
+               * The spin starts on the tap and not on the script's first
+               * reply, because the gap this fills begins at the tap. It ends
+               * on `cart-added` (the line landed), on
+               * `product-action-unavailable` (it did not), or on its own
+               * failsafe -- see startProductBusy.
+               *
+               * Armed only when there is a layer to inject into: a spinner
+               * over a script that was never sent would spin for its whole
+               * budget and report nothing.
+               */
+              startProductBusy('add');
               injectInto(showing.key, PRODUCT_ADD_TO_BAG_SCRIPT);
             }
           }}
           onBuyNow={() => {
             if (showing) {
+              // Nothing reports Shiprocket painting on a product page, so this
+              // spin is bounded by BUY_BUSY_CAP_MS alone -- see startProductBusy.
+              startProductBusy('buy');
               injectInto(showing.key, PRODUCT_BUY_NOW_SCRIPT);
             }
           }}
+          addBusy={productBusy === 'add'}
+          buyBusy={productBusy === 'buy'}
         />
       ) : null}
 

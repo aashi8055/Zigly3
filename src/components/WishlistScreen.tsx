@@ -17,7 +17,7 @@
  * out not to have happened, the tile comes back and the screen says so — see the
  * notice strip below.
  */
-import React from 'react';
+import React, {useCallback, useState} from 'react';
 import {
   Animated,
   Image,
@@ -32,6 +32,7 @@ import {money} from '../utils/money';
 import EmptyState from './EmptyState';
 import {HeartShape} from './glyphs';
 import type {WishlistItem} from '../wishlist/wishlistItems';
+import VariantSheet from './VariantSheet';
 import {Block, usePulse} from './Skeleton';
 
 interface Props {
@@ -39,14 +40,31 @@ interface Props {
   items: WishlistItem[] | null;
   onOpenItem: (item: WishlistItem) => void;
   /**
-   * Adds the item to the bag. Only ever called for a single-variant product;
-   * the screen sends multi-variant products to their page instead.
+   * Adds the item to the bag.
+   *
+   * Called with a variant id the CUSTOMER settled, never one this screen
+   * chose. For a one-variant product that is the product's only variant; for a
+   * product with choices it is whichever row they tapped in the picker. The
+   * standing rule -- this app never guesses a size -- is kept either way; see
+   * ./VariantSheet on why the asking happens here rather than on the product
+   * page.
    */
-  onAddToBag: (item: WishlistItem) => void;
+  onAddToBag: (item: WishlistItem, variantId: number) => void;
   /** Un-saves the item. The tile is expected to disappear immediately. */
   onRemove: (item: WishlistItem) => void;
   /** Shown when a removal could not be confirmed, and the tile came back. */
   notice?: string | null;
+  /**
+   * How many variants the bridge was willing to carry per product.
+   *
+   * Threaded from the screen that owns the bridge, so this file never has a
+   * second copy of the cap to drift from. Used to tell a product whose
+   * choices are all here from one whose list was truncated -- the picker
+   * offers the product page only for the latter. Undefined means "assume
+   * nothing was truncated", which is the right default for a caller that does
+   * not cap.
+   */
+  variantLimit?: number;
 }
 
 const Tile = ({
@@ -101,13 +119,17 @@ const Tile = ({
 
     {item.available ? (
       <Pressable
-        onPress={item.variantId === null ? onOpen : onAdd}
+        /*
+         * Always the add path now. `onAdd` decides HOW -- straight in for a
+         * one-variant product, through the picker for a product with choices
+         * -- and only falls back to the product page when the choices could
+         * not be read at all. It used to be this Pressable that made that
+         * decision, and it made it by navigating: a tap on Add to Bag opened
+         * a product page, which reads as the button not working.
+         */
+        onPress={onAdd}
         accessibilityRole="button"
-        accessibilityLabel={
-          item.variantId === null
-            ? 'Choose options for ' + item.title
-            : 'Add to Bag: ' + item.title
-        }
+        accessibilityLabel={'Add to Bag: ' + item.title}
         style={({pressed}) => [styles.addButton, pressed && styles.pressed]}>
         <Text style={styles.addLabel}>Add to Bag</Text>
       </Pressable>
@@ -136,7 +158,46 @@ const WishlistScreen = ({
   onAddToBag,
   onRemove,
   notice,
+  variantLimit,
 }: Props) => {
+  /**
+   * The product whose choices are being picked, or null when none are.
+   *
+   * The item itself rather than its handle, so the sheet has the title and the
+   * rows without looking anything up -- and so a list that changes underneath
+   * (a removal confirming, a re-read landing) cannot leave the sheet pointing
+   * at a row that is no longer there.
+   */
+  const [picking, setPicking] = useState<WishlistItem | null>(null);
+
+  /**
+   * What Add to Bag does, per product.
+   *
+   * Three cases, in the order they are decided:
+   *
+   *   1. ONE VARIANT. `variantId` is set, so there is nothing to ask: add it.
+   *      Two thirds of the catalogue is this case.
+   *   2. CHOICES. Open the picker. The add still happens from this screen, and
+   *      still with a variant the customer chose -- see ./VariantSheet.
+   *   3. NEITHER. A product with more than one variant whose variant rows
+   *      could not be read: open its page. The one answer that is always
+   *      right, and the behaviour every multi-variant product used to get.
+   */
+  const startAdd = useCallback(
+    (item: WishlistItem) => {
+      if (item.variantId !== null) {
+        onAddToBag(item, item.variantId);
+        return;
+      }
+      if (item.variants.length > 0) {
+        setPicking(item);
+        return;
+      }
+      onOpenItem(item);
+    },
+    [onAddToBag, onOpenItem],
+  );
+
   if (items === null) {
     // Not yet read. Short now that the read is a storage lookup plus one
     // request per saved product, but not nothing -- and showing the empty
@@ -176,11 +237,46 @@ const WishlistScreen = ({
             key={item.handle}
             item={item}
             onOpen={() => onOpenItem(item)}
-            onAdd={() => onAddToBag(item)}
+            onAdd={() => startAdd(item)}
             onRemove={() => onRemove(item)}
           />
         ))}
       </ScrollView>
+
+      {/*
+        The picker, for a product with choices. A Modal, so it is drawn in its
+        own window over this screen rather than inside the grid -- which is
+        what lets it dim the header and the tab bar as ./SortSheet does.
+
+        Rendered inside this branch only, and that is correct: `picking` can
+        only be set by a tap on a tile, and there are no tiles on either of the
+        two branches above.
+      */}
+      <VariantSheet
+        product={picking}
+        /*
+         * Capped only when this product's own list reached the cap. A product
+         * with nine choices under a cap of twelve is complete and must not be
+         * offered a trip to its product page; one with exactly twelve may have
+         * had a thirteenth dropped, and is.
+         */
+        capped={
+          variantLimit !== undefined &&
+          picking !== null &&
+          picking.variants.length >= variantLimit
+        }
+        onSelect={variantId => {
+          if (picking !== null) {
+            onAddToBag(picking, variantId);
+          }
+        }}
+        onSeeAll={() => {
+          if (picking !== null) {
+            onOpenItem(picking);
+          }
+        }}
+        onClose={() => setPicking(null)}
+      />
     </View>
   );
 };

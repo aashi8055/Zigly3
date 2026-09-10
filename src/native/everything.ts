@@ -62,7 +62,7 @@ export type EverythingTab = {
  * The theme says "Everything For"; see the note above on why the app completes
  * the phrase.
  */
-export const EVERYTHING_TITLE = 'Everything For Your Pet';
+export const EVERYTHING_TITLE = 'Everything For';
 
 /**
  * A tile.

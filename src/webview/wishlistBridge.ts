@@ -54,6 +54,22 @@
 export const WISHLIST_LIMIT = 40;
 
 /**
+ * How many of one product's variants the bridge carries.
+ *
+ * A bound on the message, not on the catalogue: the widest product on the
+ * store has nine variants (checked live, 2026-09-10), so this fits every real
+ * product with room over. It exists because the reply is one JSON string
+ * crossing the WebView boundary and a wishlist is capped at WISHLIST_LIMIT
+ * products -- without a cap here the worst case multiplies.
+ *
+ * A product with MORE variants than this is not broken by it: the sheet shows
+ * the ones it was given, and the sheet's own "See all options" row opens the
+ * product page, which is the complete list by definition. See
+ * ../components/VariantSheet.
+ */
+export const WISHLIST_VARIANT_LIMIT = 12;
+
+/**
  * Read the saved handles and price them.
  *
  * Deliberately NOT idempotent, and deliberately not guarded against running
@@ -67,6 +83,7 @@ export const WISHLIST_LIMIT = 40;
 export const WISHLIST_SCRIPT = `
 (function () {
   var LIMIT = ${WISHLIST_LIMIT};
+  var VARIANT_LIMIT = ${WISHLIST_VARIANT_LIMIT};
   var sent = false;
 
   function send(payload) {
@@ -168,10 +185,40 @@ export const WISHLIST_SCRIPT = `
               variantCount: variants.length,
               /*
                * Only meaningful when there is exactly one variant. With more,
-               * the app opens the product page rather than choosing on the
-               * customer's behalf.
+               * the customer picks -- see the variant rows below.
                */
-              variantId: variants.length === 1 ? variants[0].id : null
+              variantId: variants.length === 1 ? variants[0].id : null,
+              /*
+               * THE CHOICES THEMSELVES, so a product with sizes can be added
+               * without leaving the wishlist.
+               *
+               * The screen used to send every multi-variant product to its
+               * product page, because adding one on the customer's behalf can
+               * put a 3 kg bag in the bag when they wanted 1 kg -- a rule that
+               * stands (see ../native/products). What changed is that the app
+               * can now ASK: ../components/VariantSheet lists these and adds
+               * the one chosen, so the rule is kept without the navigation.
+               *
+               * Capped, and each row is only what a row needs. A wishlist of
+               * 40 products each with nine variants would otherwise put 360
+               * rows through the bridge, most of them for tiles the customer
+               * never taps -- and this message crosses the WebView boundary as
+               * one JSON string.
+               *
+               * The title is Shopify's own variant label ("M", "1 kg") and
+               * is never composed here; a label this app invented could
+               * disagree with what the product page shows.
+               */
+              variants: variants.slice(0, VARIANT_LIMIT).map(function (v) {
+                return {
+                  id: v.id,
+                  title: v.title,
+                  // Integer paise, straight from Shopify, exactly as the
+                  // product's own price above.
+                  price: v.price,
+                  available: v.available !== false
+                };
+              })
             };
           }
           finish();

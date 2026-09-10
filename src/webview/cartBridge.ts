@@ -282,7 +282,48 @@ export const CART_CHECKOUT_SCRIPT = `
       }
       if (!fallback) { fallback = el; }
     }
-    return fallback;
+    if (fallback) { return fallback; }
+
+    /*
+     * THE THEME'S OWN MINI-CART CONTAINER, when no onclick control exists.
+     *
+     * Read out of the theme source on 2026-09-10, and it changes what this
+     * function can assume. Fastrr does not ship a control in the markup at
+     * all: snippets/cart-drawer.liquid renders an EMPTY
+     * div.shiprocket-headless[data-type="mini-cart"], and their own script
+     * fills it at runtime -- the theme's comment beside it says as much
+     * ("Fastrr renders its own click handling inside .shiprocket-headless").
+     * Whatever it puts there need not carry an onclick attribute, so every
+     * pass above can come up empty on a page where the checkout works
+     * perfectly well.
+     *
+     * So the container is asked directly, mini-cart first: that is the one
+     * the cart's Checkout is for. Its first clickable descendant is the
+     * control; failing that, the container itself, which is what their own
+     * click handling is bound to.
+     *
+     * A BLOCKED container is skipped. The store gates checkout on a
+     * prescription upload by putting .is-prescription-blocked on this very
+     * node (pointer-events: none), and the theme's comment is explicit that
+     * their click cannot be intercepted, so this is enforced visually rather
+     * than in JS. Clicking through that gate from native code would bypass a
+     * rule the website enforces -- so it is treated as no control, and the
+     * customer is told, exactly as any other unavailable checkout is.
+     */
+    var boxes = document.querySelectorAll('.shiprocket-headless[data-type="mini-cart"]');
+    for (var b = 0; b < boxes.length; b++) {
+      var box = boxes[b];
+      if (box.className && String(box.className).indexOf('is-prescription-blocked') !== -1) {
+        continue;
+      }
+      var inner = box.querySelector('button, a, [role="button"], [onclick]');
+      if (inner) { return inner; }
+      // Nothing inside yet, but the container is theirs and their handler is
+      // on it. Only offered when it has actually been filled -- an empty box
+      // is Fastrr not having run, and clicking it would do nothing silently.
+      if (box.children && box.children.length > 0) { return box; }
+    }
+    return null;
   }
 
   /**
@@ -446,6 +487,44 @@ export const CART_CHECKOUT_SCRIPT = `
      * bare "unavailable" gives nobody anything to go on. Reads only -- no
      * state is touched on the way out.
      */
+    /*
+     * The container's own state, alongside the controls.
+     *
+     * Added because "no control" has three different causes on this store and
+     * the old report could not tell them apart:
+     *
+     *   - Fastrr has not run yet, so their container is still empty.
+     *   - Fastrr is not going to run: theme.liquid only shows their checkout
+     *     for an India timezone (Asia/Kolkata or Asia/Calcutta) and hides
+     *     .shiprocket-headless outright otherwise, falling back to Shopify's
+     *     own button. THIS SCRIPT STILL WILL NOT PRESS THAT -- see the file
+     *     note on why landing in Shopify's flow is worse than reporting
+     *     failure -- it only says so, so the cause is visible in a log.
+     *   - The prescription gate is on, so their control is deliberately
+     *     pointer-events: none and must not be clicked from here.
+     *
+     * All three look identical from the app side, and each needs a different
+     * fix. The timezone is reported too, because that is the one condition
+     * this app cannot see any other way.
+     */
+    var boxState = [];
+    var allBoxes = document.querySelectorAll('.shiprocket-headless');
+    for (var b = 0; b < allBoxes.length && b < 6; b++) {
+      var bx = allBoxes[b];
+      var style = null;
+      try { style = window.getComputedStyle(bx); } catch (e) {}
+      boxState.push({
+        type: bx.getAttribute('data-type') || '',
+        children: bx.children ? bx.children.length : 0,
+        blocked: String(bx.className || '').indexOf('is-prescription-blocked') !== -1,
+        display: style ? style.display : ''
+      });
+    }
+    var zone = '';
+    try {
+      zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    } catch (e) {}
+
     send({
       tag: 'cart-checkout-unavailable',
       path: location.pathname,
@@ -454,7 +533,9 @@ export const CART_CHECKOUT_SCRIPT = `
         ? Object.keys(window.shiprocketCheckoutEvents).slice(0, 30)
         : [],
       controls: seen.length,
-      sample: sample
+      sample: sample,
+      boxes: boxState,
+      timezone: zone
     });
   } catch (e) {
     send({tag: 'cart-checkout-unavailable', error: String(e).slice(0, 200)});
