@@ -10,10 +10,13 @@
  *    rendered section gets the desktop one -- three times the bytes, cut for a
  *    shape a phone does not have. The keys are full filenames so they cannot.
  *
- * 2. TREAT THE UNLINKED BANNER AS A LINK. The brand-claims strip's
- *    `button_link` is empty in the theme: it is a statement, not a
- *    destination. A banner that announces itself as a link and then does
- *    nothing is worse than one that does not announce itself.
+ * 2. TREAT AN UNLINKED BANNER AS A LINK. Two of them have no path. The
+ *    brand-claims strip's `button_link` is empty in the theme: it is a
+ *    statement, not a destination. The gift-card block's is not empty, and is
+ *    emptied here anyway -- its artwork says "Coming Soon" while the theme's
+ *    link points at the whole catalogue, so the tap promised the one thing it
+ *    could not deliver. A banner that announces itself as a link and then does
+ *    nothing useful is worse than one that does not announce itself.
  *
  * 3. DRAW THE HEADING AND BUTTON. The section supports `banner_heading`,
  *    `banner_description` and `button_text` over the artwork, and all three
@@ -89,6 +92,38 @@ describe('the banner with no link', () => {
    */
   it('gives the brand-claims strip no path', () => {
     expect(LOGOS_BANNER.tiles[0].path).toBe('');
+  });
+
+  /**
+   * IT IS ALSO THE INSET ONE, AND ../src/native/SingleBanner NOW READS THAT
+   * FIELD RATHER THAN THIS ONE.
+   *
+   * The component picks `contain` over `cover` for the strip, because its
+   * artwork is a row of separate marks and `cover`'s trim lands on the
+   * outermost two -- which is what was clipping the end claims. The obvious
+   * way to spell "the strip" was "the banner with no path", since it was the
+   * only one; the gift-card banner joined it there when its coming-soon block
+   * stopped being tappable, and that one IS a single campaign image that
+   * should still cover.
+   *
+   * So `inset` is the field that actually names the odd one out. Pinned here
+   * because the component's behaviour now depends on exactly one banner having
+   * it: a second banner given an inset would silently change how its artwork
+   * is fitted.
+   */
+  it('insets the brand-claims strip and nothing else', () => {
+    const inset = DASHBOARD_BANNERS.filter(b => b.inset);
+    expect(inset).toEqual([LOGOS_BANNER]);
+  });
+
+  /**
+   * And it is inset by less than it was. At 28dp a side the strip drew inside
+   * 304dp of a 360dp phone, and every dp came off all four claim marks at
+   * once. 12 is the page's own gutter, so the strip lines up with the rails
+   * above it rather than standing further in than anything else.
+   */
+  it('insets it by the page’s own gutter, not more', () => {
+    expect(LOGOS_BANNER.inset).toBe(12);
   });
 
   it('gives the other two a real destination', () => {
@@ -197,14 +232,35 @@ describe('the double banner is one section drawn as two blocks', () => {
 
   /**
    * THE PLACEHOLDER THAT IS STILL DRAWN. The gift-card artwork is literally
-   * named `…Coming-Soon.png` and its link is the bare collections LIST rather
-   * than a collection. Zigly ship it that way; suppressing it would be this app
-   * deciding a merchant's placement was a mistake. Asserted so it is not
-   * "fixed" away, and so the odd link is not read as a bug.
+   * named `…Coming-Soon.png`. Zigly ship it that way; suppressing it would be
+   * this app deciding a merchant's placement was a mistake. Asserted so it is
+   * not "fixed" away.
    */
   it('keeps Zigly’s coming-soon gift-card block as they ship it', () => {
     expect(GIFT_CARD_BANNER.tiles[0].key).toContain('Coming-Soon');
-    expect(GIFT_CARD_BANNER.tiles[0].path).toBe('/collections');
+  });
+
+  /**
+   * AND IT IS NOT TAPPABLE, WHICH IS THIS APP'S OWN DECISION.
+   *
+   * This test used to assert the opposite -- `path` was `/collections`, the
+   * theme's own `button_link_2` resolved from `shopify://collections`, and the
+   * note above called the odd link something not to be read as a bug. It was
+   * not a bug, but it was a bad tap: the artwork says "Coming Soon" and the
+   * link went to the entire catalogue, so the one destination the banner
+   * promises is the one place the tap could not go.
+   *
+   * An empty path is this codebase's own spelling of "not a control" -- the
+   * brand-claims strip above uses it, and ../src/native/SingleBanner draws
+   * such a banner as an image with no press state and no link role. So the
+   * block still draws exactly as Zigly ship it and simply does nothing when
+   * touched, which is the honest rendering of a thing that does not exist yet.
+   *
+   * WHEN THE GIFT CARDS SHIP, this test and the `path` in ../src/native/
+   * singleBanners move back together.
+   */
+  it('gives the coming-soon block no destination', () => {
+    expect(GIFT_CARD_BANNER.tiles[0].path).toBe('');
   });
 
   it('sends the Paw-ty banner to the birthday collection', () => {

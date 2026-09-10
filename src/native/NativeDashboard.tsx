@@ -115,15 +115,28 @@ export type DashboardHandlers = {
    * ../webview/cartBridge inside the WebView -- see the note at the top on why
    * this cannot be a native fetch.
    */
-  onAdd: (variantId: number) => void;
+  onAdd: (variantId: number, handle: string) => void;
   /**
-   * Play the promotional video, if the app can.
+   * The handle of the product whose add is in flight, or null.
    *
-   * Optional, and omitted today: React Native has no `<Video>` and no media
-   * package is installed. ./VideoBlock draws the poster, the heading and the
-   * copy -- which is the section's resting state on the site too -- and shows
-   * no play glyph while this is undefined, because a play button that does
-   * nothing is worse than none.
+   * The dashboard does not own it -- see ./ProductRail on why the screen does
+   * -- and only the two product rails read it. Optional, so a caller that does
+   * not track it (a test) draws the cards exactly as before.
+   */
+  addingHandle?: string | null;
+  /**
+   * Take the promotional video's play over from the section.
+   *
+   * Optional, and omitted today -- which is the working case, not a gap.
+   * Undefined means ./VideoBlock plays the video itself, in place, through the
+   * site's own YouTube embed in a small WebView. A handler here would suppress
+   * that and receive the tap instead: the hook for a future full-screen or
+   * external route.
+   *
+   * (This prop used to mean the opposite. It was the block's ONLY way to play
+   * anything, because the component had no player of its own, so an omitted
+   * handler meant the poster was an inert picture with no play glyph. Both the
+   * glyph and the play are unconditional now.)
    */
   onPlayVideo?: () => void;
   /** Called once the first screenful has laid out. See the note below. */
@@ -196,7 +209,7 @@ const renderSection = (
   handlers: DashboardHandlers,
   width: number,
 ): React.ReactNode => {
-  const {onOpen, onAdd, onPlayVideo} = handlers;
+  const {onOpen, onAdd, onPlayVideo, addingHandle = null} = handlers;
 
   switch (key) {
     case 'categories':
@@ -234,7 +247,9 @@ const renderSection = (
         />
       );
     case 'hot-picks':
-      return <HotPicks onOpen={onOpen} onAdd={onAdd} />;
+      return (
+        <HotPicks onOpen={onOpen} onAdd={onAdd} addingHandle={addingHandle} />
+      );
     case 'explore':
       // `width` drives the tile size: Explore's are photographs of a category
       // and are sized so two and a quarter fill the row. See ./TileRow.
@@ -261,7 +276,13 @@ const renderSection = (
     case 'offers-style':
       return <OfferRail rail={STYLE_STEALS} onOpen={onOpen} width={width} />;
     case 'bestsellers':
-      return <Bestsellers onOpen={onOpen} onAdd={onAdd} />;
+      return (
+        <Bestsellers
+          onOpen={onOpen}
+          onAdd={onAdd}
+          addingHandle={addingHandle}
+        />
+      );
     case 'everything':
       return <EverythingSection onOpen={onOpen} width={width} />;
     case 'double-banner':
@@ -280,14 +301,15 @@ const renderSection = (
       return <TipsRail onOpen={onOpen} />;
     case 'video':
       /*
-       * NOT DRAWN TODAY, and the case is kept rather than deleted.
+       * DRAWN AGAIN. This branch was unreachable for a while -- the manifest
+       * had the section `native: false`, because the block could not play the
+       * video it was showing a still of. It plays now, in place, through the
+       * site's own YouTube embed; see ./VideoBlock.
        *
-       * The manifest marks this section `native: false` -- see its entry in
-       * ./dashboardSections for why a video the app cannot play is hidden
-       * instead of shown as a still -- and the list below filters on that
-       * flag, so this branch is unreachable while it stays false. Keeping the
-       * case means flipping the flag back is the whole change; deleting it
-       * would make the flag a lie and trip the `never` guard in `default`.
+       * `onPlayVideo` is still passed and is still undefined, which is the
+       * normal case: undefined means the block plays inline itself. A handler
+       * would take the play over instead -- the hook for a future full-screen
+       * or external route. See the prop's own note in ./VideoBlock.
        */
       return <VideoBlock onPlay={onPlayVideo} />;
     case 'community':
@@ -427,11 +449,12 @@ const NativeDashboard = ({width, ...handlers}: Props) => (
          * false on one wrapper exempts the section inside it while its
          * siblings stay clipped.
          *
-         * NOTHING IS MARKED `tall` TODAY. The video block was the only section
-         * that ever outgrew the viewport and it is hidden now, so every
-         * section the dashboard draws is inside the limit. The wiring stays
-         * because the constraint does: it belongs to this scroller, not to
-         * that block. See `tall` in ./dashboardSections.
+         * THE VIDEO BLOCK IS MARKED `tall`, and it is the only one. It is the
+         * section this whole mechanism was built for -- a 16:9 player over a
+         * 431-character paragraph, and the section whose overflow clipped away
+         * the three after it. It was hidden for a while and this note used to
+         * say nothing was marked; it is drawn again now that it plays its
+         * video. See `tall` in ./dashboardSections.
          */
         removeClippedSubviews={section.tall ? false : undefined}
       >

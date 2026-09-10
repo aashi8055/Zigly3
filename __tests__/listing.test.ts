@@ -29,8 +29,13 @@ import {
   parseRating,
   sortById,
   sortByDiscount,
+  sortLoaded,
   type ListingProduct,
 } from '../src/native/listing';
+import {
+  SEED_SORT_OPTIONS,
+  DEFAULT_SORT as SEED_DEFAULT_SORT,
+} from '../src/listing/facets';
 
 describe('the badge is the themes first product tag', () => {
   it('reads the first value out of the metafields JSON list', () => {
@@ -211,19 +216,54 @@ describe('discount high to low is the sort the app has to do itself', () => {
 });
 
 describe('the sort sheet is the sites five sorts', () => {
+  /*
+   * THE SITE'S OWN CASING, character for character.
+   *
+   * These are SearchTap's `collectionSortValues` labels, re-read from
+   * assets/searchtap.js on 2026-09-11. This test used to assert title-cased
+   * variants -- 'Best Selling', 'Price: Low To High' -- which is not what the
+   * site says, and it passed because SORTS held the same wrong strings.
+   *
+   * A label is the only thing that identifies a sort across the app/page
+   * boundary: chooseSort resolves it against SORTS and, failing that, hands it
+   * to the page, where facetBridge refuses any label the page does not itself
+   * offer. So one letter's case is the difference between a sort applying and
+   * a sort silently doing nothing.
+   */
   it('lists them in the sites own order and wording', () => {
     expect(SORTS.map(sort => sort.label)).toEqual([
-      'Best Selling',
-      'Price: Low To High',
-      'Price: High To Low',
+      'Best selling',
+      'Price: Low to High',
+      'Price: High to Low',
       'New Release',
-      'Discount: High To Low',
+      'Discount: High to Low',
     ]);
   });
 
-  it('defaults to Best Selling, as the site does', () => {
+  /**
+   * ONE LIST OF WORDS, SHARED BY BOTH HALVES OF THE APP.
+   *
+   * The native grid's sort sheet is fed SORTS; the bridged sheet on /search is
+   * fed the page's own options, seeded from SEED_SORT_OPTIONS. When those two
+   * lists disagree, a label crossing between them resolves in one and not the
+   * other -- which is exactly how four of these five came to be wrong. SORTS
+   * now takes its labels from SEED_SORT_OPTIONS, and this is what stops the
+   * two drifting apart again.
+   */
+  it('takes its wording from the same list the bridged sheet seeds from', () => {
+    expect(SORTS.map(sort => sort.label)).toEqual(SEED_SORT_OPTIONS);
+  });
+
+  it('agrees with the bridged sheet about the default', () => {
+    // facets.ts's DEFAULT_SORT is the LABEL the page starts on; this file's is
+    // the id. They have to name the same sort, and this is the one place that
+    // says so.
+    expect(sortById(DEFAULT_SORT).label).toBe(SEED_DEFAULT_SORT);
+  });
+
+  it('defaults to Best selling, as the site does', () => {
     expect(DEFAULT_SORT).toBe('best-selling');
-    expect(sortById(DEFAULT_SORT).label).toBe('Best Selling');
+    expect(sortById(DEFAULT_SORT).label).toBe('Best selling');
   });
 
   /**
@@ -359,5 +399,98 @@ describe('a product node becomes a card', () => {
         featuredImage: {url: 'javascript:alert(1)'},
       })?.image,
     ).toBeNull();
+  });
+});
+
+describe('sortLoaded — the filtered grid’s sort', () => {
+  /*
+   * WHY THIS EXISTS. `fetchListingPage` hands the sort to Shopify as a
+   * `sortKey`, so an ordinary grid arrives sorted. A FILTERED grid does not:
+   * the set is SearchTap's answer, fetched by handle through
+   * `fetchProductsByHandle`, which takes no sort and returns their relevance
+   * order.
+   *
+   * So with a filter applied, choosing a sort did nothing at all for four of
+   * the five sorts -- while the sort sheet went on showing the customer's
+   * choice ticked. The tick was a claim the grid was not honouring.
+   */
+  const product = (
+    handle: string,
+    price: number,
+    compareAt: number | null = null,
+  ) => ({
+    handle,
+    title: handle,
+    path: `/products/${handle}`,
+    price,
+    compareAt,
+    image: null,
+    available: true,
+    variantId: null,
+    badge: null,
+    rating: null,
+    ratingCount: 0,
+  });
+
+  // Deliberately NOT in price order, so a pass-through cannot look like a sort.
+  const set = [product('b', 500), product('a', 100), product('c', 300)];
+
+  it('orders by price, low to high', () => {
+    // a=100, c=300, b=500.
+    expect(sortLoaded(set, 'price-asc').map(p => p.handle)).toEqual([
+      'a',
+      'c',
+      'b',
+    ]);
+  });
+
+  it('orders by price, high to low', () => {
+    expect(sortLoaded(set, 'price-desc').map(p => p.handle)).toEqual([
+      'b',
+      'c',
+      'a',
+    ]);
+  });
+
+  it('orders by discount, deepest first', () => {
+    const discounted = [
+      product('small', 900, 1000), // 10%
+      product('deep', 500, 1000), // 50%
+      product('none', 300), // 0%
+    ];
+    expect(sortLoaded(discounted, 'discount').map(p => p.handle)).toEqual([
+      'deep',
+      'small',
+      'none',
+    ]);
+  });
+
+  it('leaves Best selling in SearchTap’s own relevance order', () => {
+    // Their answer already IS the relevance order; re-sorting it would replace
+    // the engine's ranking with the app's guess at one.
+    expect(sortLoaded(set, 'best-selling').map(p => p.handle)).toEqual([
+      'b',
+      'a',
+      'c',
+    ]);
+  });
+
+  it('leaves New Release alone, because there is no field to sort on', () => {
+    /*
+     * THE ONE THAT CANNOT BE DONE, and it is left honest rather than faked.
+     * `ListingProduct` carries no creation date. A plausible-looking wrong
+     * order would be worse than an unchanged one, so this passes through.
+     */
+    expect(sortLoaded(set, 'new-release').map(p => p.handle)).toEqual([
+      'b',
+      'a',
+      'c',
+    ]);
+  });
+
+  it('never mutates the caller’s array, which is React state', () => {
+    const before = set.map(p => p.handle);
+    sortLoaded(set, 'price-asc');
+    expect(set.map(p => p.handle)).toEqual(before);
   });
 });

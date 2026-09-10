@@ -93,13 +93,14 @@ export type DashboardSection = {
    * Marking a section here opts THAT SECTION out of the clipping and leaves
    * the others clipped, which is where the scrolling gain comes from.
    *
-   * NOTHING SETS IT TODAY, and it is kept rather than removed. The video block
-   * was the only section that ever needed it and that section is now hidden
-   * (see `video` below), so the constraint is currently satisfied by every
-   * section on the page. The flag stays because the constraint has not gone
-   * away: it is a property of the scroller, not of that one block, and the
-   * next section that outgrows a short screen would hit the same bug with no
-   * hint as to why. Left as the documented escape hatch, with the mechanism
+   * THE VIDEO BLOCK SETS IT, and it is the only section that ever has. It was
+   * hidden for a while, and this note used to say nothing set the flag; the
+   * block is drawn again now that it can play its video (see `video` below),
+   * so the constraint it exercises is live again rather than theoretical.
+   *
+   * The flag would be kept even if nothing set it: it is a property of the
+   * scroller, not of that one block, and the next section to outgrow a short
+   * screen would hit the same bug with no hint as to why. The mechanism is
    * wired up in ../native/NativeDashboard.
    */
   readonly tall?: boolean;
@@ -471,29 +472,47 @@ export const DASHBOARD_SECTIONS: readonly DashboardSection[] = [
     source: 'frozen',
     fragment: null,
     /*
-     * HIDDEN, and the entry stays as the record of that.
+     * DRAWN AGAIN, BECAUSE IT PLAYS NOW.
      *
-     * `native: false` rather than a deleted entry: this list is the dashboard's
-     * running order and the one place the full set of sections is written
-     * down, so a section the app deliberately does not draw has to be
-     * distinguishable from one nobody has got to yet. ../../__tests__ read
-     * this file for exactly that.
+     * IT WAS HIDDEN, and the reason was not that the block looked wrong: it
+     * was that the block never played anything. React Native has no `<Video>`
+     * and no media package was installed, so ../native/VideoBlock drew a
+     * poster frame, a heading and a 431-character paragraph -- a still
+     * photograph of a brown living room, filling most of a screen, that did
+     * nothing when tapped. Hiding it was the right call for a video the app
+     * could not play.
      *
-     * WHY IT IS HIDDEN. The block never played anything. React Native has no
-     * `<Video>` and no media package is installed, so ../native/VideoBlock
-     * drew the poster frame, the heading and a 431-character paragraph -- a
-     * still photograph of a brown living room, filling most of a screen, that
-     * did nothing when tapped. It was also the tallest section on the page by
-     * a wide margin, which is what put the three sections after it behind the
-     * clipping bug the note on `removeClippedSubviews` in
-     * ../native/NativeDashboard records.
-     *
-     * So the component and ./video are both kept -- nothing is deleted, and
-     * flipping this back to true restores the section as it was -- but the
-     * dashboard does not draw a video it cannot play. Wiring a real player is
-     * the dependency decision ../native/VideoBlock's own header sets out.
+     * WHAT CHANGED. The block plays the video in place, through the same
+     * YouTube embed `custom-video-text-banner.liquid` renders on the site, in
+     * a small WebView that only exists once the poster is tapped. The
+     * dependency decision the old note deferred to was made and came back
+     * negative -- `react-native-video` was installed, found to have no media
+     * file to play (this section carries only a `video_link`), and removed. So
+     * the section costs no new package. ../native/VideoBlock's header carries
+     * the full reading.
      */
-    native: false,
+    native: true,
+    /*
+     * AND IT IS THE SECTION THE `tall` FLAG WAS BUILT FOR -- the note on the
+     * field above says so outright, and says nothing sets it today. Something
+     * does again.
+     *
+     * This is the tallest section on the page: a 16:9 player and a
+     * 431-character paragraph. ../native/NativeDashboard scrolls with
+     * `removeClippedSubviews`, and on Android the clipping stops re-attaching
+     * the children that follow a section taller than the viewport -- the
+     * failure that once left Real Pets, From Our Instagram and the logo strip
+     * permanently missing, with this block's navy ground reading as a wall
+     * ending the page. That is the bug this section caused before, and turning
+     * it back on without this flag would be turning the bug back on with it.
+     *
+     * ../native/VideoBlock's `DESCRIPTION_LINES` still caps the collapsed card
+     * inside a short screen's viewport, so in the normal case the flag costs
+     * nothing. It is here for the two cases the cap does not cover: a customer
+     * who taps "Read more" (their own doing, and allowed to be tall), and a
+     * screen shorter than the 640dp the cap was budgeted against.
+     */
+    tall: true,
   },
   {
     key: 'community',

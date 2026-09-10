@@ -409,6 +409,26 @@ export const GO_HOME = `window.location.href = '/'; true;`;
  */
 export const REPORT_ANNOUNCEMENTS = `
 (function () {
+  /*
+   * Whether a report with real offers has gone out.
+   *
+   * ON window, NOT a local, and that is the whole of this script's
+   * idempotency. This payload is injected several times per page -- at
+   * document-start, again at onLoadEnd, and again by each delayed restyle pass
+   * -- and every injection is a fresh IIFE with its own locals. A local flag
+   * therefore latches nothing across them: measured in jsdom, seven
+   * injections sent seven identical reports and left seven MutationObservers
+   * on the document. Harmless to the native side, which replaces the strings
+   * wholesale rather than appending, but seven observers watching an entire
+   * page for the life of that page is real work on the one thread the
+   * dashboard is assembled on.
+   *
+   * A window property survives between injections in the same document and is
+   * discarded with it, which is exactly the scope wanted: a re-navigation gets
+   * a clean read, a re-injection does not repeat one.
+   */
+  if (window.__ziglyAnnouncementsDone) { return; }
+
   function collect() {
     try {
       var host = document.querySelector('[data-hide-in-app]')
@@ -432,6 +452,14 @@ export const REPORT_ANNOUNCEMENTS = `
         window.ReactNativeWebView.postMessage(
           JSON.stringify({tag: 'announcements', items: items.slice(0, 12)})
         );
+        /*
+         * Only now, and only on a report that actually carried offers.
+         * Setting this when the host was found but empty would latch on a
+         * section the theme has parsed but not yet filled -- which is exactly
+         * the state a document-start read is most likely to catch it in, and
+         * would leave the strip permanently blank.
+         */
+        window.__ziglyAnnouncementsDone = true;
       }
     } catch (e) {}
   }
@@ -449,8 +477,69 @@ export const REPORT_ANNOUNCEMENTS = `
     return out;
   }
 
-  collect();
-  setTimeout(collect, 1500);
+  /*
+   * WHEN THIS RUNS, which is the whole of "load the announcement bar faster".
+   *
+   * It used to be 'collect(); setTimeout(collect, 1500);' -- injected at
+   * onLoadEnd, so the first attempt was already behind the entire page
+   * download, and a miss then waited a further second and a half. The strip
+   * was therefore blank for the first seconds of every cold start, and the
+   * text it eventually showed had been sitting in the DOM almost that whole
+   * time: the announcement section is markup near the top of the document,
+   * parsed long before the images and third-party scripts that decide when
+   * onLoadEnd fires.
+   *
+   * So this is now injected at document-start (see the dashboard WebView's
+   * 'injectedJavaScriptBeforeContentLoaded') and reports the moment the
+   * element exists, by three routes that overlap on purpose -- the bar is
+   * worth a few wasted queries and none of the three is reliable alone:
+   *
+   *   1. Straight away. On a warm load the element can already be parsed by
+   *      the time this runs, and then there is nothing to wait for at all.
+   *   2. A MutationObserver on the document, which fires as the parser
+   *      appends the section -- this is the one that usually wins on a cold
+   *      start, and it is what replaces the 1500ms guess. Disconnected on the
+   *      first successful read so it is not observing the whole document for
+   *      the life of the page.
+   *   3. DOMContentLoaded and a single late timer, as the backstop for a bar
+   *      that arrives some other way -- rendered by the theme's own script
+   *      rather than parsed, which the observer would see but which an
+   *      observer that has already disconnected would not.
+   *
+   * IDEMPOTENT, because it has to be: this file's payload is injected several
+   * times per page (see the app's restyle passes) and every route above can
+   * fire on the same document. The window flag above makes every attempt after
+   * the first successful one free -- including attempts belonging to a later
+   * injection, which is the case a local flag missed.
+   */
+  function attempt() {
+    if (window.__ziglyAnnouncementsDone) { return true; }
+    collect();
+    return !!window.__ziglyAnnouncementsDone;
+  }
+
+  if (!attempt()) {
+    try {
+      var obs = new MutationObserver(function () {
+        if (attempt() && obs) { obs.disconnect(); }
+      });
+      obs.observe(document.documentElement || document, {
+        childList: true,
+        subtree: true,
+      });
+      // Never leave an observer on the whole document indefinitely: if the bar
+      // simply is not on this page, stop looking.
+      setTimeout(function () { try { obs.disconnect(); } catch (e) {} }, 10000);
+    } catch (e) {}
+
+    try {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attempt, {once: true});
+      }
+    } catch (e) {}
+
+    setTimeout(attempt, 1500);
+  }
 })();
 true;
 `;

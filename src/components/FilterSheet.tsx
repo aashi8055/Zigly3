@@ -137,9 +137,13 @@ const FilterSheet = ({visible, facets, busy, onToggle, onClose}: Props) => {
               <View key={`${index}-${group.title}`} style={styles.group}>
                 <Text style={styles.groupTitle}>{group.title}</Text>
                 <View style={styles.chips}>
-                  {group.options.map(option => (
+                  {group.options.map((option, position) => (
                     <Pressable
-                      key={option.label}
+                      // Position-prefixed for the same reason the group above
+                      // is index-prefixed: nothing dedupes the values inside a
+                      // group, so a repeated metafield value puts the same
+                      // label in this list twice and the label alone collides.
+                      key={`${position}-${option.label}`}
                       onPress={() => onToggle(index, group.title, option.label)}
                       accessibilityRole="button"
                       accessibilityState={{selected: option.on}}
@@ -224,7 +228,27 @@ const styles = StyleSheet.create({
   },
   chipOn: {backgroundColor: '#1B1B1B'},
   pressed: {opacity: 0.7},
-  chipLabel: {fontFamily: FONT_FAMILY, fontSize: 12.5, color: CHIP_TEXT},
+  /*
+   * `capitalize` because the site does, and this is the same divergence
+   * SortSheet already corrects.
+   *
+   * The label is the checkbox's raw `value` -- "royal canin", "cat" -- because
+   * that is the string SearchTap filters on and the string the bridge has to
+   * hand back to click it. What the WEBSITE draws is that same value under
+   * `.filter-label.st-capitalize`, and `.st-capitalize{text-transform:
+   * capitalize}` (both read out of assets/searchtap.js): "Royal Canin", "Cat".
+   *
+   * So the chips were showing lowercase where the site shows title case, on
+   * every facet value on every listing. A display transform rather than a
+   * change to the data: the stored label stays byte-identical to the site's
+   * value, so the tap still finds its checkbox.
+   */
+  chipLabel: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 12.5,
+    color: CHIP_TEXT,
+    textTransform: 'capitalize',
+  },
   chipLabelOn: {color: COLORS.white},
   foot: {paddingHorizontal: 14, paddingTop: 8},
   apply: {

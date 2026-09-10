@@ -19,6 +19,7 @@
  */
 import React, {useCallback, useState} from 'react';
 import {
+  ActivityIndicator,
   Animated,
   Image,
   Pressable,
@@ -65,6 +66,23 @@ interface Props {
    * not cap.
    */
   variantLimit?: number;
+  /**
+   * The handle of the product whose Add to Bag is mid-flight, or null.
+   *
+   * WHY THE SCREEN DOES NOT OWN THIS. The add is not this screen's to
+   * complete: `onAddToBag` hands it to ../screens/ZiglyWebViewScreen, which
+   * injects it into the dashboard WebView and learns the outcome from a
+   * message coming back (see its `wishlistAdding`). This file cannot know when
+   * that finished, so a local `useState` here could start the spin but never
+   * honestly stop it -- it would guess with a timer and be wrong on exactly
+   * the slow connections the spinner exists for.
+   *
+   * A HANDLE, NOT A BOOLEAN, because this is a grid: a shared flag would spin
+   * every tile at once and claim the app is adding six products. Not an index
+   * either -- the list re-orders and a removal takes a tile out immediately,
+   * so an index would follow the slot rather than the product.
+   */
+  addingHandle?: string | null;
 }
 
 const Tile = ({
@@ -72,11 +90,14 @@ const Tile = ({
   onOpen,
   onAdd,
   onRemove,
+  busy,
 }: {
   item: WishlistItem;
   onOpen: () => void;
   onAdd: () => void;
   onRemove: () => void;
+  /** This tile's add is in flight: it spins and does not take a second tap. */
+  busy: boolean;
 }) => (
   <View style={styles.tile}>
     <Pressable
@@ -128,10 +149,32 @@ const Tile = ({
          * a product page, which reads as the button not working.
          */
         onPress={onAdd}
+        /*
+         * Not tappable twice while it spins, which is the point of the
+         * spinner and not merely a side effect of it: the add is verified
+         * against /cart.js over up to ADD_VERIFY_BUDGET_MS, and a second
+         * press inside that window is a second line in the bag.
+         */
+        disabled={busy}
         accessibilityRole="button"
+        accessibilityState={{disabled: busy, busy}}
         accessibilityLabel={'Add to Bag: ' + item.title}
-        style={({pressed}) => [styles.addButton, pressed && styles.pressed]}>
-        <Text style={styles.addLabel}>Add to Bag</Text>
+        style={({pressed}) => [
+          styles.addButton,
+          pressed && styles.pressed,
+          busy && styles.addBusy,
+        ]}>
+        {busy ? (
+          /*
+           * Red on the pale pink fill, matching addLabel. White here -- which
+           * is what ../components/ProductActionBar uses on its red fill --
+           * would be an invisible spinner, and an invisible spinner is the
+           * same bug as no spinner.
+           */
+          <ActivityIndicator size="small" color={COLORS.red} />
+        ) : (
+          <Text style={styles.addLabel}>Add to Bag</Text>
+        )}
       </Pressable>
     ) : (
       <View style={[styles.addButton, styles.soldOutButton]}>
@@ -159,6 +202,7 @@ const WishlistScreen = ({
   onRemove,
   notice,
   variantLimit,
+  addingHandle = null,
 }: Props) => {
   /**
    * The product whose choices are being picked, or null when none are.
@@ -262,6 +306,11 @@ const WishlistScreen = ({
             onOpen={() => onOpenItem(item)}
             onAdd={() => startAdd(item)}
             onRemove={() => onRemove(item)}
+            /*
+             * Only the product actually being added spins. Compared by
+             * handle, so it stays on that product as the grid re-orders.
+             */
+            busy={addingHandle === item.handle}
           />
         ))}
       </ScrollView>
@@ -381,8 +430,32 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingVertical: 14,
     alignItems: 'center',
+    /*
+     * PINNED so the swap to a spinner cannot reflow the grid.
+     *
+     * The label and an ActivityIndicator are near enough the same height to
+     * look fine and not near enough to be safe: the text is ~21dp at 15.5/600
+     * and the spinner is a fixed 20dp, and the text follows the device's font
+     * scale while the spinner does not. Without a floor, a tile would change
+     * height mid-add and every tile below it in the column would shift -- on
+     * the screen where the customer is aiming at a second Add to Bag.
+     *
+     * 48 is ./ProductActionBar's figure, which solved the same problem for the
+     * same swap, and `justifyContent` is what keeps the child centred once the
+     * padding is no longer what sets the height.
+     */
+    minHeight: 48,
+    justifyContent: 'center',
   },
   pressed: {opacity: 0.85},
+  /*
+   * Held at the pressed opacity for the whole wait, so the tile the customer
+   * touched stays the one that looks touched -- the same thing
+   * ./ProductActionBar's `busy` does. Not dimmed further: `disabled` on a
+   * Pressable already stops the press feedback, and a greyed-out button reads
+   * as unavailable rather than as working.
+   */
+  addBusy: {opacity: 0.9},
   addLabel: {
     fontFamily: FONT_FAMILY,
     color: COLORS.red,

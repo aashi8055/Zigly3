@@ -52,7 +52,31 @@ type Props = {
    */
   tabs: readonly RailTab[];
   onOpen: (path: string) => void;
-  onAdd: (variantId: number) => void;
+  /**
+   * Add one variant to the bag, and say which product it came from.
+   *
+   * THE HANDLE IS THE SECOND ARGUMENT because the spinner needs an identity and
+   * a variant id is not one the card can be found by: ./ProductCard is drawn
+   * per product, keyed by handle, and a product carries several variant ids.
+   * The handle is also what ../components/WishlistScreen's spinner uses, for
+   * the reason ../screens/ZiglyWebViewScreen records there -- the list can
+   * reorder under it and an index would move the spinner onto its neighbour.
+   */
+  onAdd: (variantId: number, handle: string) => void;
+  /**
+   * The handle of the product whose add is in flight, or null.
+   *
+   * Owned by the screen rather than by this rail, and that is deliberate: the
+   * add is confirmed by a message from inside a WebView (see
+   * ../screens/ZiglyWebViewScreen's `cart-added` handler), so only the screen
+   * knows when it has landed. A rail holding its own flag would have to guess.
+   *
+   * ONE STRING FOR THE WHOLE DASHBOARD, so two rails cannot spin at once --
+   * which is correct, because the customer can only tap one button at a time
+   * and every add funnels through the same bridge. A handle that is not on this
+   * rail simply matches nothing here.
+   */
+  addingHandle?: string | null;
 };
 
 const EMPTY: Product[] = [];
@@ -73,11 +97,13 @@ const TabContent = ({
   visible,
   onOpen,
   onAdd,
+  addingHandle,
 }: {
   tab: RailTab;
   visible: boolean;
   onOpen: (path: string) => void;
-  onAdd: (variantId: number) => void;
+  onAdd: (variantId: number, handle: string) => void;
+  addingHandle: string | null;
 }) => {
   const {data: products, loading} = useSectionData<Product[]>({
     load: noCache,
@@ -117,7 +143,14 @@ const TabContent = ({
               key={product.handle}
               product={product}
               onOpen={onOpen}
-              onAdd={onAdd}
+              /*
+               * The handle goes up with the variant id, so the screen can name
+               * the card that is waiting. Bound here rather than in the card
+               * because the card is the one component every surface shares and
+               * only a rail needs this.
+               */
+              onAdd={variantId => onAdd(variantId, product.handle)}
+              busy={addingHandle === product.handle}
             />
           ))}
         </ScrollView>
@@ -135,7 +168,13 @@ const TabContent = ({
   );
 };
 
-const ProductRail = ({title, tabs, onOpen, onAdd}: Props) => {
+const ProductRail = ({
+  title,
+  tabs,
+  onOpen,
+  onAdd,
+  addingHandle = null,
+}: Props) => {
   const [active, setActive] = useState(0);
 
   /**
@@ -207,6 +246,7 @@ const ProductRail = ({title, tabs, onOpen, onAdd}: Props) => {
             visible={index === active}
             onOpen={onOpen}
             onAdd={onAdd}
+            addingHandle={addingHandle}
           />
         ) : null,
       )}

@@ -480,6 +480,75 @@ describe('reading the page', () => {
     expect(shown?.options.map(option => option.label)).toEqual(['in stock']);
   });
 
+  it('keeps a value whose own name contains brackets', () => {
+    /*
+     * A REAL DROPPED FILTER, not a hypothetical.
+     *
+     * countFor climbs up to three parents to find .st-product-number, and the
+     * label div it lands on CONTAINS that span -- so the text it reads is
+     * "Royal Canin (India) (10)", the value's name and then its count.
+     *
+     * countIn used to slice from the FIRST '(' to the LAST ')', which on that
+     * string is "India) (10". The digit check rejected it, countIn returned
+     * null, and facets() drops a value with no count outright -- so this brand
+     * never appeared as a filter chip at all. No error, no log: the customer
+     * simply could not filter by it.
+     *
+     * Both bracketed values below must survive, with the count that is theirs.
+     */
+    const page = load(true);
+    page.body.querySelector('.st-sidebar')?.add(
+      facet('Brand', [
+        value('royal canin (india)', '(10)'),
+        value('cat (kitten) food', '(7)'),
+        value('plain', '(3)'),
+      ]),
+    );
+    page.run('window.__ziglyFacets.read();');
+    const shown = latest(page).groups.find(group => group.title === 'Brand');
+    expect(shown?.options).toEqual([
+      {label: 'royal canin (india)', count: 10, on: false},
+      {label: 'cat (kitten) food', count: 7, on: false},
+      {label: 'plain', count: 3, on: false},
+    ]);
+  });
+
+  it('still drops a bracketed value that has no count of its own', () => {
+    /*
+     * The other half: taking the LAST bracketed group must not turn a value's
+     * own brackets INTO a count. "Include Out Of Stock (unavailable)" has no
+     * number anywhere, and must still be excluded rather than reported with
+     * some count read out of its name.
+     */
+    const page = load(true);
+    page.body.querySelector('.st-sidebar')?.add(
+      facet('Availability', [
+        value('in stock', '(9)'),
+        new El('li').add(
+          new El('div', 'outer-checkbox').add(
+            new El('label').add(
+              new El('input', '!st-hidden', {
+                type: 'checkbox',
+                value: 'Include Out Of Stock (unavailable)',
+              }),
+              new El(
+                'div',
+                'filter-label',
+                {},
+                'Include Out Of Stock (unavailable)',
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+    page.run('window.__ziglyFacets.read();');
+    const shown = latest(page).groups.find(
+      group => group.title === 'Availability',
+    );
+    expect(shown?.options.map(option => option.label)).toEqual(['in stock']);
+  });
+
   it('reads each value’s label, count and applied state', () => {
     const state = latest(load(true));
     expect(state.groups[0].options).toEqual([

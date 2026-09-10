@@ -133,7 +133,18 @@ export const LOGOS_BANNER = banner(
   // Inset, unlike every other banner. See `inset` above: this is a row of small
   // claim marks, not a campaign image, and full-bleed made it the loudest thing
   // above the footer.
-  28,
+  //
+  // 12, DOWN FROM 28, and the claim marks are why. The strip is one 600x210
+  // image of four marks side by side, so every dp taken off the width is taken
+  // off all four at once -- at 28 a side, a 360dp phone drew them in 304dp and
+  // the outermost two were losing their edges. 12 matches the page's own
+  // gutter (./TileRow's `PITCH`, ./SingleBanner's `GUTTER`), so the strip now
+  // lines up with the rails above it instead of standing further in than
+  // anything else on the page, and the marks get 32dp more to be drawn in.
+  //
+  // It is still inset rather than full-bleed: the argument above is about this
+  // not being a campaign banner, and that has not changed. Only the amount.
+  12,
 );
 
 /**
@@ -202,8 +213,26 @@ export const GIFT_CARD_BANNER: SingleBanner = {
   tiles: [
     {
       label: 'Gift cards, coming soon',
-      // The theme's own `shopify://collections` -- the collections LIST.
-      path: '/collections',
+      /*
+       * NO LINK, AND THE ARTWORK IS THE REASON.
+       *
+       * The theme's own `button_link_2` is `shopify://collections` -- the
+       * collections LIST -- and that is what this carried. But the picture on
+       * top of it reads "Coming Soon", so a tap promised gift cards and
+       * delivered the whole catalogue: the one destination that is not what
+       * the banner is about. That is a worse outcome than not being tappable,
+       * and it is how it was reported.
+       *
+       * An empty path is this module's own spelling of "not a control" -- see
+       * `LOGOS_BANNER` and the note at the top of ./SingleBanner. It draws the
+       * banner as a picture with `accessibilityRole="image"`, no press state
+       * and no tap, which is the honest rendering of a thing that does not
+       * exist yet.
+       *
+       * WHEN THE GIFT CARDS SHIP, put the theme's link back here. This is the
+       * whole change, and nothing else knows about it.
+       */
+      path: '',
       key: 'GiftCard_1350X535_Coming-Soon.png',
     },
   ],

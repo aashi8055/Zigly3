@@ -177,9 +177,38 @@ export const toggleOption = (
       ? group
       : {
           ...group,
-          options: group.options.map(option =>
-            option.label === label ? {...option, on: !option.on} : option,
-          ),
+          /*
+           * THE FIRST MATCH ONLY, and the `map` this replaces flipped every
+           * one of them.
+           *
+           * Nothing dedupes the values inside a group: the bridge pushes every
+           * checkbox carrying a non-empty `value` (facetBridge's `facets()`),
+           * and `parseOption` never compares one option to another. So a group
+           * whose metafield repeats a value arrives here with that label twice.
+           *
+           * A `map` on `option.label === label` then flipped BOTH chips, while
+           * the write half of the same tap clicked exactly one real checkbox
+           * -- facetBridge's `boxIn` returns on its first match. So the
+           * optimistic state claimed two filters had changed and the page had
+           * changed one, and the next report ~300ms later silently corrected
+           * the second chip: a visible double-flip, from a disagreement
+           * between the two halves of one tap.
+           *
+           * Matching the writer is what makes them agree. `findIndex` is the
+           * same "first match wins" rule `boxIn` uses, so the chip that
+           * changes here is the checkbox that gets clicked there.
+           */
+          options: (() => {
+            const at = group.options.findIndex(
+              option => option.label === label,
+            );
+            if (at === -1) {
+              return group.options;
+            }
+            return group.options.map((option, position) =>
+              position === at ? {...option, on: !option.on} : option,
+            );
+          })(),
         },
   ),
 });

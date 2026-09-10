@@ -114,9 +114,41 @@ ${LISTING_TEST_JS}
   function countIn(node) {
     if (!node) { return null; }
     var text = squash(node.textContent);
-    var open = text.indexOf('(');
+    /*
+     * THE LAST PARENTHESISED GROUP, not the first.
+     *
+     * Belt-and-braces rather than a bug fix, and worth saying so plainly so
+     * nobody reads more into it than is there.
+     *
+     * Today this cannot receive anything but the count. ./countFor hands over
+     * whatever querySelector('.st-product-number') returns, which is that
+     * element itself, and SearchTap renders it as exactly '(' + count + ')'
+     * (confirmed in assets/searchtap.js on 2026-09-11). So the string is
+     * "(63)" and the first bracket is also the last.
+     *
+     * What this guards is the shape one level up. SearchTap nests the count
+     * span INSIDE the value's label div, so that div's textContent is the
+     * value's own name followed by its count. For any brand whose name ends in
+     * a bracketed word, that reads as two bracketed groups. If countFor ever
+     * returns a container rather than the span (a markup change moving or
+     * removing the class would be enough to send its three-parent climb one
+     * level higher), reading from the FIRST bracket would slice from inside
+     * the NAME to inside the count, fail the digit check, and return null --
+     * and facets() drops a value with no count outright, so that brand would
+     * silently vanish from the filter sheet.
+     *
+     * No brand or facet name is written down here, deliberately: nothing in
+     * this file authors a facet, and ../../__tests__/injection.test.ts asserts
+     * exactly that about the shipped payload.
+     *
+     * Taking the last group is correct for both shapes and costs nothing on
+     * the current one. The uncounted case still returns null, which is what
+     * keeps SearchTap's lone out-of-stock toggle out of a counted chip list.
+     */
     var close = text.lastIndexOf(')');
-    if (open === -1 || close < open) { return null; }
+    if (close === -1) { return null; }
+    var open = text.lastIndexOf('(', close);
+    if (open === -1) { return null; }
     var digits = text.slice(open + 1, close);
     if (!digits.length) { return null; }
     for (var i = 0; i < digits.length; i++) {

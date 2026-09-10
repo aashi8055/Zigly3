@@ -39,7 +39,11 @@ import {LOGOS_BANNER} from '../src/native/singleBanners';
 import TabbedTileSection from '../src/native/TabbedTileSection';
 import VideoBlock from '../src/native/VideoBlock';
 import {DASHBOARD_SECTIONS} from '../src/native/dashboardSections';
-import {VIDEO_DESCRIPTION} from '../src/native/video';
+import {
+  VIDEO_DESCRIPTION,
+  VIDEO_EMBED_URL,
+  VIDEO_POSTER,
+} from '../src/native/video';
 
 const render = (node: React.ReactElement) => {
   let tree!: ReactTestRenderer.ReactTestRenderer;
@@ -316,30 +320,51 @@ describe('the sections below Pet Parenting Made Easy', () => {
     expect(native.slice(-3)).toEqual(['community', 'instagram', 'logos']);
   });
 
-  it('draws no video block at all', () => {
+  it('draws the video block', () => {
+    /*
+     * INVERTED, AND THE INVERSION IS THE POINT OF THE CHANGE.
+     *
+     * This used to assert `not.toContain('video')`: the block was hidden,
+     * because it drew a still of a video the app could not play. It plays now,
+     * in place, through the site's own YouTube embed -- so the reason for
+     * hiding it is gone and the section is back in the running order.
+     *
+     * The test is kept rather than deleted because the hiding was a real
+     * decision with a real cause, and this is where a future re-hiding would
+     * have to argue with something.
+     */
     const native = DASHBOARD_SECTIONS.filter(s => s.native).map(s => s.key);
-    expect(native).not.toContain('video');
+    expect(native).toContain('video');
   });
 
-  it('keeps the section in the manifest, hidden on purpose', () => {
-    // Not deleted: this list is the running order and the record of the whole
-    // set, so "hidden deliberately" has to be distinguishable from "missing".
+  it('keeps the section in the manifest, and draws it', () => {
+    // This list is the running order and the record of the whole set, so a
+    // section has to be present here whether it is drawn or not. It is both.
     const video = DASHBOARD_SECTIONS.find(s => s.key === 'video');
     expect(video).toBeDefined();
-    expect(video!.native).toBe(false);
+    expect(video!.native).toBe(true);
   });
 
-  it('keeps the clipping escape hatch wired, with nothing using it', () => {
+  it('exempts the video block from the clipping, and only it', () => {
     /*
-     * The `tall` mechanism outlives the section it was written for.
+     * THE ESCAPE HATCH IS IN USE AGAIN, and this is what makes drawing the
+     * block safe.
      *
-     * Hiding the video removed the only section that ever needed the
-     * exemption, but not the Android constraint behind it -- that belongs to
-     * the scroller, not to that block. So the wiring stays and nothing sets
-     * the flag, which is the state this pins: a later section that outgrows a
-     * short screen has a documented fix instead of a mystery.
+     * The Android constraint behind `tall` never went away when the section
+     * was hidden -- it belongs to the scroller, not to that block: the
+     * clipping stops re-attaching the children that follow a section taller
+     * than the viewport, which is what once left Real Pets, From Our Instagram
+     * and the logo strip permanently missing. The video block is the tallest
+     * section on the page and the section that caused that, so bringing it
+     * back without the exemption would bring the bug back with it.
+     *
+     * `toEqual(['video'])` rather than a `toContain`: the exemption costs
+     * scroll performance on whatever takes it, so it is worth pinning that
+     * exactly one section does, and which.
      */
-    expect(DASHBOARD_SECTIONS.filter(s => s.tall)).toHaveLength(0);
+    expect(DASHBOARD_SECTIONS.filter(s => s.tall).map(s => s.key)).toEqual([
+      'video',
+    ]);
     const source = sourceOf('../src/native/NativeDashboard');
     expect(source).toMatch(
       /removeClippedSubviews=\{section\.tall \? false : undefined\}/,
@@ -395,6 +420,127 @@ describe('the sections below Pet Parenting Made Easy', () => {
         .findAllByType(Text)
         .find(node => textOf(node) === VIDEO_DESCRIPTION)!.props.numberOfLines,
     ).toBe(5);
+  });
+
+  /*
+   * ----------------------------------------------------------------------
+   * The player.
+   *
+   * The block draws a still until the customer taps it, then swaps in a
+   * WebView on the site's own YouTube embed. Two things make that worth
+   * testing rather than looking at:
+   *
+   *   1. NOTHING MAY LOAD BEFORE THE TAP. The player is a network request, a
+   *      YouTube page and a set of cookies, on a section most customers scroll
+   *      past. "Mounted but hidden" would look identical on screen and cost
+   *      all of that on every dashboard load, so the absence of the WebView --
+   *      not just its invisibility -- is the thing to pin.
+   *   2. THE POSTER MUST OUTLIVE THE TAP. A WebView paints nothing until its
+   *      page loads, and a blank rectangle on this section's navy ground is
+   *      invisible -- the tap would read as having done nothing.
+   * ----------------------------------------------------------------------
+   */
+
+  /** The poster's play control, found by role. */
+  const playButton = (tree: ReactTestRenderer.ReactTestRenderer) =>
+    tree.root
+      .findAll(
+        node =>
+          node.props.accessibilityRole === 'button' &&
+          typeof node.props.accessibilityLabel === 'string' &&
+          node.props.accessibilityLabel.startsWith('Play video:'),
+      )
+      .find(node => node.props.onPress);
+
+  /**
+   * The mounted player(s), deduplicated to one node per WebView.
+   *
+   * `findAll` reports both the exported WebView and the inner component it
+   * renders, because RN's WebView is a wrapper and passes its props straight
+   * down -- so a single player matches twice and a naive length check reads as
+   * two players. The same wrapper problem is documented on `cardsOf` below.
+   * Keeping only the outermost match of each group is what makes the count
+   * mean "how many players are mounted".
+   */
+  const players = (tree: ReactTestRenderer.ReactTestRenderer) => {
+    const all = tree.root.findAll(
+      node =>
+        typeof node.type !== 'string' &&
+        node.props.source?.uri === VIDEO_EMBED_URL,
+    );
+    return all.filter(node => !all.includes(node.parent as never));
+  };
+
+  it('loads no player until the poster is tapped', () => {
+    const tree = render(<VideoBlock />);
+    expect(players(tree)).toHaveLength(0);
+    // And the poster is a control, so there is something to tap.
+    expect(playButton(tree)).toBeDefined();
+  });
+
+  it('plays the site’s own embed in place when tapped', () => {
+    const tree = render(<VideoBlock />);
+    ReactTestRenderer.act(() => playButton(tree)!.props.onPress());
+    const player = players(tree);
+    expect(player).toHaveLength(1);
+    // In place: the embed, not the watch page. Sending the customer to
+    // youtube.com is the behaviour this replaced.
+    expect(player[0].props.source.uri).toBe(VIDEO_EMBED_URL);
+  });
+
+  it('keeps the poster up until the player has painted', () => {
+    /*
+     * The blank-rectangle guard. Between the tap and `onLoadEnd` the WebView
+     * shows nothing, so the poster has to still be there -- otherwise the
+     * section goes empty at the exact moment the customer touches it.
+     */
+    const tree = render(<VideoBlock />);
+    ReactTestRenderer.act(() => playButton(tree)!.props.onPress());
+    const posterStillUp = () =>
+      tree.root
+        .findAllByType(Image)
+        .some(node => node.props.source?.uri === VIDEO_POSTER);
+    expect(posterStillUp()).toBe(true);
+    // And it comes off once the embed reports it has loaded.
+    ReactTestRenderer.act(() => players(tree)[0].props.onLoadEnd());
+    expect(posterStillUp()).toBe(false);
+  });
+
+  it('does not make the customer tap play twice', () => {
+    /*
+     * `mediaPlaybackRequiresUserAction` is true everywhere else in the app
+     * (../src/webview/webViewConfig), and false here. The tap on the poster IS
+     * the user action -- requiring another inside the embed would mean two
+     * taps for one intention. Pinned because it is a one-word difference from
+     * the app's own default and reads like an oversight.
+     */
+    const tree = render(<VideoBlock />);
+    ReactTestRenderer.act(() => playButton(tree)!.props.onPress());
+    expect(players(tree)[0].props.mediaPlaybackRequiresUserAction).toBe(false);
+  });
+
+  it('stays inside the section rather than going fullscreen on play', () => {
+    // Without this iOS takes any playing video into its own fullscreen
+    // player, which is the leaving-the-section behaviour this block avoids.
+    // Fullscreen stays available through YouTube's own control.
+    const tree = render(<VideoBlock />);
+    ReactTestRenderer.act(() => playButton(tree)!.props.onPress());
+    expect(players(tree)[0].props.allowsInlineMediaPlayback).toBe(true);
+    expect(players(tree)[0].props.allowsFullscreenVideo).toBe(true);
+  });
+
+  it('hands the play up instead when a handler is given', () => {
+    /*
+     * `onPlay` reads backwards from its name and this is the assertion that
+     * says so: given a handler, the block does NOT play inline -- the caller
+     * has taken the play over. Unused today; it is the hook for a future
+     * full-screen or external route. See the prop's note in VideoBlock.
+     */
+    const played = jest.fn();
+    const tree = render(<VideoBlock onPlay={played} />);
+    ReactTestRenderer.act(() => playButton(tree)!.props.onPress());
+    expect(played).toHaveBeenCalledTimes(1);
+    expect(players(tree)).toHaveLength(0);
   });
 });
 

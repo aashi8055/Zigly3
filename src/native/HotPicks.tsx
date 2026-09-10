@@ -50,10 +50,13 @@ export const HOT_PICKS_TITLE = 'Hot Picks of The Week';
 
 type Props = {
   onOpen: (path: string) => void;
-  onAdd: (variantId: number) => void;
+  /** See ./ProductRail: the handle rides along so the card can spin. */
+  onAdd: (variantId: number, handle: string) => void;
+  /** The handle whose add is in flight. Passed straight to ./ProductRail. */
+  addingHandle?: string | null;
 };
 
-const HotPicks = ({onOpen, onAdd}: Props) => {
+const HotPicks = ({onOpen, onAdd, addingHandle}: Props) => {
   /**
    * The tabs, memoised.
    *
@@ -84,6 +87,7 @@ const HotPicks = ({onOpen, onAdd}: Props) => {
       tabs={tabs}
       onOpen={onOpen}
       onAdd={onAdd}
+      addingHandle={addingHandle}
     />
   );
 };

@@ -2,42 +2,56 @@
  * "Zigly: India's Complete Pet Care Ecosystem" — the video block.
  *
  * Section twenty. ./video carries the data; this draws the poster, the heading
- * and the copy on the theme's navy ground.
+ * and the copy on the theme's navy ground -- and plays the video in place.
  *
- * IT DOES NOT PLAY THE VIDEO, AND THAT IS AN OPEN DECISION RATHER THAN A GAP.
- * React Native has no `<Video>` element. Playing the mp4 needs a native module
- * -- `react-native-video` or `expo-video` -- and none is installed
- * (`package.json` carries react-native-webview, netinfo, safe-area-context and
- * react-native-svg; no media package). Adding one is a dependency decision with
- * a build cost attached, so it is not made silently here.
+ * IT PLAYS NOW, AND IT PLAYS THE SITE'S OWN EMBED. The poster is a control:
+ * tapping it replaces the still with a small WebView on `VIDEO_EMBED_URL`,
+ * which is the exact iframe URL `custom-video-text-banner.liquid` builds from
+ * the theme's `video_link`. Same player, same parameters, same controls, and
+ * it stays inside the section rather than sending the customer to YouTube --
+ * which is what the site does too.
  *
- * The two ways it could be wired, recorded so the choice is a choice:
+ * NOT A NEW DEPENDENCY, AND ONE WAS TRIED. React Native has no `<Video>`
+ * element, so the obvious route was `react-native-video`. It was installed and
+ * then removed: it plays media FILES -- mp4, HLS, DASH -- and this section has
+ * no file to give it. The dog page sets only `video_link`; the theme's two
+ * file branches are blank; YouTube serves the video through its own embed and
+ * extracting a direct stream URL is against their terms. So the package had
+ * nothing to play. `react-native-webview` is already a dependency of this app,
+ * renders the site's own iframe, and costs no rebuild. See `VIDEO_EMBED_URL`
+ * in ./video for the full reading, and the revisit condition (Zigly uploading
+ * an mp4 to Files, which lights up the theme's `video_file` branch).
  *
- *   1. A media dependency, and this component gains a real player. Closest to
- *      the site, and the honest answer if the video matters -- but it is a
- *      native module, so it needs `npm install` and an Android/iOS rebuild, and
- *      it is the first non-trivial dependency this app would take on.
- *   2. Hand the tap to the WebView the app already runs, on the video's own
- *      page. No new dependency, and the customer gets the site's own controls
- *      -- but it leaves the dashboard for a video, which the site does not.
+ * NOTHING IS LOADED UNTIL THE TAP. The player is not mounted behind the
+ * poster and hidden -- it does not exist until `playing` goes true. That is
+ * the site's behaviour (the theme's element carries `controls playsinline`
+ * with no `autoplay` and no `muted`, so a customer sees a still and taps), and
+ * it is also the cheaper one: this is a dashboard section most customers
+ * scroll past, and an iframe nobody asked for is a page load, a player and a
+ * set of YouTube cookies bought for nothing.
  *
- * Until then the block draws exactly what the site draws BEFORE a tap: the
- * poster frame, the heading and the paragraph. That is not a placeholder -- it
- * is the section's resting state, since the theme's `<video>` carries
- * `controls playsinline` with no `autoplay` and no `muted`. A customer who
- * never taps sees the same thing on the site and in the app.
- *
- * THE PLAY GLYPH APPEARS ONLY WHEN `onPlay` IS GIVEN. With
- * no handler the poster is announced as an image and takes no press state: a
- * play button that does nothing is worse than no play button. So the affordance
- * follows the capability rather than being painted on regardless.
+ * `onPlay` IS STILL HONOURED, AND IT NOW MEANS SOMETHING ELSE. It used to be
+ * the only way this block could play at all -- the tap was handed up because
+ * this component had no player. It is optional and unused today; given, it
+ * overrides the inline player and hands the tap up instead, which is the hook
+ * for a future full-screen or external route. The play glyph no longer depends
+ * on it: the block can always play, so the affordance is always drawn.
  */
 import React, {useState} from 'react';
-import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import {WebView} from 'react-native-webview';
 import {COLORS, FONT_FAMILY} from '../constants/appConstants';
 import {
   VIDEO_BACKGROUND,
   VIDEO_DESCRIPTION,
+  VIDEO_EMBED_URL,
   VIDEO_POSTER,
   VIDEO_POSTER_FALLBACK,
   VIDEO_TEXT,
@@ -72,10 +86,12 @@ const DESCRIPTION_LINES = 5;
 
 type Props = {
   /**
-   * Play the video, if the app can.
+   * Take the play over, instead of the inline player.
    *
-   * Optional on purpose -- see the note at the top. Omitted, the poster is a
-   * picture; given, it is a play control.
+   * Optional, and unused today -- see the note at the top. Omitted (the normal
+   * case), a tap mounts the embed inside this section. Given, the tap is
+   * handed up and nothing is mounted here, which is the hook for a future
+   * full-screen or external route. Either way the poster is a play control.
    */
   onPlay?: () => void;
 };
@@ -109,8 +125,39 @@ const VideoBlock = ({onPlay}: Props) => {
    */
   const [expanded, setExpanded] = useState(false);
 
+  /**
+   * Whether the player has been asked for.
+   *
+   * ONE-WAY, and deliberately so: nothing sets this back to false. Once the
+   * customer has tapped, the player owns that rectangle for the rest of the
+   * session -- there is no "stop" that returns to the poster, because
+   * YouTube's own controls already carry pause, scrub and fullscreen, and a
+   * second control of ours beside theirs would be two ways to do one thing.
+   * Coming back to a still after pausing is not what the site does either.
+   *
+   * It is the mount gate as well as the state: see the note at the top on why
+   * the WebView does not exist until this is true.
+   */
+  const [playing, setPlaying] = useState(false);
+
+  /**
+   * Whether the embed has painted yet.
+   *
+   * The WebView loads YouTube's player over the network, so there is a beat
+   * between the tap and anything appearing -- and a WebView renders as a blank
+   * rectangle for that whole beat. On this section's navy ground a blank
+   * rectangle is invisible, so the tap would read as having done nothing, and
+   * the obvious next move is to tap again.
+   *
+   * So the poster stays on screen underneath, with a spinner over it, until
+   * the page reports it has loaded. The picture the customer tapped is the
+   * thing they keep looking at while it opens.
+   */
+  const [ready, setReady] = useState(false);
+
   /*
-   * NO LOADING STATE AND NO FETCH, unlike every other illustrated section.
+   * NO LOADING STATE AND NO FETCH FOR THE POSTER, unlike every other
+   * illustrated section.
    *
    * The poster is derived from the video id rather than learned from the
    * section's markup -- see ./video, which carries why this section has no
@@ -118,53 +165,120 @@ const VideoBlock = ({onPlay}: Props) => {
    * the URL is known at build time and the only latency is the image itself,
    * which `Image` handles. A skeleton here would be a placeholder for a
    * request that is never made.
+   *
+   * (`ready` above is the PLAYER's load, which is a different thing and only
+   * exists after a tap.)
    */
-  const image = (
-    <Image
-      source={{uri: poster}}
-      style={[styles.poster, styles.posterImage]}
-      resizeMode="cover"
-      onError={() => setHd(false)}
-      {...(onPlay
-        ? {accessible: false}
-        : {
-            accessibilityRole: 'image' as const,
-            accessibilityLabel: VIDEO_TITLE,
-          })}
-    />
-  );
 
   return (
     <View style={styles.root}>
-      {onPlay ? (
-        <Pressable
-          onPress={onPlay}
-          accessibilityRole="button"
-          accessibilityLabel={`Play video: ${VIDEO_TITLE}`}
-          style={styles.poster}
-        >
-          {({pressed}) => (
-            <>
-              <Image
-                source={{uri: poster}}
-                style={[styles.posterImage, pressed && styles.pressed]}
-                resizeMode="cover"
-                onError={() => setHd(false)}
-                accessible={false}
-              />
-              <View style={styles.playOverlay}>
-                <PlayMark />
-              </View>
-            </>
-          )}
-        </Pressable>
-      ) : (
-        /*
-         * No handler: a picture, not a control. No play glyph either -- see
-         * the note at the top on why the affordance follows the capability.
-         */
-        image
-      )}
+      <View style={styles.poster}>
+        {/*
+          The poster, which is also the play control.
+
+          Still drawn while the player loads -- see `ready`. It comes off only
+          once the embed has painted, so the rectangle is never blank.
+        */}
+        {(!playing || !ready) && (
+          <Pressable
+            onPress={() => (onPlay ? onPlay() : setPlaying(true))}
+            // Not a control any more once the player is coming: the tap has
+            // been accepted, and tapping again would do nothing.
+            disabled={playing}
+            accessibilityRole="button"
+            accessibilityLabel={`Play video: ${VIDEO_TITLE}`}
+            accessibilityState={{busy: playing}}
+            style={StyleSheet.absoluteFill}
+          >
+            {({pressed}) => (
+              <>
+                <Image
+                  source={{uri: poster}}
+                  style={[styles.posterImage, pressed && styles.pressed]}
+                  resizeMode="cover"
+                  onError={() => setHd(false)}
+                  accessible={false}
+                />
+                <View style={styles.playOverlay}>
+                  {/*
+                    The glyph becomes a spinner once the tap has landed, and
+                    that is the whole acknowledgement the customer gets: the
+                    poster does not change, so without this the tap is silent
+                    for as long as YouTube takes to answer.
+                  */}
+                  {playing ? (
+                    <View style={styles.playDisc}>
+                      <ActivityIndicator color={COLORS.navy} />
+                    </View>
+                  ) : (
+                    <PlayMark />
+                  )}
+                </View>
+              </>
+            )}
+          </Pressable>
+        )}
+
+        {/*
+          THE PLAYER, MOUNTED ONLY ONCE ASKED FOR.
+
+          Below the poster in source order but drawn under it -- the poster
+          fills the box absolutely over the top and comes off when `ready`
+          lands, so the swap happens with the picture already replaced rather
+          than through a blank frame.
+
+          `onPlay` given means the caller wants the play for itself, so no
+          player is mounted here at all.
+        */}
+        {playing && !onPlay && (
+          <WebView
+            source={{uri: VIDEO_EMBED_URL}}
+            style={styles.player}
+            /*
+             * The player's own chrome is the point, so the WebView is a
+             * viewport and nothing else: no scrolling, no bounce, no zoom.
+             * Without these the embed can be dragged around inside its own
+             * box, which reads as the section being broken.
+             */
+            scrollEnabled={false}
+            bounces={false}
+            overScrollMode="never"
+            scalesPageToFit={false}
+            /*
+             * INLINE, NOT FULLSCREEN ON PLAY. Without
+             * `allowsInlineMediaPlayback` iOS takes any playing video into its
+             * own fullscreen player, which is exactly the leaving-the-section
+             * behaviour this block exists to avoid. Fullscreen stays available
+             * through YouTube's own control.
+             */
+            allowsInlineMediaPlayback
+            allowsFullscreenVideo
+            /*
+             * `false`, where ../webview/webViewConfig sets it true -- and this
+             * is the one place in the app that should differ. The customer has
+             * already made the gesture: the tap on the poster IS the user
+             * action. Requiring another one inside the embed would mean
+             * tapping play twice for one intention.
+             */
+            mediaPlaybackRequiresUserAction={false}
+            javaScriptEnabled
+            domStorageEnabled
+            /*
+             * The poster comes off here rather than on `onLoadStart`: start
+             * fires when the request goes out, and the player is still blank
+             * for most of what follows.
+             */
+            onLoadEnd={() => setReady(true)}
+            /*
+             * A failed load leaves `ready` false, so the poster stays -- the
+             * section falls back to exactly what it drew before the tap rather
+             * than to an empty navy rectangle. The spinner keeps turning,
+             * which is honest: it is still trying.
+             */
+            accessibilityLabel={VIDEO_TITLE}
+          />
+        )}
+      </View>
 
       <View style={styles.copy}>
         <Text style={styles.title}>{VIDEO_TITLE}</Text>
@@ -246,13 +360,54 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 22,
   },
+  /**
+   * The video's rectangle: the poster, the player, and the play control.
+   *
+   * A BOX WITH A SHAPE RATHER THAN A CONTAINER OF ONE, and that is what lets
+   * the swap be invisible. The poster and the player are both children of this
+   * and both fill it, so the box holds its 16:9 whether it is showing a
+   * picture, a spinner over a picture, or the embed. Nothing about the card's
+   * height changes when the tap lands, which is the failure this shape avoids:
+   * a player that sized itself would resize the section under the customer's
+   * thumb at the exact moment they touched it.
+   *
+   * `overflow: hidden` because the WebView is a child at the card's top
+   * corners -- the card rounds them (see `root`), and on Android an unclipped
+   * WebView paints square over that.
+   */
   poster: {
     width: '100%',
     aspectRatio: RATIO,
+    overflow: 'hidden',
+    // The ground behind both children while either is loading. Black rather
+    // than the card's navy: this is a video frame, and a letterboxed embed
+    // should sit on the colour a video sits on.
+    backgroundColor: '#000',
   },
   posterImage: {
     width: '100%',
     height: '100%',
+  },
+  /**
+   * The embed, filling the same box the poster does.
+   *
+   * `backgroundColor: 'transparent'` matters on Android: a WebView paints
+   * white before its page does, and a white flash inside a navy card is the
+   * one frame this whole loading dance exists to prevent. Transparent lets the
+   * box's own black show through instead -- and the poster is still on top
+   * until `ready` anyway, so this is the second line of defence rather than
+   * the first.
+   */
+  player: {
+    // Spelled out rather than spread from a helper: this RN version exports
+    // `absoluteFill` (a registered style id) but not `absoluteFillObject`, and
+    // an id cannot be spread into a style object.
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'transparent',
   },
   pressed: {
     opacity: 0.86,

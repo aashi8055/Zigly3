@@ -48,8 +48,10 @@ type Props = {
   onOpen: (path: string) => void;
   /**
    * Which tile shape the row draws. `circle` (the category rail) by default;
-   * the two breed rails pass `breed`, whose disc is more than twice the size
-   * and is measured against the screen -- see ./TileRow's `breedSize`.
+   * the two breed rails pass `breed`, whose disc is measured against the
+   * screen rather than fixed -- see ./TileRow's `breedSize`. The two land at
+   * about the same diameter today, and the variants are still distinct: a
+   * breed photo covers its disc where a category icon is contained inside one.
    */
   variant?: TileVariant;
   /** The screen's width. Required by the `breed` variant, ignored otherwise. */
@@ -121,16 +123,27 @@ const styles = StyleSheet.create({
   /**
    * The breed rails' heading, scaled to the discs under it.
    *
-   * 17 over a 130dp photograph reads as undersized -- the note below the base
-   * style argues 17 because "a 20px heading over a 60dp disc reads as louder
-   * than the content", and at breed size the content is twice as loud. The
-   * gutter matches ./TileRow's wider breed pitch so the heading still sits over
-   * the first disc rather than proud of it.
+   * IT CAME BACK DOWN WITH THEM. 19 was set against a 78dp photograph, on the
+   * argument that the base style's 17 "reads as undersized" when the content
+   * below is twice as loud as a 60dp category disc. The breed disc is 59dp now
+   * (see ./TileRow's `breedSize`), so the content is no longer twice as loud
+   * and a 19px heading over it is the imbalance the base style's own note
+   * warns about -- a heading louder than the row it introduces.
+   *
+   * 17.5 rather than a flat 17: this rail still carries a heading where the
+   * category circles carry none, so it is doing more work than the base style
+   * assumes, and half a point keeps it distinguishable without shouting.
+   *
+   * The gutter tracks ./TileRow's breed pitch, which moved 26 -> 20 with the
+   * discs, so the heading still sits over the first disc rather than proud of
+   * it. It is written as a literal on both sides rather than imported: the two
+   * files agree on a layout, not on a constant, and a heading that silently
+   * followed a gap constant would be the harder bug to see.
    */
   titleBreed: {
-    fontSize: 19,
-    lineHeight: 24,
-    paddingHorizontal: 18,
+    fontSize: 17.5,
+    lineHeight: 23,
+    paddingHorizontal: 20,
   },
 });
 

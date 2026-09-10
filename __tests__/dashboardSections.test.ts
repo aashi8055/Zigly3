@@ -307,28 +307,33 @@ describe('migration progress', () => {
    * below the run.
    *
    * `native: false` now means something the old test could not distinguish: a
-   * section the app draws NOTHING for on purpose. The video block is the first
-   * -- see its entry in ../src/native/dashboardSections for why -- and a
-   * deliberately hidden section sits wherever the running order puts it, which
-   * is mid-list. Under the old rule, hiding it would have read as a regression
-   * in a migration that is already complete.
+   * section the app draws NOTHING for on purpose. A deliberately hidden
+   * section sits wherever the running order puts it, which is mid-list, and
+   * under the old rule that would have read as a regression in a migration
+   * that is already complete.
    *
    * What is still worth holding is the part that catches a real mistake: a
    * section drawn by nothing must be hidden ON PURPOSE, with the manifest
    * saying so, rather than by omission.
+   *
+   * NOTHING IS HIDDEN TODAY. The video block was the only entry that ever
+   * was, and it is drawn again now that it can play its video -- see its entry
+   * in ../src/native/dashboardSections. An empty list is the strongest form of
+   * this assertion rather than a weakening of it: every section in the running
+   * order is drawn, so a section that silently stopped drawing fails here.
    */
   it('draws every section it does not deliberately hide', () => {
     const hidden = DASHBOARD_SECTIONS.filter(s => !s.native).map(s => s.key);
-    // The one section the app deliberately draws nothing for. Adding another
-    // means saying so here, which is the point -- a section that silently
-    // stopped drawing is the failure this replaces.
-    expect(hidden).toEqual(['video']);
+    // Hiding a section means saying so here, which is the point.
+    expect(hidden).toEqual([]);
   });
 
   it('still draws the three sections that close the page', () => {
-    // The regression that prompted the video block being hidden: its card was
+    // The regression that once prompted hiding the video block: its card was
     // taller than the viewport, and Android's clipping stopped re-attaching
-    // everything after it. These three are what went missing.
+    // everything after it. These three are what went missing. The block is
+    // drawn again and these three must still be behind it -- which is now the
+    // `tall` flag's job rather than the hiding's. See dashboardTypography.
     const native = DASHBOARD_SECTIONS.filter(s => s.native).map(s => s.key);
     expect(native.slice(-3)).toEqual(['community', 'instagram', 'logos']);
   });

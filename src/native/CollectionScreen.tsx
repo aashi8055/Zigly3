@@ -6,9 +6,10 @@
  * What the customer saw was the site's DOM with the app's CSS over it; this is
  * the app's own view of the same catalogue.
  *
- * THE SHAPE, from the reference screenshot: the collection's title, a
- * "66 Products" line under it, then a two-column grid of ./ListingCard, with
- * the Sort / Filter bar along the foot. That bar and both its panels already
+ * THE SHAPE: the collection's title, then a two-column grid of ./ListingCard,
+ * with the Sort / Filter bar along the foot. The reference screenshot also had
+ * a product-count line under the heading; that was asked to be removed, and
+ * the query that fed it went with it (see below the products state). That bar and both its panels already
  * existed natively (../components/SortFilterBar, SortSheet, FilterSheet) and
  * are unchanged -- this screen only supplies what the grid itself needs.
  *
@@ -51,11 +52,11 @@ import {Block, usePulse} from '../components/Skeleton';
 import ListingCard from './ListingCard';
 import {
   PAGE_SIZE,
-  fetchCollectionCount,
   fetchListingPage,
   fetchProductsByHandle,
   sortByDiscount,
   sortById,
+  sortLoaded,
   type ListingProduct,
   type SortId,
 } from './listing';
@@ -163,7 +164,6 @@ const CollectionScreen = ({
 }: Props) => {
   const [products, setProducts] = useState<readonly ListingProduct[]>([]);
   const [heading, setHeading] = useState(title ?? '');
-  const [count, setCount] = useState<number | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [more, setMore] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -244,23 +244,18 @@ const CollectionScreen = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle, sort, filterKey]);
 
-  /**
-   * The product count, fetched once per collection.
+  /*
+   * THE COUNT QUERY IS GONE, with the caption it fed.
    *
-   * Separate from the grid's own query and outside the sort effect: the total
-   * does not change when the sort does, and re-counting on every sort would be
-   * several hundred products' worth of round trip for a number that is already
-   * on screen and already correct.
+   * There used to be a "66 Products" line under the heading, and a request per
+   * collection to establish that number -- fetchCollectionCount pages the
+   * collection to count it, which is several hundred products' worth of round
+   * trip. With the caption removed there is nothing left to spend it on, so
+   * the effect went too rather than being left to fetch a number nobody reads.
+   *
+   * ./listing still exports fetchCollectionCount; this screen simply no longer
+   * calls it.
    */
-  useEffect(() => {
-    const controller = new AbortController();
-    setCount(null);
-    (async () => {
-      const total = await fetchCollectionCount(handle, controller.signal);
-      setCount(total);
-    })();
-    return () => controller.abort();
-  }, [handle]);
 
   /** The next page. */
   const loadMore = useCallback(async () => {
@@ -295,20 +290,24 @@ const CollectionScreen = ({
    * sending the first row -- and it is the trade the sort was accepted under,
    * because Shopify offers no discount key to ask for instead.
    */
-  /**
-   * The number under the heading.
+  /*
+   * AND THE FILTERED SET IS SORTED HERE, which it was not.
    *
-   * The collection's total normally; the filtered set's size while a filter is
-   * applied. Not `products.length` in the unfiltered case -- that is one page
-   * of 24, and captioning a 66-product collection "24 Products" because that
-   * is how far the customer has scrolled would be worse than no caption.
+   * The pass-through above is only right for a grid Shopify sorted. A filtered
+   * grid is fetched by handle (`fetchProductsByHandle`), which takes no sort
+   * and returns SearchTap's relevance order -- so four of the five sorts did
+   * nothing at all while the sort sheet kept the choice ticked. `sortLoaded`
+   * orders the set the app already holds; see its note for why that is exact
+   * here (a filtered set has no pages) and why New Release is left alone.
    */
-  const shownCount = filteredHandles ? products.length : count;
-
   const sortedProducts = useMemo(
     () =>
-      sortById(sort).key === null ? sortByDiscount(products) : [...products],
-    [products, sort],
+      filteredHandles
+        ? sortLoaded(products, sort)
+        : sortById(sort).key === null
+        ? sortByDiscount(products)
+        : [...products],
+    [filteredHandles, products, sort],
   );
 
   return (
@@ -334,25 +333,9 @@ const CollectionScreen = ({
           <View style={styles.header}>
             {heading ? <Text style={styles.title}>{heading}</Text> : null}
             {/*
-              The count, or nothing.
-
-              Never a guess: ./listing returns null when it could not establish
-              the total, and a wrong number under a collection heading is the
-              kind of small false statement the standing design rule exists to
-              prevent.
+              NO "66 Products" LINE. Asked for, and it takes the count query
+              with it -- see the removed effect below the products state.
             */}
-            {/*
-              While a filter is applied the number is the filtered set's own
-              size, because that is what is on screen -- printing the
-              collection's total under a filtered grid would be a caption that
-              contradicts the products beneath it. `shownCount` is null only
-              when neither number is known yet.
-            */}
-            {shownCount !== null ? (
-              <Text style={styles.count}>
-                {shownCount} {shownCount === 1 ? 'Product' : 'Products'}
-              </Text>
-            ) : null}
           </View>
         </View>
       }
@@ -416,11 +399,6 @@ const styles = StyleSheet.create({
     fontSize: 27,
     fontWeight: '700',
     color: '#1B1B1B',
-  },
-  count: {
-    fontFamily: FONT_FAMILY,
-    fontSize: 15.5,
-    color: '#6B7280',
   },
   empty: {paddingVertical: 48, paddingHorizontal: 8},
   emptyText: {

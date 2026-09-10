@@ -74,6 +74,34 @@ const SingleBanner = ({banner, onOpen}: Props) => {
     ? {paddingHorizontal: banner.inset}
     : undefined;
 
+  /*
+   * HOW THE ARTWORK MEETS ITS BOX, AND IT IS NOT THE SAME FOR ALL FOUR.
+   *
+   * `cover` everywhere by default, which is right for a campaign banner: the
+   * crop is cut for the ratio, so covering trims a sliver of photograph rather
+   * than letterboxing the banner against the page, and the lettering sits in
+   * the middle with room around it.
+   *
+   * The brand-claims strip is the exception, and its artwork is why. It is not
+   * one picture but a ROW OF SEPARATE MARKS, so the trim `cover` takes lands
+   * on the outermost two and the strip drew with its end claims clipped --
+   * which is exactly how it was reported. `contain` cannot clip.
+   *
+   * KEYED ON `inset`, NOT ON `path`. The obvious spelling would be "the banner
+   * with no link gets `contain`", since the strip is the only one without one
+   * -- but the gift-card banner joined it there the moment its "Coming Soon"
+   * artwork stopped being tappable (see ./singleBanners), and that one IS a
+   * campaign image that should still cover. `inset` is the field that actually
+   * names the odd one out: it exists on exactly the banner whose artwork is a
+   * row of marks, and for the same underlying reason.
+   *
+   * The cost `contain` usually carries -- bars where the ratio disagrees -- is
+   * nil today: `ratio` is the artwork's own 600x210, so the box is already the
+   * picture's shape and the two modes resolve to the same rectangle. It is
+   * insurance against a re-crop, not a change of layout.
+   */
+  const fit = banner.inset ? ('contain' as const) : ('cover' as const);
+
   if (loading) {
     return (
       <View style={[styles.root, inset]}>
@@ -99,7 +127,7 @@ const SingleBanner = ({banner, onOpen}: Props) => {
         <Image
           source={{uri: image}}
           style={[styles.image, {aspectRatio: ratio}]}
-          resizeMode="cover"
+          resizeMode={fit}
           accessibilityRole="image"
           accessibilityLabel={tile.label}
         />
@@ -120,9 +148,10 @@ const SingleBanner = ({banner, onOpen}: Props) => {
           <Image
             source={{uri: image}}
             style={[styles.image, {aspectRatio: ratio}, pressed && styles.pressed]}
-            // `cover`: the crop is cut for this ratio, so this trims a sliver
-            // rather than letterboxing the banner against the page.
-            resizeMode="cover"
+            // See `fit` above. `cover` for every linked banner: the crop is cut
+            // for this ratio, so this trims a sliver rather than letterboxing
+            // the banner against the page.
+            resizeMode={fit}
             accessible={false}
           />
         )}

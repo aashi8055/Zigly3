@@ -32,6 +32,7 @@ import {
 import {
   VIDEO_BACKGROUND,
   VIDEO_DESCRIPTION,
+  VIDEO_EMBED_URL,
   VIDEO_ID,
   VIDEO_POSTER,
   VIDEO_POSTER_FALLBACK,
@@ -259,6 +260,53 @@ describe('the video block', () => {
       'https://www.youtube.com/watch?v=1vIjfkud5MQ',
     );
     expect(VIDEO_WATCH_URL).toContain(VIDEO_ID);
+  });
+
+  /**
+   * THE EMBED THE SECTION PLAYS, AND IT IS THE THEME'S OWN URL.
+   *
+   * `custom-video-text-banner.liquid` builds this in its `video_link` branch,
+   * and ../src/native/VideoBlock loads exactly it in a WebView when the poster
+   * is tapped. Pinned character for character because the whole claim of that
+   * component is that the app plays what the site plays: a parameter dropped
+   * because the app has no use for it is how the two drift apart.
+   */
+  it('plays the theme’s own embed, parameters and all', () => {
+    expect(VIDEO_EMBED_URL).toBe(
+      'https://www.youtube.com/embed/1vIjfkud5MQ' +
+        '?enablejsapi=1&modestbranding=1&rel=0',
+    );
+  });
+
+  /**
+   * `rel=0` is the one parameter with a commercial consequence, so it gets its
+   * own assertion: without it YouTube's end cards offer videos from other
+   * channels, which on a pet-food retailer's own app means a competitor's
+   * product at the end of Zigly's brand film.
+   */
+  it('keeps the end cards on Zigly’s own channel', () => {
+    expect(VIDEO_EMBED_URL).toContain('rel=0');
+  });
+
+  /**
+   * NO AUTOPLAY, which is the section's whole behaviour.
+   *
+   * The theme's element carries `controls playsinline` with no `autoplay` and
+   * no `muted`, so on the site a customer sees a still and taps. A rebuild's
+   * instinct is a muted autoplaying loop, and this is the section that is not
+   * that. VideoBlock enforces the same thing more strongly by not mounting the
+   * player at all until the tap -- see the component test below.
+   */
+  it('does not autoplay', () => {
+    expect(VIDEO_EMBED_URL).not.toContain('autoplay');
+    expect(VIDEO_EMBED_URL).not.toContain('mute');
+  });
+
+  /** All three URLs are derived from one id, so they cannot drift apart. */
+  it('derives the embed, the poster and the watch URL from one id', () => {
+    for (const url of [VIDEO_EMBED_URL, VIDEO_POSTER, VIDEO_WATCH_URL]) {
+      expect(url).toContain(VIDEO_ID);
+    }
   });
 });
 

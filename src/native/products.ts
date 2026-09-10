@@ -209,7 +209,32 @@ const COLLECTION_QUERY = `
   }
 `;
 
-/** Turn a list of product edges into cards, dropping any that cannot draw. */
+/**
+ * Turn a list of product edges into cards, dropping any that cannot draw and
+ * any that cannot be bought.
+ *
+ * SOLD-OUT PRODUCTS DO NOT REACH A RAIL. ./ProductCard still knows how to draw
+ * one -- a greyed "Sold Out" button in place of Add to Bag -- and that state is
+ * kept, because ./listing's grid is a page the customer navigated to on purpose
+ * and a collection that silently shed items would misreport how big it is.
+ *
+ * A rail is the opposite case. Hot Picks, New Arrivals and Bestsellers are
+ * fifteen and twelve cards of a curated collection, shown to a customer who did
+ * not ask for them; a dead card there spends a rail slot on something nobody
+ * can buy and is a worse offer than the product behind it. The theme's own
+ * rails are backed by collections Shopify does not prune, so this is the app
+ * choosing what to show rather than contradicting the site -- the standing rule
+ * is that the data is Zigly's and the view is ours.
+ *
+ * `available` is Shopify's `availableForSale` on the product, which is false
+ * only when EVERY variant is out of stock -- see ./ProductCard on how a variant
+ * is picked. So this drops products with nothing in stock at all, never a
+ * product whose 3 kg bag happens to be out.
+ *
+ * The drop is here rather than in each caller because every rail's products
+ * come through this one function, and a filter written twice is a filter that
+ * drifts once.
+ */
 const collect = (
   edges: {node?: ProductNode}[] | undefined,
 ): Product[] => {
@@ -219,7 +244,7 @@ const collect = (
   const out: Product[] = [];
   for (const edge of edges) {
     const product = parseProduct(edge?.node);
-    if (product) {
+    if (product && product.available) {
       out.push(product);
     }
   }

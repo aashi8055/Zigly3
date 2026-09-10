@@ -131,6 +131,7 @@ import {READ_MENU_SCRIPT} from '../webview/menuBridge';
 import {parseMenu} from '../menu/menuTree';
 import type {MenuNode} from '../menu/menuTree';
 import NetworkErrorScreen from '../components/NetworkErrorScreen';
+import ConfirmSheet from '../components/ConfirmSheet';
 import SearchScreen from '../components/SearchScreen';
 import {
   MIN_QUERY_LENGTH,
@@ -188,6 +189,7 @@ import {
 import {
   EMPTY_FACETS,
   parseFacets,
+  selectedCount,
   selectSort,
   toggleOption,
 } from '../listing/facets';
@@ -274,17 +276,34 @@ type Target = 'home' | 'login' | 'password' | number;
 /**
  * What the dashboard's WebView runs before the page's own scripts.
  *
- * The header rule, and now only that. It used to carry the section prewarm as
- * well -- the reason the page's dashboard assembled while it downloaded rather
- * than afterwards -- and that dashboard is ../native/NativeDashboard now, so
- * there is nothing in the page left to warm.
+ * The header rule, and the announcement reader.
+ *
+ * It used to carry the section prewarm as well -- the reason the page's
+ * dashboard assembled while it downloaded rather than afterwards -- and that
+ * dashboard is ../native/NativeDashboard now, so there is nothing in the page
+ * left to warm.
+ *
+ * WHY THE ANNOUNCEMENT READER IS HERE AND NOT ONLY AT onLoadEnd. The strip is
+ * the topmost thing on the screen and it was the last thing to fill: the
+ * reader ran once the whole page had downloaded, so on a cold start the bar
+ * sat blank for seconds while the text it wanted was already parsed in the
+ * document. Its markup is near the top of the HTML; onLoadEnd is gated on
+ * images and third-party scripts that have nothing to do with it.
+ *
+ * Injected here it starts before the page's own scripts and reports as soon as
+ * the section is parsed -- see REPORT_ANNOUNCEMENTS, which now watches for the
+ * element rather than sampling for it twice. It is still injected at onLoadEnd
+ * too, and deliberately: `injectedJavaScriptBeforeContentLoaded` is unreliable
+ * on Android (the note on the dashboard WebView's own prop says so, and it is
+ * why that prop is not trusted alone anywhere in this file). The reader is
+ * idempotent, so the second pass costs a query and returns.
  *
  * A module constant rather than something built per render, so the prop never
  * changes identity: `injectedJavaScriptBeforeContentLoaded` is read once per
  * navigation, and handing the WebView a fresh string on every render of this
  * very busy screen would be churn for no gain.
  */
-const HOME_EARLY_SCRIPT = EARLY_HEADER_CSS;
+const HOME_EARLY_SCRIPT = EARLY_HEADER_CSS + REPORT_ANNOUNCEMENTS;
 
 /**
  * Whether a page is a shopping page.
@@ -740,6 +759,17 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const [facetsByKey, setFacetsByKey] = useState<Record<number, Facets>>({});
   /**
+   * The same map, readable from inside the WebView's message handler.
+   *
+   * That handler is a prop on a layer in the render tree, so it closes over the
+   * render it was created in. It needs `facetsByKey` to decide whether a
+   * `results` message describes a filter that is still applied (see the
+   * `results` branch), and reading the state there would read whichever render
+   * the closure happens to be from -- which is the same staleness class that
+   * broke `toggleFacet` before it moved its test inside the updater.
+   */
+  const facetsByKeyRef = useRef<Record<number, Facets>>({});
+  /**
    * Which sort the NATIVE collection grid is showing, per page layer.
    *
    * Separate from `facetsByKey` above, and the two are not redundant. That one
@@ -902,6 +932,25 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * checkout that could not open. See `endCheckoutEmbed`.
    */
   const [checkoutEmbedUp, setCheckoutEmbedUp] = useState(false);
+  /**
+   * Where the customer was when the checkout opened, so Back can return there.
+   *
+   * WHY THIS HAS TO BE REMEMBERED. Their checkout is an iframe over a page of
+   * the store and it changes no url, so once it is up nothing on screen says
+   * how the customer reached it -- and the two routes lead back to different
+   * places:
+   *
+   *   - 'cart': the cart's own Checkout button. The cart is CLOSED as their
+   *     page paints (see `releaseCheckoutHold`), so backing out has to reopen
+   *     it. This is the route that was landing on the dashboard.
+   *   - 'buy-now': Buy Now on a product page. Nothing was closed -- the
+   *     product page is the layer the iframe mounted over and is still there
+   *     underneath it -- so backing out only takes the embed down.
+   *
+   * `cartBridge` and `productActions` already label their reports with `via`,
+   * which was being sent and never read; this is where it is read.
+   */
+  const checkoutCameFrom = useRef<'cart' | 'buy-now' | null>(null);
   /**
    * Releases the hold if no paint is ever reported.
    *
@@ -1523,6 +1572,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     setResultsByKey(prev => dropStaleKeys(prev, live));
   }, [stack.layers]);
 
+  /*
+   * Kept in step with the state, for the message handler that cannot read it.
+   * Mirrors only -- nothing decides anything from this that is not decided
+   * from `facetsByKey` itself one render later.
+   */
+  useEffect(() => {
+    facetsByKeyRef.current = facetsByKey;
+  }, [facetsByKey]);
+
   useEffect(() => {
     authRef.current = auth;
   }, [auth]);
@@ -1774,12 +1832,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         return;
       }
       const key = showing.key;
-      const next = toggleOption(
-        facetsByKey[key] ?? EMPTY_FACETS,
-        groupIndex,
-        label,
-      );
-      setFacetsByKey(prev => ({...prev, [key]: next}));
       setFacetBusy(true);
       injectInto(key, toggleFacetScript(groupIndex, groupTitle, label));
 
@@ -1792,27 +1844,53 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
        * would go on drawing a fixed list of handles with no paging instead of
        * returning to its own query.
        *
-       * The optimistic state computed above is what knows: it is the app's
-       * own record of which chips are on, and it is correct on the frame of the
-       * tap. When nothing is left on, the entry is dropped and the grid falls
-       * back to the collection query -- which is also what restores infinite
-       * scroll.
+       * The optimistic state is what knows: it is the app's own record of which
+       * chips are on, and it is correct on the frame of the tap. When nothing
+       * is left on, the entry is dropped and the grid falls back to the
+       * collection query -- which is also what restores infinite scroll.
+       *
+       * BOTH THE FLIP AND THE "IS ANYTHING LEFT ON" TEST HAPPEN INSIDE THE
+       * UPDATER, and that is the fix rather than a style choice. They used to
+       * read `facetsByKey[key]` from this callback's closure, and this callback
+       * is re-created only when that map changes -- while ../webview/facetBridge
+       * re-reports the page's facets 300ms and 1200ms after EVERY toggle. So a
+       * chip tapped shortly after another one computed `anyOn` from a map that
+       * had already been replaced.
+       *
+       * The consequence was specific and unrecoverable: turning the last chip
+       * off could see a stale "something is still on", skip the delete, and
+       * leave the grid pinned to a dead handle list with paging disabled --
+       * with no way back except navigating away from the collection. Reading
+       * `prev` inside the updater makes the flip and the test see the same
+       * state React is actually holding.
+       *
+       * `setResultsByKey` is called from inside this updater. React batches it
+       * with the enclosing update rather than re-entering, and the same pattern
+       * is already what `chooseSort` above uses.
        */
-      const anyOn = next.groups.some(group =>
-        group.options.some(option => option.on),
-      );
-      if (!anyOn) {
-        setResultsByKey(prev => {
-          if (!(key in prev)) {
-            return prev;
-          }
-          const without = {...prev};
-          delete without[key];
-          return without;
-        });
-      }
+      setFacetsByKey(prev => {
+        const next = toggleOption(
+          prev[key] ?? EMPTY_FACETS,
+          groupIndex,
+          label,
+        );
+        const anyOn = next.groups.some(group =>
+          group.options.some(option => option.on),
+        );
+        if (!anyOn) {
+          setResultsByKey(current => {
+            if (!(key in current)) {
+              return current;
+            }
+            const without = {...current};
+            delete without[key];
+            return without;
+          });
+        }
+        return {...prev, [key]: next};
+      });
     },
-    [facetsByKey, injectInto, showing],
+    [injectInto, showing],
   );
 
   /** Kept for the back button, which reads it inside a native callback. */
@@ -2093,10 +2171,138 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     injectInto('home', WISHLIST_SCRIPT);
   }, [injectInto]);
 
+  /**
+   * Which wishlist tile is adding, by product handle, or null.
+   *
+   * SEPARATE FROM `productBusy`, and the handle is why. That flag is a single
+   * 'add' | 'buy' | null because the product page has exactly one product and
+   * one pair of buttons; the wishlist is a grid where every tile has its own
+   * Add to Bag, and a shared boolean would spin all of them at once -- which
+   * tells the customer the app is adding six products.
+   *
+   * A handle rather than an index: the list re-orders and shrinks under this
+   * (a removal takes its tile out immediately), and an index would follow the
+   * slot rather than the product, moving the spinner onto whatever slid up
+   * into that position.
+   *
+   * WHY A SPINNER AT ALL, same argument as ../components/ProductActionBar's
+   * `addBusy`: the add clicks the theme's real button in the dashboard WebView
+   * and then re-reads /cart.js to confirm, retrying for up to
+   * ADD_VERIFY_BUDGET_MS. Until now the only thing that moved in that window
+   * was the press opacity, which ends with the finger -- so on a slow
+   * connection a tap looked like a tap that had done nothing, and the customer
+   * pressed again. A second press is a second line in the bag.
+   */
+  const [wishlistAdding, setWishlistAdding] = useState<string | null>(null);
+  /**
+   * The same failsafe `productBusyTimer` is, for the same reason: every path
+   * that ends this spin is a message from inside a WebView, and a message is
+   * exactly the thing that can fail to arrive. A permanent spinner here is
+   * milder than on the product bar -- it disables one tile, not the whole
+   * screen -- but it is still a tile the customer cannot buy from.
+   */
+  const wishlistAddTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Stop the tile's spinner and disarm its failsafe. Every exit comes here. */
+  const clearWishlistAdding = useCallback(() => {
+    if (wishlistAddTimer.current) {
+      clearTimeout(wishlistAddTimer.current);
+      wishlistAddTimer.current = null;
+    }
+    setWishlistAdding(null);
+  }, []);
+
+  /**
+   * Start the spin on one tile, armed with the deadline above.
+   *
+   * ADD_BUSY_CAP_MS is the product bar's own budget and this borrows it rather
+   * than inventing a second one: the work being waited on is identical -- the
+   * same click, the same verify schedule in ../webview/productActions -- so a
+   * different deadline here could only ever be wrong in one direction.
+   */
+  const startWishlistAdding = useCallback((handle: string) => {
+    if (wishlistAddTimer.current) {
+      clearTimeout(wishlistAddTimer.current);
+    }
+    setWishlistAdding(handle);
+    wishlistAddTimer.current = setTimeout(() => {
+      wishlistAddTimer.current = null;
+      setWishlistAdding(null);
+    }, ADD_BUSY_CAP_MS);
+  }, []);
+
+  /** As above: the timer must not outlive the screen. */
+  useEffect(
+    () => () => {
+      if (wishlistAddTimer.current) {
+        clearTimeout(wishlistAddTimer.current);
+        wishlistAddTimer.current = null;
+      }
+    },
+    [],
+  );
+
+  /**
+   * Which dashboard rail card is adding, by product handle, or null.
+   *
+   * THE SAME SPINNER THE WISHLIST TILES GOT, on the surface that needed it
+   * more. Hot Picks, New Arrivals and Bestsellers are the cards a customer
+   * meets first, and until now their Add to Bag did nothing visible: the add
+   * goes into the dashboard WebView, which then clicks the theme's control and
+   * re-reads /cart.js to confirm, retrying for up to ADD_VERIFY_BUDGET_MS. The
+   * only thing that moved in that window was the press opacity, and that ends
+   * with the finger -- so on a slow connection a tap read as a tap that had
+   * failed, and the customer pressed again. A second press is a second line in
+   * the bag. The toast and the badge arrive at the END of that wait, which is
+   * the thing being covered here, not replaced.
+   *
+   * SEPARATE FROM `wishlistAdding` rather than shared, even though both spin on
+   * a handle and both are cleared by the same 'cart-added'. That state is
+   * cleared when the wishlist screen closes (see `closeWishlist`), because the
+   * screen it belongs to is going away; a rail card stays on the dashboard
+   * underneath. Sharing one string would mean closing the wishlist stopped a
+   * rail's spinner, or that a rail's add left the wishlist's failsafe armed.
+   *
+   * A handle, not an index and not a variant id, for the reason the wishlist's
+   * note gives: the list can reorder under it, and a product has several
+   * variant ids but one handle. ../native/ProductRail sends it up.
+   */
+  const [dashboardAdding, setDashboardAdding] = useState<string | null>(null);
+
+  /** Its failsafe. Every path that ends this spin is a WebView message. */
+  const dashboardAddTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Stop the card's spinner and disarm its failsafe. Every exit comes here. */
+  const clearDashboardAdding = useCallback(() => {
+    if (dashboardAddTimer.current) {
+      clearTimeout(dashboardAddTimer.current);
+      dashboardAddTimer.current = null;
+    }
+    setDashboardAdding(null);
+  }, []);
+
+  /** As the wishlist's: the timer must not outlive the screen. */
+  useEffect(
+    () => () => {
+      if (dashboardAddTimer.current) {
+        clearTimeout(dashboardAddTimer.current);
+        dashboardAddTimer.current = null;
+      }
+    },
+    [],
+  );
+
   const closeWishlist = useCallback(() => {
     setWishlistOpen(false);
     setWishlistNotice(null);
-  }, []);
+    /*
+     * And any spin in flight, because the screen it was on is going away.
+     * Without this the failsafe would still be armed when the customer
+     * reopened the wishlist, and a `cart-added` for the add they left behind
+     * would arrive against a fresh screen.
+     */
+    clearWishlistAdding();
+  }, [clearWishlistAdding]);
 
   /**
    * Un-save an item.
@@ -2209,6 +2415,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   /**
+   * Whether their iframe is on screen, for the two Back handlers.
+   *
+   * A ref as well as state because the hardware handler is installed once, in
+   * an effect that reads every other "is this open?" through a ref for exactly
+   * this reason: re-subscribing BackHandler on each render is churn, and a
+   * handler closed over a stale `false` would let Back leave the app from the
+   * middle of a payment flow.
+   */
+  const checkoutEmbedUpRef = useRef(false);
+  useEffect(() => {
+    checkoutEmbedUpRef.current = checkoutEmbedUp;
+  }, [checkoutEmbedUp]);
+
+  /**
    * Uncover the page: Shiprocket is there, or it is never going to say so.
    *
    * One place for both, because the overlay must come off exactly once and on
@@ -2270,6 +2490,78 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     setShowCart(true);
     injectInto('home', READ_CART_SCRIPT);
   }, [injectInto]);
+
+  /**
+   * Back, from inside Shiprocket's checkout.
+   *
+   * WHY BACK NEEDS ITS OWN ANSWER HERE. Their checkout is a cross-origin
+   * iframe (theme snippet sr-checkout.liquid sets
+   * `checkoutBuyer = 'https://fastrr-boost-ui.pickrr.com/'`), mounted over a
+   * page of the store WITHOUT a navigation. So there is no history entry to
+   * step back through: `webRef.goBack()` -- which is where both Back paths
+   * used to end up -- would take the WebView off the page the iframe is
+   * mounted in, or do nothing at all on the dashboard, and either way leave
+   * the app's state saying a checkout was still up.
+   *
+   * AND TAKING THE EMBED DOWN IS NOT THE WHOLE OF IT, which is what the first
+   * version of this got wrong. Clearing the flags reveals whatever is
+   * underneath the iframe -- and on the cart's route that is the DASHBOARD,
+   * because the checkout only paints into the dashboard's WebView when there
+   * was no page layer open to paint into. Back therefore skipped the cart
+   * entirely and dropped the customer at home, several steps from where they
+   * were.
+   *
+   * So Back returns to the screen the checkout was opened from, and the two
+   * routes differ -- see `checkoutCameFrom` for which is which. The branch
+   * below is the whole of that difference.
+   *
+   * Reports whether it acted, so each caller can fall through to its own next
+   * rule when there is no checkout to leave.
+   */
+  const leaveCheckoutEmbed = useCallback((): boolean => {
+    if (!checkoutEmbedUpRef.current) {
+      return false;
+    }
+    const from = checkoutCameFrom.current;
+    checkoutCameFrom.current = null;
+    // Their page is off screen either way.
+    endCheckoutEmbed();
+
+    if (from === 'buy-now') {
+      /*
+       * Buy Now: the product page is already the thing underneath.
+       *
+       * Nothing was closed on the way in -- the iframe mounted over the layer
+       * the customer was reading -- so taking the embed down reveals it, and
+       * `checkoutOnDashboard` was never armed on this route (it is set only
+       * when there is no page layer to paint into). Nothing else to do.
+       */
+      return true;
+    }
+
+    /*
+     * The cart: REOPEN IT, rather than uncovering what was behind it.
+     *
+     * This is the case that was landing on the dashboard. The cart is closed
+     * as their page paints (`releaseCheckoutHold`), so by the time Back is
+     * pressed the cart is gone -- and simply clearing the flags revealed
+     * whatever the cart had been covering, which on this route is the
+     * dashboard, because the checkout only paints into the dashboard's WebView
+     * when there was no page layer open to paint into.
+     *
+     * So the previous page is the cart, and it is reopened. `openCart` re-reads
+     * the cart through the bridge, which is right here for a second reason: an
+     * abandoned checkout can have changed the cart, and the customer must not
+     * be shown a stale copy of it.
+     *
+     * `endCheckoutOnDashboard` is deliberately NOT called. The cart is an
+     * overlay drawn over the parked dashboard, so unparking it here would put
+     * the native dashboard back between the cart and the WebView mid-exit.
+     * `closeCart` unparks it, which is the moment the customer actually leaves.
+     */
+    openCart();
+    return true;
+  }, [endCheckoutEmbed, openCart]);
 
   /**
    * One add, one toast.
@@ -2526,6 +2818,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     },
     [],
   );
+
 
   // ----------------------------------------------------------------- account
   /**
@@ -3533,7 +3826,19 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       closeCart();
     } else if (wishlistOpen) {
       closeWishlist();
-    } else if (!stepBack() && !stepBackAccount() && canGoBackRef.current) {
+    } else if (
+      /*
+       * BEFORE the page-layer and history rules, because their iframe is drawn
+       * over whatever those would step through. It changes no url, so nothing
+       * below this line can tell the checkout is on screen -- and the arrow
+       * would have called `webRef.goBack()` underneath a live payment page.
+       * See `leaveCheckoutEmbed`.
+       */
+      !leaveCheckoutEmbed() &&
+      !stepBack() &&
+      !stepBackAccount() &&
+      canGoBackRef.current
+    ) {
       webRef.current?.goBack();
     }
   }, [
@@ -3543,6 +3848,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     closeSearch,
     closeWishlist,
     closeCart,
+    leaveCheckoutEmbed,
     stepBack,
     stepBackAccount,
   ]);
@@ -3637,7 +3943,28 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * ../webview/cartBridge must never be handed a guess.
    */
   const addFromDashboard = useCallback(
-    (variantId: number) => {
+    (variantId: number, handle: string) => {
+      /*
+       * The spin starts BEFORE the injection, not after it and not on the
+       * reply -- the same order `startWishlistAdding` is called in. `injectInto`
+       * is synchronous from here but the work it starts is not, and a customer
+       * who has to wait for a round trip to see that their tap registered is
+       * back to pressing twice.
+       *
+       * Armed with ADD_BUSY_CAP_MS, the product bar's own budget, because the
+       * work being waited on is identical: the same click, the same verify
+       * schedule in ../webview/productActions. A second deadline here could
+       * only ever be wrong in one direction.
+       */
+      if (dashboardAddTimer.current) {
+        clearTimeout(dashboardAddTimer.current);
+      }
+      setDashboardAdding(handle);
+      dashboardAddTimer.current = setTimeout(() => {
+        dashboardAddTimer.current = null;
+        setDashboardAdding(null);
+      }, ADD_BUSY_CAP_MS);
+
       injectInto('home', addToCartScript(variantId));
     },
     [injectInto],
@@ -3813,7 +4140,34 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * Its own function because it is a press handler: wiring `signOut` straight
    * to `onPress` would hand it the gesture event as its `reason`.
    */
-  const logOut = useCallback(() => signOut('logout'), [signOut]);
+  /**
+   * Whether the sign-out question is on screen.
+   *
+   * The Log Out button used to sign the customer out on the tap. It sits in
+   * the account screen's footer directly under Delete Account, which DOES ask
+   * -- so the more drastic of the two was the one that confirmed, and a mistap
+   * on the row below it ended the session outright.
+   *
+   * Asked in a sheet from the foot of the screen rather than an OS alert (see
+   * ../components/ConfirmSheet): every other decision this app waits on is
+   * asked there, and Delete Account's native dialog is the outlier rather than
+   * the pattern to copy.
+   */
+  const [confirmLogOut, setConfirmLogOut] = useState(false);
+
+  /**
+   * Ask, then sign out.
+   *
+   * `signOut` itself is untouched -- this only decides when it runs. Everything
+   * downstream of it (the reason ref, the doubted-probe run, the toast that
+   * outlives the account screen) is the same code on the same path.
+   */
+  const logOut = useCallback(() => setConfirmLogOut(true), []);
+
+  const confirmSignOut = useCallback(() => {
+    setConfirmLogOut(false);
+    signOut('logout');
+  }, [signOut]);
 
   /**
    * Delete Account.
@@ -3950,6 +4304,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         closeWishlist();
         return true;
       }
+      /*
+       * Their checkout, before the page layers -- the same order the header's
+       * arrow uses, and for the same reason. The iframe is drawn over whatever
+       * layer it mounted in and changes no url, so every rule below this line
+       * is blind to it: hardware Back would have stepped the layer underneath
+       * a live payment page, or closed the app from the dashboard.
+       */
+      if (leaveCheckoutEmbed()) {
+        return true;
+      }
       // Page layers first, then the account section: a page opened from inside
       // the section (an order, a product from Favorites) is drawn over it, so
       // Back has to take the page off before it takes a step in the section.
@@ -3978,6 +4342,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     closeMenu,
     closeSearch,
     closeWishlist,
+    leaveCheckoutEmbed,
     stepBack,
     stepBackAccount,
   ]);
@@ -4772,42 +5137,64 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   /**
    * Whether the app's own furniture is on screen at all.
    *
-   * FALSE ON THE CHECKOUT, AND ONLY THERE. Shiprocket's page gets the whole
-   * screen: no announcement strip, no header, and -- through `showNav` below,
-   * which already excluded `inCheckout` for its own reasons -- no tab bar
-   * either.
+   * TRUE ON THE CHECKOUT NOW. This used to be `!inCheckout && !checkoutEmbedUp`
+   * -- Shiprocket's page got the whole screen, on the argument that their
+   * payment flow carries its own header and its own way back, and that two
+   * headers stacked over it is one mistap away from abandoning a basket the
+   * customer has already entered card details into.
    *
-   * `inCheckout` is the right test rather than a new one, and that is the
-   * point. It is set from `isCheckoutUrl` on whichever WebView navigated
-   * (see handleNavStateChange and the layer's own handler), and
-   * PAYMENT_HOSTS carries shiprocket.in, checkout.shiprocket.in,
-   * fastrr.shiprocket.in and fastrr-boost-ui.pickrr.com -- which is where
-   * Shiprocket Checkout actually serves from. So this turns off exactly when
-   * their page is loaded and back on the moment the customer leaves it,
-   * whether they came from the cart's Checkout or from Buy Now: both end up
-   * on the same host, and neither is treated specially here.
+   * That argument was wrong about the way back. Their embed's own control does
+   * not always reach back into the app, and with no header there was no visible
+   * exit at all: the customer's only route out was Android's hardware back,
+   * which is not a control an iPhone-shaped layout advertises and not one every
+   * customer thinks to use. A checkout a customer cannot leave is worse than a
+   * checkout with a header they might mistap.
    *
-   * WHY HIDE IT AT ALL. Their checkout is a payment flow with its own header,
-   * its own steps and its own way back. Two headers stacked over it is one
-   * mistap away from abandoning a basket the customer has already entered
-   * card details into -- the same argument the tab bar was removed under, and
-   * the reason that exclusion was already there before this one.
+   * So the header is back on every page, checkout included, and the exclusions
+   * that were right stay where they are and keep reading `inCheckout` for
+   * themselves:
    *
-   * The customer is not trapped: Android's hardware back still reaches this
-   * screen's own handler, and Shiprocket's page carries its own controls.
+   *   - the announcement strip, at its own call site below. A promotion above a
+   *     payment page is still the last thing a customer needs.
+   *   - the tab bar, through `showNav`, which excluded `inCheckout` before this
+   *     rule existed and excludes it still. Five ways out of a payment flow was
+   *     the real version of the mistap worry.
    *
-   * BOTH TESTS, because their embed arrives two ways -- a navigation to their
-   * own host, or an iframe over a page of the store that leaves the top-level
-   * url alone. See `checkoutEmbedUp` for why the url alone is not enough.
+   * What is left on the checkout is one back arrow and the logo, which is the
+   * least furniture that still answers "how do I get out of this".
    */
-  const showChrome = !inCheckout && !checkoutEmbedUp;
+  /*
+   * No binding any more: nothing is conditional on being off-checkout. The
+   * two rules that ARE keep their own tests -- the strip at its call site
+   * below, `showNav` for the tab bar. Kept as a comment because the
+   * reasoning above is the answer to "why is there a header over Shiprocket".
+   */
 
   const showNav =
     !searchOpen &&
     // The drawer is a screen of its own while it is open, as it is in the
     // reference app: nothing under it should be offering a second way out.
     !menuOpen &&
+    /*
+     * BOTH CHECKOUT TESTS, and the second one was missing.
+     *
+     * `inCheckout` alone only covers the checkout that arrives as a
+     * NAVIGATION -- one of the shiprocket.in / pickrr.com hosts, which
+     * `isCheckoutUrl` recognises. Shiprocket's embed also arrives as an
+     * IFRAME over the page the customer is already on, and on that path the
+     * top-level url never changes: `inCheckout` stays false for the whole
+     * payment flow. So the tab bar sat across the foot of Shiprocket's
+     * checkout, one mistap from abandoning a basket with card details already
+     * in it -- which is the exact failure the note on `checkoutEmbedUp`
+     * predicted ("the header and the tab bar would stay over a payment
+     * page"), for the tab bar's half of it.
+     *
+     * The announcement strip below has always tested both. This is that pair
+     * of tests, on the control that needed them more: the strip is a
+     * promotion the customer can ignore, the tab bar is five live exits.
+     */
     !inCheckout &&
+    !checkoutEmbedUp &&
     !(onAccountScreen && isLoginFlow(accountTop)) &&
     !onListing &&
     !onProductPage;
@@ -4827,6 +5214,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !searchOpen &&
     !menuOpen &&
     !inCheckout &&
+    /*
+     * The tab bar's second checkout test, for the same reason and on the same
+     * path. This bar occupies the tab bar's slot, so without it the iframe
+     * checkout swaps five exits for two -- still two controls for a grid
+     * nobody is looking at, across the foot of a payment page. A navigation to
+     * their host leaves the listing url behind and `onListing` goes false on
+     * its own; the iframe does not, which is what leaves this reachable.
+     */
+    !checkoutEmbedUp &&
     !showCart &&
     !wishlistOpen &&
     !onAccountScreen &&
@@ -4848,8 +5244,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           searchOpen ||
           wishlistOpen ||
           // A promotion above a payment page is the last thing a customer
-          // needs; the whole screen belongs to the checkout. See `showChrome`.
+          // needs. BOTH tests, because Shiprocket's embed arrives two ways --
+          // a navigation to their own host, or an iframe over a page of the
+          // store that leaves the top-level url alone. This is the exclusion
+          // that used to live in `showChrome`, which no longer excludes the
+          // checkout at all; the strip still does.
           inCheckout ||
+          checkoutEmbedUp ||
           // The reference app carries the strip on its Account screen but not
           // on the screens below it, nor on login.
           (onAccountScreen && accountTop !== 'account')
@@ -4859,14 +5260,15 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       />
 
       {/*
-        Drawn once, above `body`, so it survives every page, the cart and the
-        offline screen -- no inner page can cover it, and the back arrow is
-        therefore always there.
+        Drawn once, above `body`, so it survives every page, the cart, the
+        checkout and the offline screen -- no inner page can cover it, and the
+        back arrow is therefore always there.
 
-        EXCEPT ON THE CHECKOUT, which is the one page that gets the screen to
-        itself -- see `showChrome`.
+        ON THE CHECKOUT TOO, which it once was not. Shiprocket's page used to
+        get the screen to itself; it does not reliably carry a way back, and
+        with no header there was no visible exit at all. See the note above
+        `showNav` for the full argument and for what stays off there.
       */}
-      {showChrome ? (
       <NativeHeader
         cartCount={cartCount}
         wishlistCount={wishlistCount}
@@ -4976,7 +5378,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
           showCart ||
           searchOpen ||
           wishlistOpen ||
-          onAccountScreen
+          onAccountScreen ||
+          /*
+           * A BACK ARROW ON THE CHECKOUT, NOT THE HAMBURGER.
+           *
+           * `headerUrl` is `showing ? showing.url : null`, so it is null on the
+           * dashboard -- and the iframe checkout mounts over the DASHBOARD's
+           * WebView when the cart's Checkout was tapped with no page layer
+           * open (that is what `checkoutOnDashboard` is about). Every other
+           * test above was false there too, so `showBack` was false and the
+           * header drew a HAMBURGER over a live payment page.
+           *
+           * That is the worst of the three possible controls there. The drawer
+           * is a way *into* the store from a page the customer is trying to
+           * finish, it offers no way back to the cart, and it is the one
+           * control on this header whose whole job is to navigate away.
+           *
+           * Both flags, for the reason given on `checkoutEmbedUp`: their embed
+           * arrives either as a navigation to their own host (`inCheckout`) or
+           * as an iframe that changes no url (`checkoutEmbedUp`), and the
+           * hamburger showed on the second.
+           */
+          inCheckout ||
+          checkoutEmbedUp
         }
         onWishlistPress={openWishlist}
         onBackPress={handleHeaderBackPress}
@@ -4985,7 +5409,6 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         onLogoPress={handleLogoPress}
         onSearchPress={openSearch}
       />
-      ) : null}
 
       {/*
         Everything that can cover the page lives in here, so `top: 0` means
@@ -5013,7 +5436,37 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
             // onLoadStart fires at the very beginning of the navigation, so
             // injecting here as well gives the rule a second, earlier chance to
             // land. It is idempotent, so running twice costs nothing.
-            injectInto('home', EARLY_HEADER_CSS);
+            /*
+             * HOME_EARLY_SCRIPT, NOT EARLY_HEADER_CSS ALONE -- and that
+             * difference is why the strip was still empty when the splash
+             * lifted.
+             *
+             * The reasoning above applies to the announcement reader word for
+             * word. It was put in HOME_EARLY_SCRIPT to run at document-start,
+             * but the ONLY place it was actually injected early was
+             * `injectedJavaScriptBeforeContentLoaded` -- the very hook the
+             * comment above calls unreliable on Android and says "frequently
+             * lands after first paint". This re-injection existed to give that
+             * payload a second, earlier chance to land, and it handed over
+             * half of it: the CSS got the reliable early pass, the reader was
+             * left on the unreliable one and otherwise waited for onLoadEnd,
+             * which is behind the entire page download.
+             *
+             * So the strip's first content arrived after the splash had
+             * already gone -- the splash lifts on the NATIVE dashboard's first
+             * layout (see `handleDashboardPainted`), which does not wait for
+             * this WebView at all. The customer got a fully drawn dashboard
+             * with a blank 38px band across the top of it, filling in a moment
+             * later. Sending the whole early payload here puts the read in
+             * front of the page's own scripts on the pass that reliably runs,
+             * so the offers are in state before SPLASH_MIN_MS is up.
+             *
+             * Both halves are idempotent -- the CSS is a style rule written
+             * once, the reader latches on `window.__ziglyAnnouncementsDone` --
+             * so this costs one extra query on the passes where the
+             * document-start hook did land.
+             */
+            injectInto('home', HOME_EARLY_SCRIPT);
             /*
              * No section ids and no prewarm here any more. Both existed to get
              * the page's own dashboard assembling as early as possible -- the
@@ -5155,7 +5608,52 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  * failsafe fires.
                  */
                 clearProductBusy();
+                /*
+                 * And the wishlist tile's, which is the spinner this WebView
+                 * actually owns: a wishlist add is injected into 'home' (see
+                 * the screen's onAddToBag), so this handler is the one its
+                 * confirmation comes back through. Cleared unconditionally and
+                 * without checking the handle, for the reason above -- an add
+                 * reports itself up to three times and only one tile can be
+                 * spinning, so the first report to arrive is the right one to
+                 * stop it.
+                 */
+                clearWishlistAdding();
+                /*
+                 * And the rail card's, which comes back through this same
+                 * handler for the same reason: `addFromDashboard` injects into
+                 * 'home', so this WebView owns that spinner too. Cleared
+                 * unconditionally and without checking the handle -- an add
+                 * reports itself up to three times (see the note on
+                 * `reportCartAdded`) and only one card can be spinning, so the
+                 * first report to arrive is the right one to stop it.
+                 */
+                clearDashboardAdding();
                 reportCartAdded(typeof data.n === 'number' ? data.n : undefined);
+              } else if (data && data.tag === 'cart-add-failed') {
+                /*
+                 * The add did not land, and until now NOTHING handled this.
+                 * ../webview/cartBridge has always reported it -- on a
+                 * non-ok /cart/add and on a thrown fetch -- and no handler
+                 * anywhere read the tag, so a failed add from the wishlist or
+                 * a rail card was silent: no toast, no change, a tap that
+                 * visibly did nothing.
+                 *
+                 * That was survivable while nothing was spinning. It is not
+                 * now: the tile's spinner would run to ADD_BUSY_CAP_MS and
+                 * then stop with no explanation, which reads as an add that
+                 * worked. So the spin ends here, and it ends BEFORE the toast
+                 * for the same reason the product bar's does -- a tile still
+                 * spinning under "couldn't add" contradicts the message.
+                 *
+                 * The wording is ProductActionBar's, deliberately: it is the
+                 * same failure and a customer should not get two different
+                 * sentences for it depending on which screen they were on.
+                 */
+                clearWishlistAdding();
+                clearDashboardAdding();
+                clearProductBusy();
+                setToastMessage("Couldn't add to bag — please try again");
               } else if (data && data.tag === 'cart-checkout-started') {
                 /*
                  * Shiprocket is on the page below now, so the overlay comes
@@ -5188,6 +5686,19 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  * exit below clears this.
                  */
                 setCheckoutEmbedUp(true);
+                /*
+                 * And WHERE BACK GOES FROM HERE -- see `checkoutCameFrom`.
+                 *
+                 * Buy Now names itself; the cart's own Checkout reports the
+                 * Shiprocket method it called, or 'control', so it is anything
+                 * BUT 'buy-now'. Tested that way round deliberately: the cart
+                 * is the route that closes something on the way in, so an
+                 * unrecognised `via` defaulting to it means Back reopens a
+                 * cart that is already there rather than stranding the
+                 * customer on the dashboard.
+                 */
+                checkoutCameFrom.current =
+                  data.via === 'buy-now' ? 'buy-now' : 'cart';
               } else if (data && data.tag === 'cart-checkout-unavailable') {
                 /*
                  * Shiprocket's script exposed no checkout method and no
@@ -5384,11 +5895,26 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
               onOpen={openFromDashboard}
               onAdd={addFromDashboard}
               /*
-               * No `onPlayVideo`. React Native has no <Video> and no media
-               * package is installed, so the promotional block draws its poster,
-               * heading and copy -- which is what the site shows before a tap
-               * too -- and shows no play glyph while this is undefined. See the
-               * note in ../native/VideoBlock for the two ways it could be wired.
+               * Which rail card is waiting on its add. Only Hot Picks, New
+               * Arrivals and Bestsellers read it -- they are the sections that
+               * draw a product card. See ../native/ProductRail.
+               */
+              addingHandle={dashboardAdding}
+              /*
+               * No `onPlayVideo`, AND THAT IS WHAT MAKES THE VIDEO PLAY.
+               *
+               * The prop reads backwards from its name: omitted, the
+               * promotional block plays the video itself, in place, through
+               * the same YouTube embed the site renders. A handler here would
+               * take the play away from the section and hand it to this
+               * screen, which is the hook for a future full-screen route and
+               * is not wanted today -- the site plays the video inside the
+               * section, so the app does too.
+               *
+               * (It used to mean what it sounds like: with no player of its
+               * own, the block could only play by handing the tap up here, and
+               * nothing did, so it drew an inert still. See the prop's note in
+               * ../native/NativeDashboard.)
                */
               onPainted={handleDashboardPainted}
               /*
@@ -5936,12 +6462,36 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                        * survived it; the grid asks GraphQL for those handles
                        * and draws them in SearchTap's own order.
                        *
-                       * Only ever set, never cleared here. The bridge reports
-                       * a filtered grid; it has nothing to say about a filter
-                       * being removed, because SearchTap's grid is still the
-                       * thing on the page either way. Clearing belongs to the
-                       * one place that knows a filter came off -- see the
-                       * effect beside `resultsByKey`.
+                       * NEVER CLEARED HERE, AND NOT ACCEPTED UNCONDITIONALLY
+                       * EITHER.
+                       *
+                       * The bridge has nothing to say about a filter being
+                       * REMOVED: SearchTap's grid is what is on the page either
+                       * way, so after the final chip is cleared it goes on
+                       * reporting -- now the unfiltered set, in the same shape
+                       * a filtered answer arrives in. Nothing in the message
+                       * distinguishes the two.
+                       *
+                       * `toggleFacet` drops the entry on the frame the last
+                       * chip comes off, which is correct and was not enough on
+                       * its own: facetBridge re-reports 300ms and 1200ms after
+                       * EVERY toggle, so those two late reports landed here
+                       * after the delete and put the entry straight back --
+                       * pinning the grid to a handle list with paging disabled
+                       * for a collection that no longer has a filter on it. The
+                       * delete was real and its effect lasted 300ms.
+                       *
+                       * So the app's own record decides. `facetsByKey` is the
+                       * only thing that knows a filter came off, and a report
+                       * that arrives while nothing is applied is the unfiltered
+                       * grid by definition -- dropped, so the native grid keeps
+                       * its own collection query and its paging.
+                       *
+                       * Read through a ref because this handler closes over the
+                       * render it was created in; `selectedCount` is the same
+                       * predicate the filter bar draws its badge from, so the
+                       * grid and the badge cannot disagree about whether this
+                       * listing is filtered.
                        */
                       const handles = Array.isArray(data.handles)
                         ? data.handles.filter(
@@ -5949,7 +6499,10 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                               typeof h === 'string' && h.length > 0,
                           )
                         : null;
-                      if (handles) {
+                      const applied = selectedCount(
+                        facetsByKeyRef.current[layer.key] ?? EMPTY_FACETS,
+                      );
+                      if (handles && applied > 0) {
                         setResultsByKey(prev => ({
                           ...prev,
                           [layer.key]: handles,
@@ -6199,7 +6752,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                 closeWishlist();
                 showPage(item.url);
               }}
-              onAddToBag={(_item, variantId) => {
+              onAddToBag={(item, variantId) => {
                 /*
                  * Into the same cart as everything else, via the dashboard
                  * WebView. The toast and the badge follow from its reply.
@@ -6212,6 +6765,13 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  * to Bag looked like it had opened a product page instead of
                  * adding anything.
                  */
+                /*
+                 * Spin THIS tile while the add is verified -- see
+                 * `wishlistAdding`. Started before the injection rather than
+                 * after, so the feedback is on screen for the whole round
+                 * trip and not just the part after the bridge call returns.
+                 */
+                startWishlistAdding(item.handle);
                 injectInto('home', addToCartScript(variantId));
               }}
               /*
@@ -6222,6 +6782,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                * comparison belongs beside the product it is about, not here.
                */
               variantLimit={WISHLIST_VARIANT_LIMIT}
+              /* Which tile is mid-add, so only that one spins. */
+              addingHandle={wishlistAdding}
             />
           </View>
         ) : null}
@@ -6394,6 +6956,29 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         busy={facetBusy}
         onToggle={toggleFacet}
         onClose={closeListingSheet}
+      />
+
+      {/*
+        "Are you sure?" for Log Out.
+
+        A Modal, like the sort and filter sheets above, so it is drawn in its
+        own window over the account screen rather than inside it -- the account
+        section is a stack of screens in `body`, and a confirmation inside one
+        of them would be covered by the header and could be scrolled.
+      */}
+      <ConfirmSheet
+        visible={confirmLogOut}
+        title="Log out?"
+        message="You'll need to sign in again to see your orders and saved addresses."
+        confirmLabel="Log Out"
+        cancelLabel="Cancel"
+        /*
+         * Not destructive. Signing out is one sign-in away from being undone,
+         * and a red button would tell the customer this is graver than it is.
+         * Delete Account is where that styling belongs.
+         */
+        onConfirm={confirmSignOut}
+        onCancel={() => setConfirmLogOut(false)}
       />
 
       {/* Outside `body`: a toast is the one thing allowed over everything. */}

@@ -15,6 +15,7 @@ import {
   selectedCount,
   selectSort,
   toggleOption,
+  type Facets,
 } from '../src/listing/facets';
 
 const message = (extra: object = {}) => ({
@@ -159,5 +160,74 @@ describe('optimistic updates', () => {
     expect(selectSort(facets, 'New Release').sortLabel).toBe('New Release');
     // And changes nothing else: the results are still the ones on screen.
     expect(selectSort(facets, 'New Release').groups).toBe(facets.groups);
+  });
+});
+
+describe('a value repeated inside one facet', () => {
+  /*
+   * THE DOUBLE-FLIP, and it came from the two halves of one tap disagreeing.
+   *
+   * Nothing dedupes the values within a group. facetBridge's `facets()` pushes
+   * every checkbox carrying a non-empty `value`, and `parseOption` never
+   * compares one option to another -- so a group whose metafield repeats a
+   * value arrives with that label twice.
+   *
+   * `toggleOption` used to `map` over `option.label === label`, flipping BOTH
+   * chips. The write half of the same tap clicks exactly ONE checkbox --
+   * facetBridge's `boxIn` returns on its first match -- so the app claimed two
+   * filters had changed while the page changed one, and the next report ~300ms
+   * later quietly corrected the second chip. The customer saw a chip light up
+   * and go out again.
+   */
+  const repeated = parseFacets({
+    tag: 'facets',
+    ready: true,
+    groups: [
+      {
+        title: 'Brands',
+        options: [
+          {label: 'royal canin', count: 10, on: false},
+          {label: 'royal canin', count: 4, on: false},
+          {label: 'farmina', count: 7, on: false},
+        ],
+      },
+    ],
+    sortOptions: ['Best selling'],
+    sortLabel: 'Best selling',
+  });
+
+  it('is reported as two options, not silently deduped', () => {
+    // The premise. Were these collapsed, the counts would not add up to what
+    // the site shows against each row.
+    expect(repeated?.groups[0].options).toHaveLength(3);
+  });
+
+  it('flips one chip per tap, matching the one checkbox that is clicked', () => {
+    const next = toggleOption(repeated as Facets, 0, 'royal canin');
+    expect(next.groups[0].options.map(option => option.on)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    // The number the grid keys off: two would have claimed a filter the page
+    // never applied.
+    expect(selectedCount(next)).toBe(1);
+  });
+
+  it('turns that same chip back off rather than flipping its twin', () => {
+    const on = toggleOption(repeated as Facets, 0, 'royal canin');
+    const off = toggleOption(on, 0, 'royal canin');
+    expect(selectedCount(off)).toBe(0);
+    expect(off.groups[0].options.map(option => option.on)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('leaves the group untouched when the label is absent', () => {
+    // Identity, not a rebuilt array: an out-of-range tap must not churn state.
+    const same = toggleOption(repeated as Facets, 0, 'orijen');
+    expect(same.groups[0].options).toBe(repeated?.groups[0].options);
   });
 });

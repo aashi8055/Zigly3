@@ -57,10 +57,13 @@ export const BESTSELLERS_TITLE = 'Bestsellers';
 
 type Props = {
   onOpen: (path: string) => void;
-  onAdd: (variantId: number) => void;
+  /** See ./ProductRail: the handle rides along so the card can spin. */
+  onAdd: (variantId: number, handle: string) => void;
+  /** The handle whose add is in flight. Passed straight to ./ProductRail. */
+  addingHandle?: string | null;
 };
 
-const Bestsellers = ({onOpen, onAdd}: Props) => {
+const Bestsellers = ({onOpen, onAdd, addingHandle}: Props) => {
   /**
    * One tab, so ./ProductRail draws no tab row -- a lone tab is a label that
    * states nothing, and the heading above it already says the same thing.
@@ -83,6 +86,7 @@ const Bestsellers = ({onOpen, onAdd}: Props) => {
       tabs={tabs}
       onOpen={onOpen}
       onAdd={onAdd}
+      addingHandle={addingHandle}
     />
   );
 };

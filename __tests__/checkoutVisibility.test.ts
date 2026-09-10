@@ -165,25 +165,45 @@ describe('the checkout script itself', () => {
 });
 
 describe('the app’s furniture on the checkout page', () => {
-  it('is gated on one answer, so the three pieces cannot disagree', () => {
-    expect(SCREEN).toContain('const showChrome = !inCheckout && !checkoutEmbedUp;');
+  /*
+   * THE HEADER NOW STAYS, AND THIS PAIR OF TESTS CHANGED SIDES.
+   *
+   * They used to assert the opposite -- `const showChrome = !inCheckout &&
+   * !checkoutEmbedUp` and a `{showChrome ? (` gate over <NativeHeader> -- on
+   * the argument that Shiprocket's page should get the whole screen because it
+   * carries its own header and its own way back.
+   *
+   * It does not reliably carry the way back. With no header there was no
+   * visible exit from the checkout at all: the only route out was Android's
+   * hardware back, which is not a control the layout advertises and not one
+   * every customer thinks to reach for. A checkout a customer cannot leave is
+   * worse than a checkout with a header they might mistap, so the header is
+   * back on every page.
+   *
+   * The two exclusions that were right are unchanged and are still asserted
+   * below: the offer strip and the tab bar. Both now carry their own test of
+   * `inCheckout` rather than reading a shared flag.
+   */
+  it('keeps the header, which is the only visible way out', () => {
+    // Drawn unconditionally: no gate of any kind between the strip above it
+    // and the element itself.
+    const at = SCREEN.indexOf('<NativeHeader');
+    expect(at).toBeGreaterThan(-1);
+    expect(SCREEN).not.toContain('{showChrome ? (');
+    // And no flag left behind for a later edit to re-gate it on.
+    expect(SCREEN).not.toContain('const showChrome =');
   });
 
-  it('takes the header off', () => {
-    // The header is drawn once, above `body`, and survives every other screen
-    // in the app -- the checkout is the one page it stands down for.
-    expect(SCREEN).toContain('{showChrome ? (');
-    // Immediately after it, so the gate cannot drift onto some other element.
-    const gate = SCREEN.indexOf('{showChrome ? (');
-    expect(SCREEN.indexOf('<NativeHeader', gate)).toBeGreaterThan(gate);
-    expect(SCREEN.slice(gate, gate + 60)).toContain('<NativeHeader');
-    expect(SCREEN).toContain('      ) : null}');
-  });
-
-  it('takes the offer strip off', () => {
+  it('takes the offer strip off, on both routes into a checkout', () => {
     const at = SCREEN.indexOf('<AnnouncementBar');
     const body = SCREEN.slice(at, SCREEN.indexOf('/>', at));
+    // A promotion above a payment page is still the last thing a customer
+    // needs. This is the exclusion that used to live in `showChrome`, and it
+    // has to carry BOTH tests now that nothing else does -- their embed
+    // arrives either as a navigation to their host or as an iframe that
+    // changes no url.
     expect(body).toContain('inCheckout ||');
+    expect(body).toContain('checkoutEmbedUp ||');
   });
 
   it('leaves the tab bar off, as it already was', () => {
@@ -250,5 +270,224 @@ describe('the app’s furniture on the checkout page', () => {
     // If their embed ever changes what it mounts, none of the selectors match
     // and this must stop rather than spin.
     expect(actions).toContain('PAINT_WAIT_MS');
+  });
+});
+
+describe('the tab bar on the iframe checkout', () => {
+  /*
+   * THE EXCLUSION THAT WAS ONLY HALF WIRED.
+   *
+   * `showNav` excluded `inCheckout` and stopped there. `inCheckout` is
+   * `isCheckoutUrl(nav.url)` -- it only sees the checkout that arrives as a
+   * NAVIGATION to one of the shiprocket.in / pickrr.com hosts. Shiprocket's
+   * embed also mounts as an IFRAME over the page the customer is already on,
+   * and on that path the top-level url never changes: `inCheckout` is false
+   * for the entire payment flow.
+   *
+   * So the tab bar sat across the foot of a live checkout, five taps away from
+   * abandoning a basket with card details already entered -- which is the
+   * failure the note on `checkoutEmbedUp` predicted in as many words ("the
+   * header and the tab bar would stay over a payment page"). The header's half
+   * of that was deliberately reversed (see above); the tab bar's half was
+   * never a decision, just a missing test.
+   *
+   * The announcement strip has tested both flags all along. These pin the same
+   * pair onto the two controls that share the tab bar's slot.
+   */
+  /*
+   * The declaration, to its terminating semicolon.
+   *
+   * Ends on a `;` that closes a LINE, not on the first `;` in the text: these
+   * declarations carry block comments between their clauses, and prose inside
+   * one ("goes false on its own;") ended the slice early and cut off the
+   * clauses being asserted.
+   */
+  const flagsIn = (name: string): string => {
+    const at = SCREEN.indexOf(`const ${name} =`);
+    expect(at).toBeGreaterThan(-1);
+    const end = SCREEN.slice(at).search(/;\r?\n/);
+    expect(end).toBeGreaterThan(-1);
+    return SCREEN.slice(at, at + end);
+  };
+
+  it('stands down for their iframe as well as their host', () => {
+    expect(flagsIn('showNav')).toContain('!inCheckout');
+    expect(flagsIn('showNav')).toContain('!checkoutEmbedUp');
+  });
+
+  it('and so does the Sort / Filter bar, which takes the same slot', () => {
+    /*
+     * Reachable for the same reason and by one route: Buy Now on a listing
+     * mounts the iframe without navigating, so `onListing` stays true. Without
+     * this the iframe checkout swapped five exits for two.
+     */
+    expect(flagsIn('showSortFilter')).toContain('!inCheckout');
+    expect(flagsIn('showSortFilter')).toContain('!checkoutEmbedUp');
+  });
+
+  it('is restored with the embed, by the flag both already reset', () => {
+    // No new teardown: `endCheckoutEmbed` and the nav handler clear
+    // `checkoutEmbedUp`, and both controls now follow it.
+    expect(callbackBody('closeCart')).toContain('endCheckoutEmbed()');
+  });
+});
+
+describe('the control the header draws on the checkout', () => {
+  /*
+   * IT WAS THE HAMBURGER, AND THAT WAS THE WORST OF THE THREE OPTIONS.
+   *
+   * `showBack` tested `headerUrl !== null` first, and `headerUrl` is
+   * `showing ? showing.url : null` -- null on the dashboard. Their iframe
+   * mounts over the DASHBOARD's WebView whenever the cart's Checkout was
+   * tapped with no page layer open, which is what `checkoutOnDashboard`
+   * exists for. Every other test in that expression was false there too, so
+   * `showBack` was false and the header drew a hamburger over a live payment
+   * page: a way *into* the store, offering no route back to the cart, on the
+   * one screen whose only needed control is out.
+   */
+  const showBackExpression = (): string => {
+    const at = SCREEN.indexOf('showBack={');
+    expect(at).toBeGreaterThan(-1);
+    return SCREEN.slice(at, SCREEN.indexOf('onWishlistPress', at));
+  };
+
+  it('is a back arrow on both routes into a checkout', () => {
+    // Both flags for the reason on `checkoutEmbedUp`: a navigation to their
+    // host, or an iframe that changes no url. The hamburger showed on the
+    // second, which is the path the cart's Checkout actually takes.
+    expect(showBackExpression()).toContain('inCheckout ||');
+    expect(showBackExpression()).toContain('checkoutEmbedUp');
+  });
+
+  it('draws the arrow, not the hamburger, when showBack is set', () => {
+    const header = fs.readFileSync(
+      path.join(__dirname, '..', 'src', 'components', 'NativeHeader.tsx'),
+      'utf8',
+    );
+    expect(header).toContain('{showBack ? <BackIcon /> : <HamburgerIcon />}');
+    // And the arrow is wired to the back handler rather than the drawer.
+    expect(header).toContain('onPress={showBack ? onBackPress : onMenuPress}');
+  });
+});
+
+describe('and Back, from inside their iframe', () => {
+  /*
+   * WHY IT NEEDS ITS OWN RULE. Their checkout is a cross-origin iframe --
+   * the theme's snippets/sr-checkout.liquid sets `checkoutBuyer =
+   * 'https://fastrr-boost-ui.pickrr.com/'`, and assets/fastrr-boost-ui.css
+   * draws `.headless-payment-iframe` fixed over the whole viewport at
+   * z-index 2147483648. It mounts WITHOUT a navigation, so there is no
+   * history entry to step back through.
+   *
+   * Both Back paths used to fall through to `webRef.goBack()`, which on that
+   * page either steps the WebView off the page the iframe is mounted in or
+   * does nothing at all -- and either way leaves the app believing a checkout
+   * is still up.
+   */
+  it('takes the embed down rather than stepping history', () => {
+    expect(SCREEN).toContain('const leaveCheckoutEmbed = useCallback');
+    const at = SCREEN.indexOf('const leaveCheckoutEmbed = useCallback');
+    const body = SCREEN.slice(at, SCREEN.indexOf('}, [', at));
+    // Their page comes off screen on both routes.
+    expect(body).toContain('endCheckoutEmbed()');
+    // Reports whether it acted, so a caller with no checkout falls through.
+    expect(body).toContain('return false;');
+    expect(body).toContain('return true;');
+  });
+
+  it('reads a ref, so the installed-once hardware handler sees it', () => {
+    /*
+     * The hardware handler subscribes in an effect and reads every other "is
+     * this open?" through a ref. A handler closed over a stale `false` would
+     * let Back leave the app from the middle of a payment flow.
+     */
+    expect(SCREEN).toContain('const checkoutEmbedUpRef = useRef(false)');
+    expect(SCREEN).toContain('checkoutEmbedUpRef.current = checkoutEmbedUp;');
+  });
+
+  it('answers before the page-layer and history rules, on both paths', () => {
+    // The iframe is drawn over whatever layer it mounted in and changes no
+    // url, so every rule after it is blind to the checkout being on screen.
+    const header = callbackBody('handleHeaderBackPress');
+    expect(header.indexOf('leaveCheckoutEmbed()')).toBeGreaterThan(-1);
+    expect(header.indexOf('leaveCheckoutEmbed()')).toBeLessThan(
+      header.indexOf('stepBack()'),
+    );
+
+    const hardware = SCREEN.slice(
+      SCREEN.indexOf('const onBack = '),
+      SCREEN.indexOf("'hardwareBackPress'"),
+    );
+    expect(hardware.indexOf('leaveCheckoutEmbed()')).toBeGreaterThan(-1);
+    expect(hardware.indexOf('leaveCheckoutEmbed()')).toBeLessThan(
+      hardware.indexOf('canGoBackRef.current'),
+    );
+  });
+
+  /*
+   * AND THIS PAIR REPLACED AN ASSERTION THAT WAS BACKWARDS.
+   *
+   * It used to assert `openCart` was NOT called, on the argument that backing
+   * out of a payment page means leaving the flow. That argument ignored what
+   * is actually underneath the iframe: on the cart's route the checkout paints
+   * into the DASHBOARD's WebView (it only does so when no page layer was open
+   * to paint into), so clearing the flags revealed the dashboard and Back
+   * skipped the cart entirely -- dropping the customer at home, several steps
+   * from where they were, which is not what Back means anywhere else.
+   */
+  const leaveBody = (): string => {
+    const at = SCREEN.indexOf('const leaveCheckoutEmbed = useCallback');
+    expect(at).toBeGreaterThan(-1);
+    return SCREEN.slice(at, SCREEN.indexOf('\n  }, [', at));
+  };
+
+  it('returns to the cart, not to the dashboard', () => {
+    // Reopened rather than uncovered: the cart is closed as their page paints
+    // (`releaseCheckoutHold`), so by the time Back is pressed it is gone.
+    expect(leaveBody()).toContain('openCart()');
+  });
+
+  it('re-reads the cart on the way back, in case checkout changed it', () => {
+    // `openCart` clears its copy and asks the bridge, so an abandoned checkout
+    // cannot leave a stale cart on screen.
+    const at = SCREEN.indexOf('const openCart = useCallback');
+    expect(at).toBeGreaterThan(-1);
+    expect(SCREEN.slice(at, SCREEN.indexOf('}, [', at))).toContain(
+      'READ_CART_SCRIPT',
+    );
+  });
+
+  it('leaves the product page underneath when Buy Now opened it', () => {
+    /*
+     * The other route, and it needs no reopening: Buy Now mounts the iframe
+     * over the layer the customer was reading, nothing was closed on the way
+     * in, and `checkoutOnDashboard` is never armed there.
+     */
+    expect(leaveBody()).toContain("if (from === 'buy-now') {");
+  });
+
+  it('knows which route it came by, since no url says so', () => {
+    expect(SCREEN).toContain(
+      "const checkoutCameFrom = useRef<'cart' | 'buy-now' | null>(null)",
+    );
+    /*
+     * Tested for 'buy-now' rather than for 'cart'. The cart's own Checkout
+     * reports the Shiprocket method it called, or 'control' -- never the
+     * literal 'cart' -- so an unrecognised `via` must fall to the cart, whose
+     * exit reopens something, not to the route that assumes a layer is still
+     * there.
+     */
+    expect(SCREEN).toContain("data.via === 'buy-now' ? 'buy-now' : 'cart'");
+  });
+
+  it('does not unpark the dashboard mid-exit on the cart route', () => {
+    /*
+     * The cart is an overlay over the PARKED dashboard. Unparking it while
+     * reopening the cart would put the native dashboard between the cart and
+     * the WebView; `closeCart` unparks it, which is when the customer actually
+     * leaves.
+     */
+    expect(leaveBody()).not.toContain('endCheckoutOnDashboard()');
+    expect(callbackBody('closeCart')).toContain('endCheckoutOnDashboard()');
   });
 });

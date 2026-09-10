@@ -37,11 +37,12 @@ import type {IconMap, Tile} from './tileIcons';
  *           ../components/Skeleton -- `HomeSkeleton` draws five circles at 18%
  *           width each, so five of these and their gaps must fill the same
  *           width or the dashboard jumps when the placeholder comes off.
- *   breed   A disc sized so that three and a bit fit the screen -- see
+ *   breed   A disc sized so that four and a bit fit the screen -- see
  *           `breedSize` below. The two breed rails, and the reason this is not
- *           just a bigger `circle`: at 60dp a breed photograph is a thumbnail
- *           of an animal's head and the breeds are genuinely hard to tell
- *           apart, which is the whole job of that rail.
+ *           just a `circle` with different data: a breed photograph COVERS its
+ *           disc where a category icon is contained at 78% of one, so the same
+ *           diameter carries a quarter more subject -- which is what keeps a
+ *           Beagle distinguishable from a Pug at this size.
  *   square  A 104dp rounded square. Explore's tiles are category photographs
  *           with two-word labels rather than icons on a disc, and at 60dp the
  *           photograph is unreadable.
@@ -61,37 +62,78 @@ const SQUARE = 104;
 const PITCH = 12;
 
 /**
- * The breed rails' own gap, wider than every other rail's.
+ * The breed rails' own gap, still wider than every other rail's.
  *
- * The discs are more than twice the area of a category circle, and a 12dp gap
- * between two 130dp photographs reads as a crowded contact sheet rather than as
- * a row of choices. 18 is the figure that keeps three and a bit on screen while
- * letting each disc be seen as its own thing.
+ * THE HISTORY, because this number has moved three times and each move was
+ * paying for something. 18 first, on the argument that a 12dp gap between two
+ * large photographs reads as a crowded contact sheet. Then 26, because at 18
+ * the discs still touched visually -- the disc was doing all the work of
+ * filling the row and the gap got whatever was left.
+ *
+ * 20 NOW, and it is coming back down because the disc is smaller. A 26dp gap
+ * was sized against a 78dp photograph; against the 56dp disc `BREEDS_VISIBLE`
+ * now gives, the same gap is nearly half the tile again and the rail reads as
+ * sparse -- widely spaced small things, which is the opposite failure to the
+ * contact sheet. 20 keeps a gap that is read as space rather than as a seam at
+ * the size the discs actually are.
+ *
+ * The gap and the count are one decision, not two -- see `BREEDS_VISIBLE`.
+ * Neither number means anything without the other, and the disc that falls out
+ * of both is what is actually being chosen.
  */
-const BREED_PITCH = 18;
+const BREED_PITCH = 20;
 
 /**
  * How many breed discs are visible at once, and it is deliberately not a whole
  * number.
  *
- * 3.4 leaves the fourth disc a little under half cut by the right edge, which
- * is the standing way a horizontal rail says "there is more" without a chevron
- * or a scrollbar. A whole 3 or 4 would end flush with the screen and read as a
- * complete set that does not scroll -- which is exactly how these rails were
- * being read at 60dp, where six discs fitted and nothing suggested a seventh.
+ * 4.3 NOW, up from 3.2 and 3.4 before it, and each step has made the disc
+ * smaller: the same width divided among more tiles. The rail was still reading
+ * as three big photographs, which is nearer a set of cards than the pick-a-
+ * breed index it is -- twenty-five dogs deep, so the customer's job is to scan
+ * it, and a scan wants more of the list on screen at once.
+ *
+ * The fraction is still deliberate. The fifth disc is a third shown --
+ * unmistakably a cut tile rather than a margin, which is the standing way a
+ * horizontal rail says "there is more" without a chevron or a scrollbar. A
+ * whole 4 or 5 would end flush with the screen and read as a complete set that
+ * does not scroll.
  */
-const BREEDS_VISIBLE = 3.4;
+const BREEDS_VISIBLE = 4.3;
 
 /**
  * The breed disc's diameter for a given screen width.
  *
- * Derived rather than fixed so it holds on every phone: the row shows
- * BREEDS_VISIBLE discs and their gaps inside the width, minus the leading
- * gutter. On a 360dp phone this lands at about 130dp -- a little over twice the
- * 60dp circle, which is the "double the size" this rail needed.
+ * Derived rather than fixed so it holds on every phone.
+ *
+ * THE DERIVATION. The row is a leading gutter plus, per cell, a disc and one
+ * trailing `marginRight` (see TileCell and `track`), so n visible tiles occupy
+ * `pitch + n * (size + pitch)`. Solving for `size` gives what is written
+ * below: one pitch off the width, divide by the count, then one pitch off the
+ * quotient.
+ *
+ * Rewritten in that form rather than the equivalent
+ * `(width - pitch - count * pitch) / count` it used to carry -- the two are
+ * algebraically the same and the old one was NOT a bug, only harder to read
+ * against the layout it describes. Kept deliberately in the shape that names
+ * each term, so the next person can check it against `track` and TileCell
+ * without doing the algebra.
+ *
+ * On a 360dp phone this lands at 59dp, against 78dp under the previous
+ * constants -- the disc gives up 19dp, which is the whole of the size change
+ * asked for. That puts it at about the 60dp of a category circle, and it is
+ * fair to ask whether the rail has now argued its way back to the thumbnail it
+ * was created to escape. It has not, quite: the category circle holds a
+ * transparent icon `contain`ed at 78% of its disc, so the drawn subject is
+ * ~47dp, while a breed photo COVERS its disc edge to edge. The dog's head is
+ * the full 59, which is a quarter more subject than the circles carry and
+ * still tells a Beagle from a Pug.
+ *
+ * Checked across 320-480dp: 4.29-4.31 discs visible on every one of them, so
+ * the cut fifth tile that says "this scrolls" survives at every width.
  */
 export const breedSize = (width: number): number =>
-  Math.round((width - BREED_PITCH - BREEDS_VISIBLE * BREED_PITCH) / BREEDS_VISIBLE);
+  Math.round((width - BREED_PITCH) / BREEDS_VISIBLE - BREED_PITCH);
 
 /**
  * How many `wide` tiles are visible at once.
@@ -213,11 +255,16 @@ const TileCell = ({
             )}
           </View>
           {/*
-            The breed rail's label is scaled with its disc. At 11.5 under a
-            130dp photograph the name reads as a caption on a picture rather
-            than as the label of a choice, and "Labrador Retriever" -- the
-            longest and the reason the label is allowed two lines at all -- has
-            room to sit on one.
+            The breed rail's label is scaled with its disc, so it comes back
+            down as the disc does. It was 13.5, set when the photograph was
+            78dp and a caption-sized name under it read as a caption on a
+            picture rather than as the label of a choice. Against a 59dp disc
+            13.5 is the opposite problem: the words are wider than the picture
+            they belong to, and "Labrador Retriever" -- the longest, and the
+            reason the label is allowed two lines at all -- wraps to two lines
+            that are each broader than the tile. 12 sits between this and the
+            11.5 the category circles use, which is where the disc now sits
+            too.
           */}
           <Text
             numberOfLines={2}
@@ -350,10 +397,10 @@ const styles = StyleSheet.create({
     color: '#2B2B2A',
     textAlign: 'center',
   },
-  /** The breed rail's larger label. See the note at the call site. */
+  /** The breed rail's label, a shade above the circles'. See the call site. */
   labelBreed: {
-    fontSize: 13.5,
-    lineHeight: 17,
+    fontSize: 12,
+    lineHeight: 15,
   },
 });
 

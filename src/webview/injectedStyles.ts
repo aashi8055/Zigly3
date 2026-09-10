@@ -679,25 +679,73 @@ body.zigly-product .product-slider .main-slider .swiper-slide {
   margin-right: 0 !important;
   height: auto !important;
 }
-/* aspect-ratio, not a fixed height: the media is square (550x550 on the read)
-   and a height in pixels would letterbox it on one screen and crop it on the
-   next. object-fit contain, so a non-square photo is never cut -- a cropped product is
-   the fault the reference shots show. */
+/* ONE SQUARE BOX PER SLIDE, WHATEVER SHAPE THE PHOTO IS.
+   
+   This is the fix for "some images size vary break the ui look", and the cause
+   was not the source images being wildly different -- 4,157 of the catalogue's
+   4,181 product images are exactly square (surveyed live 2026-09-11). It is
+   that the ones which are NOT square are mixed into the same gallery, and the
+   theme hands each <img> its own intrinsic width/height attributes.
+   
+   Read off one live product page (zl-purrch-play-cat-tree..., the same day):
+   
+     550x550  ar 1.00
+     550x301  ar 1.83
+     550x463  ar 1.19
+     550x505  ar 1.09
+   
+   Four different intrinsic ratios in one slider. A modern browser derives an
+   aspect-ratio from those attributes, so each slide sized itself differently
+   and the gallery changed height as the customer swiped -- the page's whole
+   lower half jumping with it. The widest, 1.83, is the one that reads as
+   broken: a letterbox strip where a product photo should be.
+   
+   Three things together are what hold it, and all three are needed:
+   
+     - aspect-ratio on the wrapper AND a matching one on the image itself, so
+       the intrinsic ratio from the width/height attributes is overridden
+       rather than merely contained by a parent it can still outgrow.
+     - height:100% is replaced by an explicit square. The theme's own
+       is-single-media rules set height:auto with !important on these very
+       elements (their inline CSS, read on the same page), and a percentage
+       height loses to that -- which is exactly how a 1.83 image escaped a
+       square wrapper.
+     - object-fit: contain, so the photo is letterboxed inside its square
+       rather than cropped. A cropped product is the fault the reference shots
+       show, and it is worse than empty space beside a wide photo.
+   
+   Specificity is raised with body.zigly-product on every selector (it already
+   was) plus the slide as an ancestor, so these beat the theme's own
+   !important rules on the same properties rather than tying with them. */
 body.zigly-product .product-slider .main-slider .media_wrapper,
-body.zigly-product .product-slider .main-slider .productImgWrapper {
+body.zigly-product .product-slider .main-slider .productImgWrapper,
+body.zigly-product .product-slider .main-slider .swiper-slide .media_wrapper,
+body.zigly-product .product-slider .main-slider .swiper-slide .productImgWrapper {
   width: 100% !important;
   max-width: 100% !important;
   height: auto !important;
+  min-height: 0 !important;
   aspect-ratio: 1 / 1 !important;
+  overflow: hidden !important;
 }
 body.zigly-product .product-slider .main-slider .productImage,
-body.zigly-product .product-slider .main-slider .productImgWrapper img {
+body.zigly-product .product-slider .main-slider .productImgWrapper img,
+body.zigly-product .product-slider .main-slider .swiper-slide .productImage,
+body.zigly-product .product-slider .main-slider .swiper-slide .productImgWrapper img {
   display: block !important;
   width: 100% !important;
+  /* The square is asserted on the image too, not inherited from the box: the
+     width/height attributes give it an intrinsic ratio of its own, and the
+     theme's is-single-media rules free its height with !important. */
   height: 100% !important;
+  min-height: 0 !important;
   max-width: 100% !important;
-  max-height: none !important;
+  max-height: 100% !important;
+  aspect-ratio: 1 / 1 !important;
   object-fit: contain !important;
+  /* Centred in its square, so a wide photo sits in the middle of the
+     letterbox rather than against the top edge. */
+  object-position: center center !important;
 }
 /* The column itself: no sticky, no reserved thumbnail gutter, full bleed.
    .product__column-sticky pins the gallery on desktop; on a phone that pin

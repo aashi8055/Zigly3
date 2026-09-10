@@ -313,3 +313,100 @@ describe('the filter sheet', () => {
     expect(closed).toBe(1);
   });
 });
+
+describe('the filter chips match the site’s own casing', () => {
+  /*
+   * THE DIVERGENCE THIS CLOSES. The label is the checkbox's raw `value` --
+   * "royal canin", "cat" -- because that is what SearchTap filters on and what
+   * the bridge must hand back to click it. But the WEBSITE draws that same
+   * value under `.filter-label.st-capitalize`, and
+   * `.st-capitalize{text-transform:capitalize}` -- both read out of
+   * assets/searchtap.js. So the site shows "Royal Canin" where the app's chips
+   * showed "royal canin", on every facet value on every listing.
+   *
+   * SortSheet already corrected this for its rows; the chips did not.
+   */
+  const facets: Facets = {
+    ready: true,
+    groups: [
+      {
+        title: 'Brands',
+        options: [
+          {label: 'royal canin', count: 10, on: false},
+          {label: 'royal canin', count: 4, on: false},
+        ],
+      },
+    ],
+    sortOptions: SEED_SORT_OPTIONS,
+    sortLabel: 'Best selling',
+  };
+
+  const chipStyles = (tree: ReactTestRenderer.ReactTestRenderer) =>
+    tree.root.findAllByType(Text).map(node => {
+      const raw = node.props.style;
+      const parts = Array.isArray(raw) ? raw.flat(Infinity) : [raw];
+      return Object.assign({}, ...parts.filter(Boolean)) as Record<
+        string,
+        unknown
+      >;
+    });
+
+  it('capitalizes in the style, leaving the value itself untouched', () => {
+    const tree = render(
+      <FilterSheet
+        visible
+        facets={facets}
+        busy={false}
+        onToggle={noop}
+        onClose={noop}
+      />,
+    );
+    // A transform, not a rewrite: the stored label stays byte-identical to the
+    // site's value, so the tap still finds its checkbox.
+    expect(labels(tree)).toContain('royal canin (10)');
+    expect(
+      chipStyles(tree).some(style => style.textTransform === 'capitalize'),
+    ).toBe(true);
+  });
+
+  it('draws a repeated value twice, each with its own count', () => {
+    /*
+     * Nothing dedupes the values inside a group, so a repeated metafield value
+     * puts the same label in this list twice. Both must draw -- collapsing
+     * them would hide a filter and make the counts disagree with the site --
+     * and the chip key is position-prefixed so React can tell them apart.
+     */
+    const tree = render(
+      <FilterSheet
+        visible
+        facets={facets}
+        busy={false}
+        onToggle={noop}
+        onClose={noop}
+      />,
+    );
+    const shown = labels(tree);
+    expect(shown).toContain('royal canin (10)');
+    expect(shown).toContain('royal canin (4)');
+  });
+
+  it('reports the position, so the right one of the two is clicked', () => {
+    // The bridge applies by index and clicks the FIRST checkbox matching the
+    // label, so both chips report the same group index and label -- and the
+    // optimistic flip uses the same first-match rule. See ./facets.test.ts.
+    const taps: unknown[][] = [];
+    const tree = render(
+      <FilterSheet
+        visible
+        facets={facets}
+        busy={false}
+        onToggle={(index, title, label) => taps.push([index, title, label])}
+        onClose={noop}
+      />,
+    );
+    ReactTestRenderer.act(() => {
+      button(tree, 'royal canin, 4')?.props.onPress();
+    });
+    expect(taps).toEqual([[0, 'Brands', 'royal canin']]);
+  });
+});

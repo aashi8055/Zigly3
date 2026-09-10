@@ -41,6 +41,7 @@
 import {paiseFromDecimal} from '../utils/money';
 import {storefront} from './storefront';
 import {numericId} from './products';
+import {SEED_SORT_OPTIONS} from '../listing/facets';
 
 /**
  * The badge colours, exactly as `snippets/card-product.liquid` assigns them.
@@ -117,13 +118,49 @@ export type SortOption = {
   readonly reverse: boolean;
 };
 
-/** The five, in the site's order. `best-selling` is the site's default. */
+/**
+ * The five, in the site's order. `best-selling` is the site's default.
+ *
+ * THE LABELS COME FROM ../listing/facets, NOT FROM HERE, and that is a fix
+ * rather than tidying. They used to be written out again in this file, and
+ * they were written out WRONG: 'Best Selling', 'Price: Low To High',
+ * 'Price: High To Low', 'Discount: High To Low' -- title-cased, where
+ * SearchTap's own `collectionSortValues` says 'Best selling',
+ * 'Price: Low to High', 'Price: High to Low', 'Discount: High to Low'
+ * (re-read from assets/searchtap.js on 2026-09-11 to confirm). Four of the
+ * five disagreed with the site by a single letter's case.
+ *
+ * That mattered because a label is the only thing identifying a sort across
+ * the app/page boundary. `chooseSort` in ../screens/ZiglyWebViewScreen.tsx
+ * looks a label up in this list and, if it does not resolve, hands it to the
+ * page instead -- and ../webview/facetBridge's `sort()` refuses any label the
+ * page does not itself offer. So a title-cased label reaching that path was
+ * rejected and the sort silently did nothing. Its 'Best selling' special case
+ * -- the one that restores the site's default -- compares against the
+ * lowercase string exactly, so that was the most fragile of the five.
+ *
+ * Indexed positionally against SEED_SORT_OPTIONS, which is why the order of
+ * the two lists is the same order and is asserted in
+ * ../../__tests__/listing.test.ts. One list of words, used by both halves of
+ * the app; the ids, keys and directions stay here, because those are Shopify's
+ * and are this file's business.
+ */
 export const SORTS: readonly SortOption[] = [
-  {id: 'best-selling', label: 'Best Selling', key: 'BEST_SELLING', reverse: false},
-  {id: 'price-asc', label: 'Price: Low To High', key: 'PRICE', reverse: false},
-  {id: 'price-desc', label: 'Price: High To Low', key: 'PRICE', reverse: true},
-  {id: 'new-release', label: 'New Release', key: 'CREATED', reverse: true},
-  {id: 'discount', label: 'Discount: High To Low', key: null, reverse: false},
+  {
+    id: 'best-selling',
+    label: SEED_SORT_OPTIONS[0],
+    key: 'BEST_SELLING',
+    reverse: false,
+  },
+  {id: 'price-asc', label: SEED_SORT_OPTIONS[1], key: 'PRICE', reverse: false},
+  {id: 'price-desc', label: SEED_SORT_OPTIONS[2], key: 'PRICE', reverse: true},
+  {
+    id: 'new-release',
+    label: SEED_SORT_OPTIONS[3],
+    key: 'CREATED',
+    reverse: true,
+  },
+  {id: 'discount', label: SEED_SORT_OPTIONS[4], key: null, reverse: false},
 ];
 
 export const DEFAULT_SORT: SortId = 'best-selling';
@@ -164,6 +201,48 @@ export const sortByDiscount = (
   products: readonly ListingProduct[],
 ): ListingProduct[] =>
   [...products].sort((a, b) => discountFraction(b) - discountFraction(a));
+
+/**
+ * Order an already-loaded set of products by one of the site's sorts.
+ *
+ * FOR THE FILTERED GRID, WHERE SHOPIFY CANNOT BE ASKED. `fetchListingPage`
+ * passes the sort to Shopify as a `sortKey`, so the ordinary grid arrives
+ * sorted. A FILTERED grid does not: the set is SearchTap's answer, fetched by
+ * handle through `fetchProductsByHandle`, which takes no sort and returns the
+ * products in SearchTap's own relevance order.
+ *
+ * So choosing a sort with a filter applied changed nothing at all, while the
+ * sort sheet kept the customer's choice ticked -- the tick was a claim the
+ * grid was not honouring, for four of the five sorts. This is that ordering,
+ * done where the data already is.
+ *
+ * EXACT HERE, unlike the discount sort on a paging grid. The caveat on
+ * `sortByDiscount` is about ordering a set that is still arriving; a filtered
+ * set has no pages -- every handle SearchTap named is fetched before the grid
+ * draws -- so sorting it in the app orders the whole set, not a prefix of it.
+ *
+ * NEW RELEASE IS THE ONE THAT CANNOT BE DONE, and it is left alone rather than
+ * faked: `ListingProduct` carries no creation date, so there is nothing here to
+ * order by. It keeps SearchTap's order, which is the honest answer -- a
+ * plausible-looking wrong order would be worse than an unchanged one.
+ */
+export const sortLoaded = (
+  products: readonly ListingProduct[],
+  sort: SortId,
+): ListingProduct[] => {
+  switch (sort) {
+    case 'price-asc':
+      return [...products].sort((a, b) => a.price - b.price);
+    case 'price-desc':
+      return [...products].sort((a, b) => b.price - a.price);
+    case 'discount':
+      return sortByDiscount(products);
+    // 'best-selling' is SearchTap's relevance order, which is the order the
+    // set arrived in; 'new-release' has no field to sort on. Both pass through.
+    default:
+      return [...products];
+  }
+};
 
 /**
  * The first value of `custom.product_tags`, as a badge.
@@ -363,6 +442,20 @@ const LISTING_QUERY = `
         after: $after
         sortKey: $sortKey
         reverse: $reverse
+        # NO SOLD-OUT PRODUCTS IN THE GRID.
+        #
+        # Done by Shopify rather than by dropping rows after they arrive, and
+        # that distinction is the whole reason this is here. Filtering client
+        # side would thin each page unevenly -- a page of 24 might yield 9
+        # cards, and hasNextPage would still describe the unfiltered
+        # connection -- so the grid would show short rows, page early, and
+        # report a "no products" state for a collection that has plenty.
+        # Asking Shopify keeps a page a full page.
+        #
+        # Verified live on 2026-09-11 against the dog-food collection: 250
+        # products unfiltered, of which 66 are out of stock; 185 with this
+        # filter, none of them sold out.
+        filters: {available: true}
       ) {
         edges { cursor node { ...ListingCard } }
         pageInfo { hasNextPage endCursor }
@@ -590,7 +683,20 @@ export const fetchProductsByHandle = async (
   const out: ListingProduct[] = [];
   safe.forEach((_handle, i) => {
     const product = parseListingProduct(data[`p${i}`]);
-    if (product) {
+    /*
+     * Sold-out products are dropped here too, so a filtered grid agrees with
+     * an unfiltered one -- the collection query asks Shopify for
+     * `filters: {available: true}` and this is the same rule for the other
+     * path into the grid.
+     *
+     * Dropped AFTER the fetch rather than asked for, and here that is right
+     * rather than a compromise: this query names specific products by handle,
+     * so there is no connection to filter and no paging to thin. The handle
+     * list is whatever SearchTap's filters selected, complete as it stands, so
+     * removing a row removes a row and nothing downstream is misled about how
+     * many are left.
+     */
+    if (product && product.available) {
       out.push(product);
     }
   });

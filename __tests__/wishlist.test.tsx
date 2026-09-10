@@ -26,6 +26,8 @@ import {
 import {httpsUrl, parseWishlist} from '../src/wishlist/wishlistItems';
 import type {WishlistItem} from '../src/wishlist/wishlistItems';
 import {addToCartScript} from '../src/webview/cartBridge';
+import {readFileSync} from 'fs';
+import {join} from 'path';
 
 const ORIGIN = 'https://zigly.com';
 
@@ -328,6 +330,119 @@ describe('adding to the bag from the wishlist', () => {
   it('parses as valid JavaScript', () => {
     // eslint-disable-next-line no-new-func
     expect(() => new Function(addToCartScript(1))).not.toThrow();
+  });
+});
+
+describe('Add to Bag shows that it is working', () => {
+  /*
+   * WHY THIS EXISTS. The add is not instant and it is not local: the tap goes
+   * to ../src/screens/ZiglyWebViewScreen, which injects it into the dashboard
+   * WebView, clicks the theme's real control and then re-reads /cart.js to
+   * confirm the line landed -- retrying for up to ADD_VERIFY_BUDGET_MS on a
+   * slow connection. Until now the only thing that changed in that window was
+   * the press opacity, which is gone the moment the finger lifts. So on a slow
+   * network a tap looked like a tap that had done nothing, and the customer
+   * pressed again -- and a second press is a second line in the bag.
+   *
+   * Same decision ../src/components/ProductActionBar already made for the
+   * product page's own Add to Bag, and this borrows its shape deliberately.
+   */
+  it('spins the tile whose product is being added', () => {
+    const tree = render(screen({addingHandle: RAW.handle}));
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
+    // And the label is gone while it spins -- not both at once.
+    expect(textOf(tree)).not.toContain('Add to Bag');
+  });
+
+  it('spins nothing when no add is in flight', () => {
+    expect(
+      render(screen()).root.findAllByType(ActivityIndicator),
+    ).toHaveLength(0);
+    expect(textOf(render(screen()))).toContain('Add to Bag');
+  });
+
+  it('spins ONLY that tile, not every tile in the grid', () => {
+    /*
+     * The reason the prop is a handle and not a boolean. A shared flag would
+     * spin all six tiles and claim the app is adding six products.
+     */
+    const other = item({handle: 'other-product', title: 'Another Product'});
+    const tree = render(
+      screen({items: [item(), other], addingHandle: RAW.handle}),
+    );
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(1);
+    // The untouched tile still offers its button.
+    expect(textOf(tree)).toContain('Add to Bag');
+  });
+
+  it('follows the product, not the slot, when the grid re-orders', () => {
+    /*
+     * The reason it is not an index. A removal takes a tile out immediately
+     * and the read can re-order the list, so an index would leave the spinner
+     * on whatever product slid up into that position.
+     */
+    const other = item({handle: 'other-product', title: 'Another Product'});
+    const tree = render(
+      screen({items: [other, item()], addingHandle: RAW.handle}),
+    );
+    const spinner = tree.root.findAllByType(ActivityIndicator);
+    expect(spinner).toHaveLength(1);
+    // Still the second tile's, which is the one whose handle matches.
+    const labels = tree.root
+      .findAll(n => typeof n.props?.accessibilityLabel === 'string')
+      .map(n => n.props.accessibilityLabel as string)
+      .filter(l => l.startsWith('Add to Bag: '));
+    expect(labels).toContain('Add to Bag: ' + RAW.title);
+  });
+
+  it('will not take a second tap while it spins', () => {
+    /*
+     * The point of the spinner rather than a side effect of it: the add is
+     * verified over a window in which a second press is a second line.
+     */
+    const tree = render(screen({addingHandle: RAW.handle}));
+    const button = tree.root
+      .findAll(
+        n => n.props?.accessibilityLabel === 'Add to Bag: ' + RAW.title,
+      )
+      .shift();
+    expect(button).toBeDefined();
+    expect(button!.props.disabled).toBe(true);
+    expect(button!.props.accessibilityState).toEqual({
+      disabled: true,
+      busy: true,
+    });
+  });
+
+  it('cannot change the tile’s height when it swaps', () => {
+    /*
+     * The label is ~21dp at 15.5/600 and an ActivityIndicator is a fixed
+     * 20dp, and the text follows the device's font scale while the spinner
+     * does not. Without a floor a tile would change height mid-add and every
+     * tile below it in the column would shift -- on the screen where the
+     * customer is aiming at the next Add to Bag. 48 is ProductActionBar's own
+     * figure for the same swap.
+     */
+    const src = readFileSync(
+      join(__dirname, '..', 'src', 'components', 'WishlistScreen.tsx'),
+      'utf8',
+    );
+    const at = src.indexOf('addButton: {');
+    expect(at).toBeGreaterThan(-1);
+    const rule = src.slice(at, src.indexOf('},', at));
+    expect(rule).toContain('minHeight: 48');
+    expect(rule).toContain("justifyContent: 'center'");
+  });
+
+  it('does not spin a sold-out product, which has no button to spin', () => {
+    const tree = render(
+      screen({
+        items: [item({available: false})],
+        addingHandle: RAW.handle,
+      }),
+    );
+    expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+    expect(textOf(tree)).toContain('Sold out');
   });
 });
 

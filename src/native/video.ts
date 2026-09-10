@@ -15,14 +15,19 @@
  * the behaviour to match, and it is worth stating because a native rebuild's
  * instinct is a muted autoplaying loop, which this section is not.
  *
- * WHICH LEAVES A DEPENDENCY QUESTION THIS MODULE DOES NOT ANSWER. React Native
- * has no `<Video>`: playing an mp4 needs `react-native-video` or
- * `expo-video`, and neither is installed (`package.json` carries
- * react-native-webview, netinfo, safe-area-context and svg -- no media
- * package). Adding a native module is not a change to make silently, so this
- * module carries the DATA and ./VideoBlock draws the poster, the heading and
- * the copy, with the tap handed up to the screen. See the note there for the
- * two ways the play can be wired and why neither is chosen here.
+ * AND IT PLAYS, THROUGH THE EMBED THE THEME ITSELF USES. See
+ * `VIDEO_EMBED_URL` below: ./VideoBlock swaps the poster for a small WebView
+ * on that URL when the customer taps, which is the same iframe the site
+ * renders, with the same parameters and the same tap-to-play.
+ *
+ * THE DEPENDENCY QUESTION THIS ONCE LEFT OPEN IS ANSWERED, AND THE ANSWER WAS
+ * NOT A NEW DEPENDENCY. React Native has no `<Video>`, so the obvious route
+ * was `react-native-video`. It was installed and then removed: it plays media
+ * FILES, and this section has none -- only a YouTube link. There was nothing
+ * for it to play. `react-native-webview` is already a dependency of this app
+ * and renders the site's own embed, so the section costs no new package, no
+ * rebuild, and no divergence from what the site does. `VIDEO_EMBED_URL`
+ * carries the full reading.
  */
 
 /** The section heading, from `banner_heading`. */
@@ -100,5 +105,44 @@ export const VIDEO_POSTER = `https://i.ytimg.com/vi/${VIDEO_ID}/maxresdefault.jp
 /** The fallback still, for a video with no HD frame. See `VIDEO_POSTER`. */
 export const VIDEO_POSTER_FALLBACK = `https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg`;
 
-/** Where a tap goes, until the app can play an embed itself. */
+/** Where a tap goes when the app hands the video to the system. */
 export const VIDEO_WATCH_URL = `https://www.youtube.com/watch?v=${VIDEO_ID}`;
+
+/**
+ * The embed the section actually plays, and it is the THEME'S OWN URL.
+ *
+ * Read from `sections/custom-video-text-banner.liquid`, the `video_link`
+ * branch, which builds exactly this from the id it splits out of the watch
+ * URL:
+ *
+ *   https://www.youtube.com/embed/{id}?enablejsapi=1&modestbranding=1&rel=0
+ *
+ * Every parameter is carried across rather than chosen here. `rel=0` keeps the
+ * end-card suggestions to this channel instead of offering a competitor's pet
+ * food; `modestbranding=1` drops the YouTube wordmark from the control bar.
+ * `enablejsapi=1` is the one the app does not need -- the theme's own script
+ * talks to the player through it and nothing in this app does -- and it is
+ * kept anyway, because the point of reading the URL from the theme is that the
+ * app plays what the site plays. Dropping a parameter because this app has no
+ * use for it is how the two drift.
+ *
+ * NO `autoplay=1`, and the omission is the whole behaviour of this section.
+ * The theme's element carries `controls playsinline` with no autoplay and no
+ * mute (see the note at the top), so on the site the customer sees a poster
+ * and taps to play. ../native/VideoBlock reproduces that by not mounting the
+ * player at all until the poster is tapped -- so nothing is loaded, let alone
+ * played, until the customer asks. That is both the site's behaviour and the
+ * cheaper one: an iframe that is never asked for costs nothing.
+ *
+ * WHY AN EMBED RATHER THAN A NATIVE PLAYER. `react-native-video` plays media
+ * FILES -- mp4, HLS, DASH. This section has none: the dog page sets only
+ * `video_link`, and the theme's two file branches (`video_file`, `video_url`)
+ * are blank, so there is no asset to hand a player. YouTube serves this video
+ * through its own embed and extracting a direct stream URL is against their
+ * terms. The package was installed, found to have nothing to play here, and
+ * removed. If Zigly ever upload an mp4 to Files, the theme's `video_file`
+ * branch lights up and that is the point to revisit this.
+ */
+export const VIDEO_EMBED_URL =
+  `https://www.youtube.com/embed/${VIDEO_ID}` +
+  '?enablejsapi=1&modestbranding=1&rel=0';

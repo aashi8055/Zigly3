@@ -44,7 +44,14 @@
  * must not silently receive the 3 kg one.
  */
 import React from 'react';
-import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import {BUTTON_FILL, COLORS, FONT_FAMILY} from '../constants/appConstants';
 import {HeartOutline, HeartShape} from '../components/glyphs';
 import {money} from '../utils/money';
@@ -76,9 +83,22 @@ type Props = {
    * -- see the note above on why this cannot be a native fetch.
    */
   onAdd: (variantId: number) => void;
+  /**
+   * Whether THIS card's add is in flight.
+   *
+   * Per-card rather than a shared boolean, for the reason
+   * ../screens/ZiglyWebViewScreen's `wishlistAdding` gives about the wishlist
+   * grid: a rail is twelve of these buttons and one flag would spin all
+   * twelve, which tells the customer the app is adding twelve products.
+   *
+   * The rail owns the state and decides which card is the one -- see
+   * ./ProductRail. Defaults to false so a surface that does not track it (a
+   * test, or a future rail) draws the card exactly as before.
+   */
+  busy?: boolean;
 };
 
-const ProductCard = ({product, onOpen, onAdd}: Props) => {
+const ProductCard = ({product, onOpen, onAdd, busy = false}: Props) => {
   /**
    * The wishlist, from ./wishlistContext rather than from props.
    *
@@ -209,25 +229,42 @@ const ProductCard = ({product, onOpen, onAdd}: Props) => {
             ? onOpen(product.path)
             : undefined
         }
-        disabled={!product.available}
+        /*
+         * Not tappable while it spins, which is the point of the spinner and
+         * not a side effect of it -- ../components/WishlistScreen's own note.
+         * The add is verified against /cart.js over up to ADD_VERIFY_BUDGET_MS,
+         * and a second press inside that window is a second line in the bag.
+         */
+        disabled={!product.available || busy}
         accessibilityRole="button"
         accessibilityLabel={`${label}, ${product.title}`}
-        accessibilityState={{disabled: !product.available}}
+        accessibilityState={{disabled: !product.available || busy, busy}}
         style={({pressed}) => [
           styles.button,
           !product.available && styles.buttonDisabled,
-          pressed && product.available && styles.buttonPressed,
+          busy && styles.buttonBusy,
+          pressed && product.available && !busy && styles.buttonPressed,
         ]}
       >
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.buttonLabel,
-            !product.available && styles.buttonLabelDisabled,
-          ]}
-        >
-          {label}
-        </Text>
+        {busy ? (
+          /*
+           * Red on the pale fill, matching `buttonLabel`. White -- which
+           * ../components/ProductActionBar uses on its red bar -- would be an
+           * invisible spinner here, and an invisible spinner is the same bug as
+           * no spinner. `small` is 20dp, which fits the 34dp button.
+           */
+          <ActivityIndicator size="small" color={COLORS.red} />
+        ) : (
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.buttonLabel,
+              !product.available && styles.buttonLabelDisabled,
+            ]}
+          >
+            {label}
+          </Text>
+        )}
       </Pressable>
     </View>
   );
@@ -339,7 +376,21 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
   },
   button: {
-    minHeight: 34,
+    /*
+     * PINNED, so the swap to a spinner cannot reflow the rail.
+     *
+     * 34 was already a floor, but it was a floor the LABEL set: the text is
+     * ~16dp at 12/700 inside 0 vertical padding, so the button was 34 because
+     * of this line alone. An ActivityIndicator is a fixed 20dp and the label
+     * follows the device's font scale, so at a large accessibility text size
+     * the label's line box exceeds 34 and the spinner does not -- and a card
+     * that changed height mid-add would shift every card's button on the rail,
+     * on the rail where the customer is aiming at the next one. `height`
+     * rather than `minHeight` fixes it in both directions.
+     *
+     * ../components/WishlistScreen solved the identical swap the same way.
+     */
+    height: 34,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -354,6 +405,16 @@ const styles = StyleSheet.create({
   },
   buttonPressed: {
     opacity: 0.7,
+  },
+  /*
+   * Held near the pressed opacity for the whole wait, so the card the customer
+   * touched stays the one that looks touched -- ../components/WishlistScreen's
+   * `addBusy`. Not dimmed to the disabled grey: `disabled` already stops the
+   * press feedback, and a greyed button reads as unavailable rather than busy,
+   * which on this card is the Sold Out state and must not be confused with it.
+   */
+  buttonBusy: {
+    opacity: 0.9,
   },
   /** Sold out: still drawn, so the rail's rhythm holds, but plainly inert. */
   buttonDisabled: {
