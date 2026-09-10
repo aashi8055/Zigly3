@@ -163,3 +163,92 @@ describe('the checkout script itself', () => {
     expect(BRIDGE).toContain('timezone: zone');
   });
 });
+
+describe('the app’s furniture on the checkout page', () => {
+  it('is gated on one answer, so the three pieces cannot disagree', () => {
+    expect(SCREEN).toContain('const showChrome = !inCheckout && !checkoutEmbedUp;');
+  });
+
+  it('takes the header off', () => {
+    // The header is drawn once, above `body`, and survives every other screen
+    // in the app -- the checkout is the one page it stands down for.
+    expect(SCREEN).toContain('{showChrome ? (');
+    // Immediately after it, so the gate cannot drift onto some other element.
+    const gate = SCREEN.indexOf('{showChrome ? (');
+    expect(SCREEN.indexOf('<NativeHeader', gate)).toBeGreaterThan(gate);
+    expect(SCREEN.slice(gate, gate + 60)).toContain('<NativeHeader');
+    expect(SCREEN).toContain('      ) : null}');
+  });
+
+  it('takes the offer strip off', () => {
+    const at = SCREEN.indexOf('<AnnouncementBar');
+    const body = SCREEN.slice(at, SCREEN.indexOf('/>', at));
+    expect(body).toContain('inCheckout ||');
+  });
+
+  it('leaves the tab bar off, as it already was', () => {
+    // This exclusion predates the header's and is not changed by it -- a tab
+    // bar across the foot of a payment page is one mistap from abandoning a
+    // basket.
+    const at = SCREEN.indexOf('const showNav =');
+    expect(SCREEN.slice(at, SCREEN.indexOf(';', at))).toContain('!inCheckout');
+  });
+
+  /*
+   * THE URL IS NOT ENOUGH, AND THIS IS THE SUBTLE HALF.
+   *
+   * Shiprocket's embed arrives two ways. A navigation to their own host is
+   * seen by isCheckoutUrl, so `inCheckout` covers it. But their checkout can
+   * also mount as an IFRAME over the page the customer is already on -- which
+   * is the shape ../src/webview/cartBridge was written to detect, every one of
+   * its CHECKOUT_SELECTORS being an iframe match. On that path the top-level
+   * url never changes, `inCheckout` stays false, and the header and tab bar
+   * would sit over a payment flow.
+   */
+  it('also stands down for their iframe, which changes no url', () => {
+    expect(SCREEN).toContain('const [checkoutEmbedUp, setCheckoutEmbedUp]');
+    // Set from the bridge's own paint report, not from a url.
+    const at = SCREEN.indexOf("data.tag === 'cart-checkout-started'");
+    expect(at).toBeGreaterThan(-1);
+    expect(SCREEN.slice(at, at + 2000)).toContain('setCheckoutEmbedUp(true)');
+  });
+
+  it('is restored by every route out of a checkout', () => {
+    // Closing the cart, navigating out of the flow (on the dashboard's WebView
+    // and on a page layer), and a checkout that could not open at all.
+    expect(callbackBody('closeCart')).toContain('endCheckoutEmbed()');
+    expect(
+      SCREEN.split('setCheckoutEmbedUp(false)').length - 1,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it('Buy Now reports the paint too, so it hides the same furniture', () => {
+    /*
+     * Buy Now used to click and report nothing on success. Nothing else could
+     * tell the app their page had arrived -- it is an iframe, so no url
+     * changes -- so without this, Buy Now would leave the header stacked over
+     * a payment flow while the cart's Checkout did not.
+     */
+    const actions = fs.readFileSync(
+      path.join(__dirname, '..', 'src', 'webview', 'productActions.ts'),
+      'utf8',
+    );
+    expect(actions).toContain("tag: 'cart-checkout-started'");
+    // The SAME tag the cart's checkout sends, so the screen has one handler
+    // for "Shiprocket is on screen" rather than two that could drift apart.
+    expect(actions).toContain("via: 'buy-now'");
+    // And watched only after the click, since the watch is for its result.
+    const click = actions.indexOf('btn.click();');
+    expect(actions.indexOf('watchForCheckout();', click)).toBeGreaterThan(click);
+  });
+
+  it('Buy Now’s watch is bounded, so it cannot poll for the page’s life', () => {
+    const actions = fs.readFileSync(
+      path.join(__dirname, '..', 'src', 'webview', 'productActions.ts'),
+      'utf8',
+    );
+    // If their embed ever changes what it mounts, none of the selectors match
+    // and this must stop rather than spin.
+    expect(actions).toContain('PAINT_WAIT_MS');
+  });
+});

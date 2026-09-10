@@ -340,6 +340,62 @@ describe('the wishlist screen', () => {
     expect(textOf(tree)).not.toContain('No items');
   });
 
+  /*
+   * THE SCREEN OPENS ON `items === null` AND THEN GETS ITS ITEMS.
+   *
+   * That is the real sequence every time the wishlist is opened -- the read is
+   * a storage lookup plus one request per saved product -- and it is the
+   * sequence that crashed the app. `usePulse` was being called inside the
+   * `items === null` branch, against the rules of hooks. Harmless while
+   * nothing was declared above it (the hook count just fell to zero and React
+   * tolerated the tail vanishing); fatal once the variant picker added a
+   * useState and a useCallback in front of it, because then the hooks that
+   * survived sat BEFORE the pair that disappeared. React aborts on a changed
+   * hook sequence: "rendered fewer hooks than expected".
+   *
+   * A fresh render of each state cannot catch this. It has to be one tree
+   * updated in place, which is what the app does.
+   */
+  it('survives the skeleton giving way to the items', () => {
+    let tree: ReactTestRenderer.ReactTestRenderer | undefined;
+    ReactTestRenderer.act(() => {
+      tree = ReactTestRenderer.create(screen({items: null}));
+    });
+    const live = tree as ReactTestRenderer.ReactTestRenderer;
+    // The skeleton, with no item text in it yet.
+    expect(textOf(live)).not.toContain(RAW.title);
+
+    // The read lands. Before the fix this threw rather than rendering.
+    ReactTestRenderer.act(() => {
+      live.update(screen({items: [item()]}));
+    });
+    expect(textOf(live)).toContain(RAW.title);
+
+    // And back again -- a re-read sets items to null before refilling them,
+    // so the sequence runs in both directions.
+    ReactTestRenderer.act(() => {
+      live.update(screen({items: null}));
+    });
+    ReactTestRenderer.act(() => {
+      live.update(screen({items: [item()]}));
+    });
+    expect(textOf(live)).toContain(RAW.title);
+  });
+
+  it('survives the same transition into an empty wishlist', () => {
+    // The other branch with an early return: null -> [] must not change the
+    // hook sequence either.
+    let tree: ReactTestRenderer.ReactTestRenderer | undefined;
+    ReactTestRenderer.act(() => {
+      tree = ReactTestRenderer.create(screen({items: null}));
+    });
+    const live = tree as ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      live.update(screen({items: []}));
+    });
+    expect(textOf(live)).toContain('No items');
+  });
+
   it('shows the box and "No items" when nothing is saved', () => {
     const tree = render(screen({items: []}));
     expect(textOf(tree)).toContain('No items');

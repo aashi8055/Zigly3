@@ -179,12 +179,108 @@ export const PRODUCT_BUY_NOW_SCRIPT = `
     return enabledPaymentButton(document);
   }
 
+  /**
+   * Shiprocket's own UI, once it is actually on screen.
+   *
+   * The same test ../webview/cartBridge applies for the cart's Checkout, and
+   * the same selectors -- their embed is an iframe over the page, and the
+   * candidates are size-checked because their container is in the document
+   * from page load at zero height, so mere presence proves nothing.
+   *
+   * WHY BUY NOW NEEDS THIS AT ALL. It used to click and return, reporting
+   * nothing on success. That was fine while nothing depended on knowing, but
+   * the app now takes its own header, offer strip and tab bar down while their
+   * checkout is up (see checkoutEmbedUp in
+   * ../screens/ZiglyWebViewScreen.tsx) -- and their embed is an iframe, so the
+   * top-level url never changes and there is nothing else that could tell the
+   * app their page had arrived. Without this, Buy Now would leave the app's
+   * furniture stacked over a payment flow while the cart's Checkout did not.
+   *
+   * Reported with the SAME tag the cart's checkout uses, so the screen has one
+   * handler for "Shiprocket is on screen" rather than two that could drift.
+   */
+  var CHECKOUT_SELECTORS = [
+    'iframe[src*="shiprocket"]',
+    'iframe[src*="fastrr"]',
+    'iframe[id*="fastrr"]',
+    'iframe[id*="shiprocket"]',
+    '[class*="fastrr"] iframe',
+    '[id*="fastrr-checkout"]',
+    '[class*="shiprocket-checkout"]',
+    '[id*="shiprocket-checkout"]'
+  ];
+
+  function checkoutVisible() {
+    var vh = window.innerHeight || 0;
+    var vw = window.innerWidth || 0;
+    if (!vh || !vw) { return false; }
+    for (var i = 0; i < CHECKOUT_SELECTORS.length; i++) {
+      // Per selector and never fatal, as in cartBridge: one unparseable
+      // selector or one node with no box must not take the whole check down,
+      // because the failure mode of that is reporting no checkout when one is
+      // opening perfectly well.
+      try {
+        var nodes = document.querySelectorAll(CHECKOUT_SELECTORS[i]);
+        for (var j = 0; j < nodes.length; j++) {
+          if (typeof nodes[j].getBoundingClientRect !== 'function') { continue; }
+          var box = nodes[j].getBoundingClientRect();
+          if (box.height > vh * 0.5 && box.width > vw * 0.5) { return true; }
+        }
+      } catch (e) {}
+    }
+    return false;
+  }
+
+  /**
+   * Watch for that paint, then report once.
+   *
+   * Bounded, and the bound is not optional: if their embed ever changes what
+   * it mounts, none of the selectors match and this would otherwise poll for
+   * the life of the page. On that path it simply says nothing -- the app's own
+   * spinner timeout (BUY_BUSY_CAP_MS) gives the button back, and the furniture
+   * stays, which is the right way to be wrong.
+   */
+  function watchForCheckout() {
+    var PAINT_WAIT_MS = 4000;
+    var started = null;
+    try {
+      started = typeof Date.now === 'function' ? Date.now() : null;
+    } catch (e) {}
+    var done = false;
+
+    function poll() {
+      if (done) { return; }
+      if (checkoutVisible()) {
+        done = true;
+        // Same tag as the cart's checkout: one meaning, one handler.
+        send({tag: 'cart-checkout-started', via: 'buy-now', painted: true});
+        return;
+      }
+      var now = null;
+      try {
+        now = typeof Date.now === 'function' ? Date.now() : null;
+      } catch (e) {}
+      // No clock, or past the deadline: stop watching and say nothing.
+      if (now === null || started === null) { done = true; return; }
+      if (now - started > PAINT_WAIT_MS) { done = true; return; }
+      if (typeof window.requestAnimationFrame !== 'function') {
+        done = true;
+        return;
+      }
+      window.requestAnimationFrame(poll);
+    }
+
+    poll();
+  }
+
   // Click synchronously, the instant this runs -- nothing here waits on a
   // fetch or a cart read first, so the tap reaches Shiprocket's own handler
   // exactly as fast as tapping their button on the page would.
   var btn = findShiprocketButton() || findFallbackButton();
   if (btn) {
     btn.click();
+    // Only after the click: the watch is for what the click produces.
+    watchForCheckout();
   } else {
     send({tag: 'product-action-unavailable', action: 'buy'});
   }

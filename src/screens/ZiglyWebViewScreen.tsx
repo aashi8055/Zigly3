@@ -879,6 +879,30 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    */
   const [checkoutOnDashboard, setCheckoutOnDashboard] = useState(false);
   /**
+   * Shiprocket's checkout is on screen INSIDE a page of the store.
+   *
+   * Distinct from `inCheckout`, and both are needed, because their embed can
+   * arrive two different ways:
+   *
+   *   - AS A NAVIGATION, to fastrr-boost-ui.pickrr.com or one of the
+   *     shiprocket.in hosts. `isCheckoutUrl` sees that and `inCheckout`
+   *     covers it.
+   *   - AS AN IFRAME filling the viewport of the page the customer is already
+   *     on. The top-level url never changes, so `inCheckout` stays false --
+   *     and it is this shape that ../webview/cartBridge was written to detect
+   *     (see its CHECKOUT_SELECTORS, which are all iframe matches).
+   *
+   * So the app's furniture cannot be gated on the url alone: on the iframe
+   * path the header and the tab bar would stay over a payment page. This is
+   * set from cartBridge's own `cart-checkout-started` report -- the same
+   * message that ends the cart's hold, which only fires once their checkout
+   * has actually painted or the wait for it has run out.
+   *
+   * Cleared with the checkout: closing the cart, navigating out, or a
+   * checkout that could not open. See `endCheckoutEmbed`.
+   */
+  const [checkoutEmbedUp, setCheckoutEmbedUp] = useState(false);
+  /**
    * Releases the hold if no paint is ever reported.
    *
    * The script answers within its own 4s cap, so this only fires when the
@@ -2171,6 +2195,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
   }, []);
 
   /**
+   * Shiprocket's embed is gone: the app's furniture comes back.
+   *
+   * Paired with `endCheckoutOnDashboard` and called from the same places --
+   * the customer closing the cart, a navigation out of the flow, and a
+   * checkout that could not open. Kept as its own function rather than folded
+   * into that one because the two answer different questions ("is a layer
+   * hiding the checkout?" and "is the checkout on screen?") and a future
+   * change to either should not silently move the other.
+   */
+  const endCheckoutEmbed = useCallback(() => {
+    setCheckoutEmbedUp(false);
+  }, []);
+
+  /**
    * Uncover the page: Shiprocket is there, or it is never going to say so.
    *
    * One place for both, because the overlay must come off exactly once and on
@@ -2211,6 +2249,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * and leaving the dashboard parked would show them the bare WebView.
      */
     endCheckoutOnDashboard();
+    // No checkout on screen either, so the header and the bar come back.
+    endCheckoutEmbed();
     // Either badge may have changed while the cart was open.
     injectInto('home', REPORT_CART_COUNT);
     injectInto('home', REPORT_WISHLIST_COUNT);
@@ -2223,7 +2263,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
      * REPORT_WISHLIST_HANDLES on why the set is not reported everywhere.
      */
     injectInto('home', REPORT_WISHLIST_HANDLES);
-  }, [endCheckoutHold, endCheckoutOnDashboard, injectInto]);
+  }, [endCheckoutHold, endCheckoutOnDashboard, endCheckoutEmbed, injectInto]);
 
   const openCart = useCallback(() => {
     setCart(null);
@@ -4224,6 +4264,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
        */
       if (!nowInCheckout) {
         setCheckoutOnDashboard(false);
+        // Their page has been navigated away from, so the app's own header,
+        // strip and tab bar come back. See `checkoutEmbedUp`.
+        setCheckoutEmbedUp(false);
       }
     }
   }, []);
@@ -4726,6 +4769,39 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * reference app too: a customer entering a code should not be offered four
    * ways to abandon it.
    */
+  /**
+   * Whether the app's own furniture is on screen at all.
+   *
+   * FALSE ON THE CHECKOUT, AND ONLY THERE. Shiprocket's page gets the whole
+   * screen: no announcement strip, no header, and -- through `showNav` below,
+   * which already excluded `inCheckout` for its own reasons -- no tab bar
+   * either.
+   *
+   * `inCheckout` is the right test rather than a new one, and that is the
+   * point. It is set from `isCheckoutUrl` on whichever WebView navigated
+   * (see handleNavStateChange and the layer's own handler), and
+   * PAYMENT_HOSTS carries shiprocket.in, checkout.shiprocket.in,
+   * fastrr.shiprocket.in and fastrr-boost-ui.pickrr.com -- which is where
+   * Shiprocket Checkout actually serves from. So this turns off exactly when
+   * their page is loaded and back on the moment the customer leaves it,
+   * whether they came from the cart's Checkout or from Buy Now: both end up
+   * on the same host, and neither is treated specially here.
+   *
+   * WHY HIDE IT AT ALL. Their checkout is a payment flow with its own header,
+   * its own steps and its own way back. Two headers stacked over it is one
+   * mistap away from abandoning a basket the customer has already entered
+   * card details into -- the same argument the tab bar was removed under, and
+   * the reason that exclusion was already there before this one.
+   *
+   * The customer is not trapped: Android's hardware back still reaches this
+   * screen's own handler, and Shiprocket's page carries its own controls.
+   *
+   * BOTH TESTS, because their embed arrives two ways -- a navigation to their
+   * own host, or an iframe over a page of the store that leaves the top-level
+   * url alone. See `checkoutEmbedUp` for why the url alone is not enough.
+   */
+  const showChrome = !inCheckout && !checkoutEmbedUp;
+
   const showNav =
     !searchOpen &&
     // The drawer is a screen of its own while it is open, as it is in the
@@ -4771,6 +4847,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         items={
           searchOpen ||
           wishlistOpen ||
+          // A promotion above a payment page is the last thing a customer
+          // needs; the whole screen belongs to the checkout. See `showChrome`.
+          inCheckout ||
           // The reference app carries the strip on its Account screen but not
           // on the screens below it, nor on login.
           (onAccountScreen && accountTop !== 'account')
@@ -4783,7 +4862,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         Drawn once, above `body`, so it survives every page, the cart and the
         offline screen -- no inner page can cover it, and the back arrow is
         therefore always there.
+
+        EXCEPT ON THE CHECKOUT, which is the one page that gets the screen to
+        itself -- see `showChrome`.
       */}
+      {showChrome ? (
       <NativeHeader
         cartCount={cartCount}
         wishlistCount={wishlistCount}
@@ -4902,6 +4985,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
         onLogoPress={handleLogoPress}
         onSearchPress={openSearch}
       />
+      ) : null}
 
       {/*
         Everything that can cover the page lives in here, so `top: 0` means
@@ -5090,6 +5174,20 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  * flash -- so that path is the old behaviour exactly.
                  */
                 releaseCheckoutHold();
+                /*
+                 * And the app's own header, strip and tab bar stand down: the
+                 * screen is Shiprocket's now. Set here rather than from the
+                 * url because their embed is an iframe over a page of the
+                 * store, so the top-level url never changed -- see
+                 * `checkoutEmbedUp`.
+                 *
+                 * Set even when `painted` is false. The checkout HAS been
+                 * started either way, and their page is the more likely thing
+                 * to be under the cart that just came off; a header left over
+                 * a payment flow is the worse of the two mistakes, and every
+                 * exit below clears this.
+                 */
+                setCheckoutEmbedUp(true);
               } else if (data && data.tag === 'cart-checkout-unavailable') {
                 /*
                  * Shiprocket's script exposed no checkout method and no
@@ -5112,8 +5210,9 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                  */
                 endCheckoutHold();
                 // No checkout opened, so there is nothing under the dashboard
-                // to reveal: it keeps its WebView.
+                // to reveal: it keeps its WebView, and its furniture.
                 endCheckoutOnDashboard();
+                endCheckoutEmbed();
                 setToastMessage("Couldn't open checkout — please try again");
               } else if (data && data.tag === 'wishlist-count') {
                 /*
@@ -5603,6 +5702,16 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   if (nowInCheckout !== inCheckoutRef.current) {
                     inCheckoutRef.current = nowInCheckout;
                     setInCheckout(nowInCheckout);
+                    /*
+                     * Left their flow by navigating: the header, the strip and
+                     * the tab bar come back. The iframe case is cleared by the
+                     * routes in `endCheckoutEmbed`'s callers -- this covers
+                     * the navigation case on a page layer, matching what
+                     * handleNavStateChange does for the dashboard's WebView.
+                     */
+                    if (!nowInCheckout) {
+                      setCheckoutEmbedUp(false);
+                    }
                   }
                 }}
                 onLoadStart={e => {
@@ -5783,6 +5892,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       // tag on the dashboard WebView above for why this waits
                       // for the paint rather than firing on the call.
                       releaseCheckoutHold();
+                      // And the furniture stands down, as above.
+                      setCheckoutEmbedUp(true);
                     } else if (data && data.tag === 'cart-checkout-unavailable') {
                       /*
                        * Nothing of Shiprocket's to press on this page -- see
@@ -5794,6 +5905,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       // Button released to be pressed again, overlay left up
                       // so the customer keeps their cart -- as above.
                       endCheckoutHold();
+                      // Nothing opened, so the app keeps its furniture.
+                      endCheckoutEmbed();
                       setToastMessage(
                         "Couldn't open checkout — please try again",
                       );

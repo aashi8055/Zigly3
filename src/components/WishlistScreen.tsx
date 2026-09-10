@@ -198,11 +198,34 @@ const WishlistScreen = ({
     [onAddToBag, onOpenItem],
   );
 
+  /**
+   * The skeleton's pulse.
+   *
+   * UNCONDITIONAL, AND IT HAS TO BE. This used to be called inside the
+   * `items === null` branch below, which was already against the rules of
+   * hooks and was already flagged as such -- but it was harmless while
+   * nothing was declared above it: the count simply went from two hooks
+   * (usePulse is a useRef plus a useEffect) on the skeleton render to zero on
+   * the next, and React tolerated the tail vanishing.
+   *
+   * Adding `picking` and `startAdd` above it made the same mistake fatal. The
+   * wishlist always opens with `items === null`, so the first render ran four
+   * hooks and the render after it -- once the items arrived -- ran two, with
+   * the two survivors now sitting BEFORE the pair that disappeared. That is a
+   * changed hook sequence rather than a truncated one, and it takes the screen
+   * down with "rendered fewer hooks than expected".
+   *
+   * `active` is the branch test rather than a constant, so the animation loop
+   * still only runs while the skeleton is the thing on screen -- usePulse
+   * starts nothing when it is false. The cost of hoisting is one Animated
+   * value per mount; the cost of not hoisting was the screen.
+   */
+  const pulse = usePulse(items === null);
+
   if (items === null) {
     // Not yet read. Short now that the read is a storage lookup plus one
     // request per saved product, but not nothing -- and showing the empty
     // screen during it would tell the customer their saved items were gone.
-    const pulse = usePulse(true);
     return (
       <View style={styles.root}>
         <View style={styles.grid}>
