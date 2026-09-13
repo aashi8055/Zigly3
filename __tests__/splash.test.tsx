@@ -325,18 +325,105 @@ describe('the launch shows a single mark', () => {
 
   /**
    * Android 12+ ignores windowBackground and draws its own splash, masking the
-   * icon to a circle -- so a wordmark cannot be handed to it. It is given no
-   * icon at all rather than the square one, leaving a plain white field until
-   * React draws the wordmark on it.
+   * icon to a circle -- so a wordmark cannot be handed to it. It is given a
+   * transparent icon rather than the square one, leaving a plain white field
+   * until React draws the wordmark on it.
+   *
+   * THIS TEST USED TO ASSERT THE BUG. It required the attribute to be ABSENT,
+   * on the reading that an unset icon is no icon. It is not: unset means the
+   * platform falls back to android:icon, which is @mipmap/ic_launcher -- the
+   * square mark, drawn for the length of the platform splash and then replaced
+   * by the wide wordmark. The absence the test was protecting was the two-logo
+   * bug, which is why the suite stayed green while phones showed two logos.
    */
   it('draws no square icon on the Android 12+ platform splash', () => {
     const styles = text('android/app/src/main/res/values/styles.xml');
-    expect(styles).not.toContain(
-      '<item name="android:windowSplashScreenAnimatedIcon">',
+    // Stated explicitly, because unset is not "none" -- it is the launcher icon.
+    expect(styles).toContain(
+      '<item name="android:windowSplashScreenAnimatedIcon">@drawable/zigly_splash_no_icon</item>',
     );
+    // And the drawable it names really does draw nothing.
+    const icon = text(
+      'android/app/src/main/res/drawable/zigly_splash_no_icon.xml',
+    );
+    expect(icon).toContain('@android:color/transparent');
+    // Never the launcher artwork, under any of its names. Comments are
+    // stripped first: the block above has to be free to NAME the fallback it
+    // exists to explain, and naming it in prose is not shipping it.
+    const declared = styles.replace(/<!--[\s\S]*?-->/g, '');
+    expect(declared).not.toContain('@mipmap/ic_launcher');
+    expect(declared).not.toContain('@mipmap/zigly_splash_logo');
     // The ground stays the same white as both other frames.
     expect(styles).toContain(
       '<item name="android:windowSplashScreenBackground">@color/zigly_splash_ground</item>',
+    );
+  });
+
+  /**
+   * THE LAUNCH THEME IS ACTUALLY APPLIED.
+   *
+   * Everything above describes AppLaunchTheme, and none of it reached a phone:
+   * the activity never declared the theme, so the window wore AppTheme from the
+   * first frame. styles.xml, zigly_splash.xml and MainActivity.setTheme were
+   * all correct and all inert -- three files documenting a hand-off that was
+   * not happening.
+   *
+   * This is the assertion that ties those files to the build. Without it every
+   * other test in this describe can pass on an app that shows the launcher icon
+   * on Android 12+ and a blank white screen on everything older, which is
+   * exactly what was reported.
+   */
+  it('declares that launch theme on the activity, not just in styles.xml', () => {
+    const manifest = text('android/app/src/main/AndroidManifest.xml');
+    const at = manifest.indexOf('<activity');
+    expect(at).toBeGreaterThan(-1);
+    const activity = manifest.slice(at, manifest.indexOf('>', at));
+    expect(activity).toContain('android:theme="@style/AppLaunchTheme"');
+    // The style it names has to exist, or the build fails on a dangling ref.
+    expect(text('android/app/src/main/res/values/styles.xml')).toContain(
+      '<style name="AppLaunchTheme"',
+    );
+  });
+
+  /**
+   * And is handed back once React is running.
+   *
+   * AppLaunchTheme's window background is the splash drawable. A window still
+   * wearing it after boot keeps the wordmark painted behind every screen --
+   * visible through anything not opaque, and a full-screen overdraw on every
+   * frame. setTheme before super.onCreate is what makes it a swap rather than
+   * a flicker; it was a no-op only because the theme was never applied.
+   */
+  it('hands the window back to AppTheme once React is up', () => {
+    const activity = text(
+      'android/app/src/main/java/com/com.zigly.webview.preview/MainActivity.kt',
+    );
+    const at = activity.indexOf('override fun onCreate');
+    expect(at).toBeGreaterThan(-1);
+    const body = activity.slice(at, at + 300);
+    // Order matters: the theme is set as the window is created, not after.
+    expect(body.indexOf('setTheme(R.style.AppTheme)')).toBeLessThan(
+      body.indexOf('super.onCreate'),
+    );
+  });
+
+  /**
+   * The pre-12 launch drawable and the React splash are the same white.
+   *
+   * This is what makes the gap invisible rather than merely covered: the window
+   * background, the platform splash ground and SplashScreen's own root all
+   * paint COLORS.white, so the hand-offs between them are white onto white.
+   */
+  it('paints every launch frame the same white', () => {
+    const colors = text('android/app/src/main/res/values/colors.xml');
+    expect(colors).toContain(
+      '<color name="zigly_splash_ground">#FFFFFF</color>',
+    );
+    // The same white the React splash paints, so the hand-off is invisible.
+    expect(COLORS.white.toUpperCase()).toBe('#FFFFFF');
+    // AppTheme covers the window after the hand-off, and during a config change.
+    expect(text('android/app/src/main/res/values/styles.xml')).toContain(
+      '<item name="android:windowBackground">@color/zigly_splash_ground</item>',
     );
   });
 

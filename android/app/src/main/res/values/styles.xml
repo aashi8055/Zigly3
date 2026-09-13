@@ -70,7 +70,16 @@
           is the same white as both the launch drawable and SplashScreen. The
           customer sees one white field until React mounts and draws the wordmark
           on it. One logo, once — which is the whole intent.
+
+          AND "NO ICON" HAS TO BE SAID OUT LOUD. Leaving this attribute unset
+          does not give the platform splash no icon — it makes it fall back to
+          android:icon, @mipmap/ic_launcher, the square mark. That silent
+          fallback IS the two-logo bug, so the intent stated above was true of
+          this comment and false of the build. A fully transparent drawable is
+          how the platform is told to draw nothing; see that file for why the
+          wordmark cannot be handed over instead.
         -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/zigly_splash_no_icon</item>
         <!--
           Hold the platform splash for a beat rather than letting it snap away
           the instant the activity is ready. 0 would let Android 12+ tear it

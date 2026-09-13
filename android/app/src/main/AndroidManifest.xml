@@ -59,9 +59,39 @@
         the back button is the primary navigation control, and it must walk the
         page history before it ever closes the app.
       -->
+      <!--
+        THE LAUNCH THEME, AND WHY NAMING IT HERE IS THE WHOLE FIX.
+
+        res/values/styles.xml has carried AppLaunchTheme — Zigly's splash
+        drawn by the window manager before any JavaScript exists — and
+        MainActivity.onCreate has called setTheme(AppTheme) to hand it back.
+        Neither did anything, because the activity never declared it: the only
+        android:theme in this file was AppTheme on <application>, so the window
+        wore AppTheme from the first frame and setTheme was restoring a theme
+        that had never been left.
+
+        What that cost, split by OS version, which is why it was reported as
+        two different bugs on two different sets of phones:
+
+          Android 12+ — the platform splash falls back to the LAUNCHER ICON,
+          a square mark. React then mounts and SplashScreen draws the wide
+          493x124 wordmark. Two logos, back to back. styles.xml deliberately
+          specifies no windowSplashScreenAnimatedIcon precisely to stop this,
+          and that instruction was being read by nothing.
+
+          Pre-Android 12 — AppTheme's windowBackground is a flat white colour
+          with no mark on it, so the ~1-3s a mid-range device spends booting
+          Hermes and the JS bundle is a blank white screen. SplashScreen cannot
+          cover it; it does not exist yet.
+
+        Declaring it here is what makes both of those the same single frame:
+        white ground, wordmark centred, identical to the one SplashScreen
+        draws the moment React is ready.
+      -->
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"
+        android:theme="@style/AppLaunchTheme"
         android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
         android:launchMode="singleTask"
         android:windowSoftInputMode="adjustResize"

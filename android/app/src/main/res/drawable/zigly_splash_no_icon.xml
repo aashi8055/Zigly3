@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Android 12+ platform splash icon, deliberately invisible.
+
+  WHY AN EMPTY DRAWABLE RATHER THAN NO DRAWABLE AT ALL.
+
+  From API 31 the window manager stops honouring windowBackground for the
+  launch and draws its own splash screen: a ground colour with an icon centred
+  on it. That icon is not optional. Leaving windowSplashScreenAnimatedIcon
+  unset does not mean "no icon" — it means "use android:icon", which is
+  @mipmap/ic_launcher, the SQUARE launcher mark.
+
+  That fallback is the two-logo bug. The square icon appeared for the length of
+  the platform splash, then React mounted and SplashScreen drew the wide
+  493x124 wordmark: two different marks back to back, at the first thing anyone
+  sees. ../values/styles.xml explains at length that the platform splash is
+  given no icon, and that instruction had no way to take effect while the
+  attribute was simply absent.
+
+  The wordmark cannot be handed to the attribute instead. Android 12+ masks the
+  icon into a circle at a fixed size, so a 4:1 wordmark would be cropped to the
+  few letters in its middle — worse than the square mark, not better.
+
+  So the icon is drawn and is fully transparent. The customer sees the white
+  ground alone until React draws the wordmark on it, which is one mark, once,
+  and is exactly what the pre-12 launch drawable (./zigly_splash.xml) puts on
+  screen. The two paths now agree.
+
+  @android:color/transparent rather than a 0x00000000 shape: it is the
+  platform's own transparent, needs no size, and cannot be mistaken for
+  artwork that failed to load.
+-->
+<color xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@android:color/transparent" />
