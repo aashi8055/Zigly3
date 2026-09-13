@@ -173,6 +173,64 @@ export const READ_MENU_SCRIPT = `
       }
 
       /**
+       * The Customer Policies block, read out of the footer.
+       *
+       * The drawer itself has no policies -- the site publishes them as a
+       * footer link_list block whose heading is "Customer Policies" and whose
+       * menu is Terms Of Use, Privacy Policy, Refund Policy, Shipping Policy
+       * and FAQ's (verified against the live homepage on 2026-09-13). They are
+       * ordinary /pages/... links, and the titles are NOT the Shopify default
+       * shop.policies ones: the store points each at a page of its own, which
+       * is exactly why this reads the block rather than assuming
+       * /policies/privacy-policy.
+       *
+       * Found by heading text rather than by the block's generated class,
+       * because the block id (link_list_MBqNnH) is theme-editor output and
+       * changes whenever the block is re-added. The heading is what a person
+       * set, and it is what the customer sees.
+       *
+       * Returned as a branch so it drills down like every other group, and
+       * inserted ABOVE the support row -- the order the reference app uses.
+       * Nothing is invented: if the block is renamed or emptied, this returns
+       * null and the row simply does not appear.
+       */
+      function policies() {
+        var heads = document.querySelectorAll('.footer-block__heading');
+        var box = null;
+        for (var h = 0; h < heads.length; h++) {
+          if (squash(heads[h].textContent || '').toLowerCase() === 'customer policies') {
+            box = heads[h].parentNode;
+            break;
+          }
+        }
+        if (!box || !box.querySelectorAll) { return null; }
+        var links = box.querySelectorAll('ul a[href]');
+        var kids = [];
+        for (var i = 0; i < links.length && kids.length < 12; i++) {
+          var label = squash(links[i].textContent || '');
+          var href = links[i].getAttribute('href') || '';
+          if (!label || !href) { continue; }
+          kids.push({
+            id: 'policy' + i,
+            label: label,
+            href: href,
+            icon: null,
+            color: null,
+            children: []
+          });
+        }
+        if (!kids.length) { return null; }
+        return {
+          id: 'policies',
+          label: 'Customer Policies',
+          href: null,
+          icon: null,
+          color: null,
+          children: kids
+        };
+      }
+
+      /**
        * The support block under the list. Zigly publishes a phone number, an
        * email address and a WhatsApp link there; the reference app shows them
        * behind a Customer Support row, and a group of leaves is exactly that.
@@ -217,6 +275,10 @@ export const READ_MENU_SCRIPT = `
           || document.querySelector('ul.menu-drawer__menu');
         var state = {count: 0};
         var items = walk(list, 0, state);
+        // Policies first, then support: the reference app puts Customer
+        // Policies directly above Customer Support at the foot of the drawer.
+        var pol = policies();
+        if (pol) { items.push(pol); }
         var extra = support();
         if (extra) { items.push(extra); }
         if (window.ReactNativeWebView) {
