@@ -152,11 +152,47 @@ describe('a filter reaches the grid, and coming off reaches it too', () => {
     expect(SCREEN).toContain('setResultsByKey');
   });
 
-  /** Non-strings out: these go on to become a GraphQL query. */
+  /**
+   * Non-strings out: these go on to become a GraphQL query.
+   *
+   * Anchored to the end of the branch rather than to a character count. This
+   * used to slice a fixed 1600 characters from the tag test, which put the
+   * assertion inside the comment block whenever that comment grew -- a test
+   * that failed on documentation. `setResultsByKey` is the write this branch
+   * exists to make, so the filter must appear before it.
+   */
   it('keeps only string handles from the page', () => {
     const at = SCREEN.indexOf("data.tag === 'results'");
-    const block = SCREEN.slice(at, at + 1600);
+    const block = SCREEN.slice(at, SCREEN.indexOf('setResultsByKey', at));
     expect(block).toContain("typeof h === 'string'");
+  });
+
+  /**
+   * AND THE LATE REPORTS CANNOT PUT THE FILTER BACK.
+   *
+   * `toggleFacet` drops the entry on the frame the last chip comes off, and
+   * that alone was not enough: ../src/webview/facetBridge re-reports 300ms and
+   * 1200ms after every toggle, and those two reports landed after the delete
+   * and restored the entry -- pinning the grid to a handle list with no paging
+   * for a collection with no filter on it. The delete was real and lasted
+   * 300ms.
+   *
+   * So the branch accepts handles only while the app's own record says a
+   * filter is applied. Read through a ref because this handler closes over the
+   * render that created it. See ../__tests__/lastFilterOff.test.ts for the
+   * behaviour; this only pins that the screen still asks the question.
+   */
+  it('ignores a reported grid when nothing is applied', () => {
+    const at = SCREEN.indexOf("data.tag === 'results'");
+    const block = SCREEN.slice(at, SCREEN.indexOf('setResultsByKey', at));
+    expect(block).toContain('selectedCount(');
+    expect(block).toContain('facetsByKeyRef.current[layer.key]');
+    expect(block).toContain('applied > 0');
+  });
+
+  /** The ref must actually track the state, or the gate reads a stale map. */
+  it('keeps the ref in step with the facet state', () => {
+    expect(SCREEN).toContain('facetsByKeyRef.current = facetsByKey;');
   });
 
   /**
@@ -201,7 +237,25 @@ describe('the cart still belongs to the WebView', () => {
   it('adds through the layer under the grid, not the dashboard', () => {
     const at = SCREEN.indexOf('const addFromGrid');
     expect(at).toBeGreaterThan(-1);
-    const block = SCREEN.slice(at, at + 700);
+    /*
+     * To the END OF THE FUNCTION, not a fixed number of characters.
+     *
+     * This used to slice 700, which was enough only while the body was four
+     * lines long. Adding the card's spinner to it -- the state, its failsafe,
+     * and the notes on why the spin starts before the injection -- pushed the
+     * injection itself past that window, and the test failed over the SIZE of
+     * the function rather than anything it does. The next comment would have
+     * done it again.
+     *
+     * `openAccountFromMenu` is the declaration that follows addFromGrid, so
+     * the slice is the whole of that function and nothing after it -- which is
+     * what the three assertions below were always meant to be read against.
+     * Named, in the style of the other slices in this file, rather than
+     * matched on indentation: a marker that is a real identifier fails loudly
+     * if it is ever moved, instead of silently slicing the wrong block.
+     */
+    const after = SCREEN.indexOf('const openAccountFromMenu', at);
+    const block = SCREEN.slice(at, after === -1 ? SCREEN.length : after);
     expect(block).toContain('visibleLayer(stackRef.current)');
     expect(block).toContain('addToCartScript(variantId)');
     expect(block).not.toContain("injectInto('home'");

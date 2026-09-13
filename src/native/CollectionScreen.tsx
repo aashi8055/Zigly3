@@ -108,8 +108,26 @@ type Props = {
   sort: SortId;
   /** Open a product page. */
   onOpen: (path: string) => void;
-  /** Add a variant to the bag, through the WebView bridge. */
-  onAdd: (variantId: number) => void;
+  /**
+   * Add a variant to the bag, through the WebView bridge.
+   *
+   * THE HANDLE IS THE SECOND ARGUMENT, as on ./ProductRail and for the same
+   * reason: the spinner needs an identity, and a variant id is not one the
+   * card can be found by -- ./ListingCard is drawn per product and a product
+   * carries several variant ids. The grid can also reorder under it (a sort,
+   * a filter landing), so an index would move the spinner onto a neighbour.
+   */
+  onAdd: (variantId: number, handle: string) => void;
+  /**
+   * The handle of the product whose add is in flight, or null.
+   *
+   * Owned by the screen above for the reason ./ProductRail's note gives: the
+   * add is confirmed by a message from inside the WebView under this layer, so
+   * only that screen knows when it has landed. ONE STRING for the whole grid --
+   * the customer can only tap one button at a time, and every add funnels
+   * through the same bridge.
+   */
+  addingHandle?: string | null;
   /** Space to leave under the last row, for the Sort/Filter bar. */
   bottomInset?: number;
   /**
@@ -158,6 +176,7 @@ const CollectionScreen = ({
   sort,
   onOpen,
   onAdd,
+  addingHandle = null,
   bottomInset = 0,
   filteredHandles = null,
   searchBand = null,
@@ -344,7 +363,14 @@ const CollectionScreen = ({
           product={item}
           width={CARD_WIDTH}
           onOpen={onOpen}
-          onAdd={onAdd}
+          /*
+           * The handle goes up with the variant id, so the screen above can
+           * name the card that is waiting. Bound here rather than in the card
+           * because the card is shared and only a list needs this --
+           * ./ProductRail binds its own the same way.
+           */
+          onAdd={variantId => onAdd(variantId, item.handle)}
+          busy={addingHandle === item.handle}
         />
       )}
       /*

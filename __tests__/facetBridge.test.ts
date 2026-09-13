@@ -22,7 +22,9 @@
 import {
   applySortScript,
   FACET_BRIDGE_SCRIPT,
+  READ_FACETS_SCRIPT,
   toggleFacetScript,
+  WARM_FACETS_SCRIPT,
 } from '../src/webview/facetBridge';
 
 /* -------------------------------------------------------------------------- *
@@ -578,19 +580,60 @@ describe('reading the page', () => {
     expect(state.sortOptions).toEqual(SORTS);
   });
 
-  it('reports ready once it has stopped waiting, so nothing spins for ever', () => {
+  it('does NOT call a timeout an answer, which is what claimed no filters', () => {
     /*
-     * A listing can genuinely publish no facets, and SearchTap can fail
-     * outright. Both look identical to "not yet" from here, so the poll's end
-     * is reported as an answer -- the sheet then says there are no filters
-     * instead of showing a spinner nothing will ever replace.
+     * THE BUG THIS FILE USED TO ASSERT.
+     *
+     * This test previously required ready:true once the poll gave up, and the
+     * sheet draws ready:true with an empty group list as "No filters for this
+     * listing". So a listing whose facets merely arrived LATE -- a
+     * late-hydrating bundle, a slow connection -- was told, with confidence,
+     * that it published no filters. A timeout is not an answer; it means the
+     * bridge stopped asking.
+     *
+     * `ready` is now withheld unless the facet UI is genuinely present, so the
+     * sheet keeps its skeleton and the MutationObserver (which outlives the
+     * poll) still fills it in if they turn up. Ending the wait for a listing
+     * that really has no filters moved to the screen, which is the only place
+     * that knows it is open and being looked at -- see EMPTY_AFTER_MS in
+     * ../src/components/FilterSheet.tsx.
      */
     const page = load(false);
     for (let tick = 0; tick <= 61; tick += 1) {
       page.tick();
     }
-    expect(latest(page).ready).toBe(true);
+    expect(latest(page).ready).toBe(false);
     expect(latest(page).groups).toEqual([]);
+  });
+
+  it('reports ready the moment the facets do turn up, however late', () => {
+    /*
+     * The other half of the same rule: withholding 'ready' on a timeout is
+     * only safe because a late render is still read.
+     *
+     * Driven through READ_FACETS_SCRIPT rather than through a tick, and that
+     * is the real path rather than a convenience. The poll has stopped by this
+     * point, and this harness runs with MutationObserver undefined (see the
+     * window above) -- so a tick would prove nothing about either. What the
+     * app actually does is send a read when the filter screen opens, which is
+     * the one moment the answer is being looked at.
+     */
+    const page = load(false);
+    for (let tick = 0; tick <= 61; tick += 1) {
+      page.tick();
+    }
+    expect(latest(page).ready).toBe(false);
+
+    // SearchTap finally renders its sidebar, with one real facet in it.
+    page.body.add(
+      new El('div', 'st-sidebar st-hidden').add(
+        facet('Pet type', [value('cat', '(63)')]),
+      ),
+    );
+    page.run(READ_FACETS_SCRIPT);
+
+    expect(latest(page).ready).toBe(true);
+    expect(latest(page).groups).toHaveLength(1);
   });
 
   it('does nothing at all off a listing page', () => {
@@ -605,6 +648,9 @@ describe('reading the page', () => {
     expect(page.posted).toHaveLength(before);
   });
 });
+
+/** WARM_GAP_MS in the bridge: the spacing between warm-up attempts. */
+const WARM_GAP = 1200;
 
 describe('asking the site for its facets', () => {
   /**
@@ -668,9 +714,71 @@ describe('asking the site for its facets', () => {
       page.advance(2000);
       page.tick();
     }
-    // WARM_TRIES is 10 in the bridge; the point is that it is bounded well
-    // below the 40 opportunities given here, not the exact number.
-    expect(fetchPill.clicks).toBeLessThanOrEqual(10);
+    /*
+     * WARM_TRIES is 18 in the bridge; the point is that it is bounded well
+     * below the 40 opportunities given here, not the exact number.
+     *
+     * Raised from 10 with the facet fix: at one attempt per WARM_GAP_MS the
+     * old budget was spent after ~12s while the poll ran ~24s, so a listing
+     * whose bundle hydrated late stopped being asked halfway through its own
+     * waiting time. Still bounded, which is what this test is for -- a page
+     * that will never answer must not be clicked at for ever.
+     */
+    expect(fetchPill.clicks).toBeLessThanOrEqual(18);
+    expect(fetchPill.clicks).toBeGreaterThan(0);
+  });
+
+  it('asks again when the filter screen opens, after the poll has stopped', () => {
+    /*
+     * THE RETRY AT THE MOMENT IT MATTERS.
+     *
+     * READ_FACETS_SCRIPT only re-reports the current DOM, which is no help on
+     * a listing whose facets never arrived: re-reading a page that was never
+     * asked to fetch returns the same nothing. So opening the filter screen
+     * sends WARM_FACETS_SCRIPT, which asks SearchTap again.
+     *
+     * The poll is deliberately exhausted first, because that is the state the
+     * customer was in when the screen said there were no filters.
+     */
+    /*
+     * The clock is NOT advanced through the poll, which is what a real slow
+     * load looks like from here: WARM_GAP_MS spaces the attempts out, so the
+     * ~24s of polling spends only a few of them rather than all 18. Advancing
+     * 2s per tick (as the budget test below does) would burn the whole budget
+     * and leave nothing for the open to spend -- which would be testing the
+     * harness, not the retry.
+     */
+    const page = load(false);
+    for (let tick = 0; tick <= 61; tick += 1) {
+      page.tick();
+    }
+    const before = page.pills[1].clicks;
+
+    // Past the gap, so the attempt is allowed rather than spaced out.
+    page.advance(WARM_GAP);
+    page.run(WARM_FACETS_SCRIPT);
+
+    expect(page.pills[1].clicks).toBeGreaterThan(before);
+  });
+
+  it('does not re-arm the budget, however often the screen is opened', () => {
+    /*
+     * The retry must not become an unbounded click on the site's own pill. A
+     * page that has spent every attempt has shown it will not answer.
+     */
+    const page = load(false);
+    for (let i = 0; i < 40; i++) {
+      page.advance(2000);
+      page.tick();
+    }
+    const spent = page.pills[1].clicks;
+
+    for (let open = 0; open < 12; open++) {
+      page.advance(2000);
+      page.run(WARM_FACETS_SCRIPT);
+    }
+
+    expect(page.pills[1].clicks).toBe(spent);
   });
 
   it('leaves the pills alone when the facets are already there', () => {

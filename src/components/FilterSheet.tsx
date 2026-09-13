@@ -81,6 +81,23 @@ interface Props {
   onClose: () => void;
 }
 
+/**
+ * How long this screen waits, open and empty, before it will say there are none.
+ *
+ * The page's own `ready` is the authority and usually arrives first; this only
+ * covers the case it deliberately no longer claims. ../webview/facetBridge used
+ * to report ready:true when its poll timed out, which drew a TIMEOUT as "this
+ * listing publishes no filters" -- the bug this screen was showing. It now
+ * withholds `ready` unless it genuinely has something, so the honest empty case
+ * needs an end to its wait, and it belongs here: this is the only place that
+ * knows the screen is open and being looked at.
+ *
+ * Eight seconds, measured from the open rather than from the page load, so a
+ * sheet opened long after a slow load does not inherit a wait that already
+ * expired -- and so a listing that really has no filters settles quickly.
+ */
+const EMPTY_AFTER_MS = 8000;
+
 const FilterSheet = ({visible, facets, busy, onToggle, onClose}: Props) => {
   /*
    * A Modal is its own window, so it sits outside the inset padding the app
@@ -89,6 +106,24 @@ const FilterSheet = ({visible, facets, busy, onToggle, onClose}: Props) => {
    * context reaches here because the provider is above the whole app.
    */
   const insets = useSafeAreaInsets();
+
+  /*
+   * Whether this screen has waited long enough to call the emptiness real.
+   *
+   * Reset every time it opens and whenever facets arrive, so it can only ever
+   * describe THIS open screen's wait. The timer is cleared on close, which is
+   * what stops it firing into a screen nobody is looking at.
+   */
+  const [waited, setWaited] = React.useState(false);
+  const hasGroups = facets.groups.length > 0;
+  React.useEffect(() => {
+    if (!visible || facets.ready || hasGroups) {
+      setWaited(false);
+      return;
+    }
+    const timer = setTimeout(() => setWaited(true), EMPTY_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [visible, facets.ready, hasGroups]);
 
   return (
     <Modal
@@ -121,8 +156,15 @@ const FilterSheet = ({visible, facets, busy, onToggle, onClose}: Props) => {
             asks, so an empty first frame is normal. Once it has answered and
             there is still nothing, this listing genuinely publishes no
             filters, and a placeholder would be a lie that never resolves.
+
+            `waited` is the backstop, and it is why this is not just `ready`.
+            The bridge no longer reports ready:true on a poll timeout -- doing
+            so was what made a slow listing claim it had no filters -- so the
+            genuinely-empty listing needs its wait ended here instead. Either
+            the page says so, or this screen has sat empty for
+            EMPTY_AFTER_MS with a re-warm already sent.
           */
-          facets.ready ? (
+          facets.ready || waited ? (
             <View style={styles.centre}>
               <Text style={styles.none}>No filters for this listing</Text>
             </View>

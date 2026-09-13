@@ -226,8 +226,15 @@ ${LISTING_TEST_JS}
     return out;
   }
 
-  /** The same list, as the app is given it: labels and counts, no nodes. */
-  function groups() {
+  /**
+   * The same list, as the app is given it: labels and counts, no nodes.
+   *
+   * Named 'groupList' rather than 'groups' because 'state()' now holds the
+   * result in a local of that name -- it reads the list twice (once for
+   * 'ready', once for the payload) and must not sweep the DOM twice, nor
+   * shadow the function it is calling.
+   */
+  function groupList() {
     var found = facets();
     var out = [];
     for (var g = 0; g < found.length; g++) {
@@ -332,15 +339,59 @@ ${LISTING_TEST_JS}
     return !!document.querySelector('.st-sidebar, .st-widget');
   }
 
-  /** The poll has stopped waiting. Nothing is coming; say so rather than spin. */
+  /**
+   * The poll has stopped. NOT the same as "the site answered".
+   *
+   * This is why a listing with filters showed "No filters for this listing".
+   * 'ready' is the sheet's only way to tell a WAIT from a genuinely
+   * filter-less listing, and feeding a TIMEOUT into it made the sheet state,
+   * with confidence, something the page had never said. A timeout means we
+   * stopped asking -- it is a guess, and it was drawn as an answer.
+   *
+   * It still has to exist: without it a page that truly never answers leaves
+   * the sheet on a skeleton for ever. So it keeps its job of ending the wait,
+   * and loses its claim about the result -- see 'state()', where it now only
+   * counts once the facet UI is actually present.
+   *
+   * Not latched shut, either. The MutationObserver outlives the poll, so
+   * facets that arrive at second 30 are still read; 'answered()' starts
+   * returning true on its own and the sheet fills in. The old code could not
+   * benefit from that, because by then it had already reported ready:true with
+   * an empty list and nothing ever walked that back.
+   */
   var settled = false;
 
   function state() {
     var sort = sorts();
+    var groups = groupList();
     return {
       tag: 'facets',
-      ready: answered() || settled,
-      groups: groups(),
+      /*
+       * ANSWERED, OR STOPPED ASKING WITH SOMETHING TO SHOW.
+       *
+       * 'answered()' is the real signal and is trusted outright: it tests for
+       * SearchTap's own facet UI, and neither '.st-sidebar' nor '.st-widget'
+       * is in the served HTML (the theme ships an unhydrated
+       * <initial-search-filters> -- see
+       * zigly-website/snippets/searchtap-collection-template.liquid), so its
+       * presence means the site rendered filters.
+       *
+       * 'settled' may no longer stand in for that on its own. It used to, and
+       * the poll timing out on a slow listing was then drawn as "this listing
+       * publishes no filters" -- a timeout presented as the site's answer. It
+       * now only ends the wait when there is genuinely something to show,
+       * which is a state the sheet can draw truthfully.
+       *
+       * So a listing whose facets never arrive stays ready:false and keeps
+       * its skeleton, and the observer fills it in if they turn up late. The
+       * one case this gives up on is a listing that really has no filters: it
+       * waits instead of saying so. That is the safer of the two mistakes --
+       * a skeleton that resolves late beats a false certainty that never
+       * corrects itself -- and 'groups.length' is what tells them apart the
+       * moment SearchTap renders anything at all.
+       */
+      ready: answered() || (settled && groups.length > 0),
+      groups: groups,
       sortOptions: sort.options,
       sortLabel: sort.label
     };
@@ -386,8 +437,15 @@ ${LISTING_TEST_JS}
    * So the warm-up now retries until the facets actually arrive, which is the
    * only evidence that the click did anything. Bounded, so a page that will
    * never produce facets is not clicked at for ever.
+   *
+   * EIGHTEEN, NOT TEN, so the warm-up outlasts the poll rather than dying
+   * halfway through it. At one attempt per WARM_GAP_MS the old budget was
+   * spent after ~12s while the poll ran for ~24s (TRIES x TICK_MS), so the
+   * last 30 ticks could only re-read a page nobody was still asking to fetch.
+   * A listing whose bundle hydrated late therefore reported "no filters" with
+   * half its waiting time spent doing nothing. 18 x 1200ms covers the poll.
    */
-  var WARM_TRIES = 10;
+  var WARM_TRIES = 18;
   var warmClicks = 0;
   var warmedAt = 0;
 
@@ -824,6 +882,36 @@ true;
 export const READ_FACETS_SCRIPT = `
 (function () {
   try { if (window.__ziglyFacets) { window.__ziglyFacets.read(); } } catch (e) {}
+})();
+true;
+`;
+
+/**
+ * Ask again for the FACETS THEMSELVES, not just for a re-read of what is known.
+ *
+ * Sent when the filter screen opens, which is the one moment the answer is
+ * actually being looked at. READ_FACETS_SCRIPT above only re-reports the
+ * current DOM: right for the sort sheet, and no help at all on a listing whose
+ * facets never arrived, because re-reading a page that was never asked to fetch
+ * returns the same nothing.
+ *
+ * `warm()` is the request, and it is safe to send here for the reasons it is
+ * safe on the poll: it returns immediately when the facets are already present
+ * (`warmDone()`), it respects its own WARM_GAP_MS spacing and its attempt
+ * budget, and whatever drawer it opens is put back down by `closeSite()`. So
+ * this costs nothing on a healthy listing and is the retry on a slow one.
+ *
+ * The budget is deliberately NOT reset here. A page that has genuinely spent
+ * every attempt has shown it will not answer, and re-arming it on each open
+ * would let the customer click SearchTap's pill without limit.
+ */
+export const WARM_FACETS_SCRIPT = `
+(function () {
+  try {
+    if (!window.__ziglyFacets) { return; }
+    window.__ziglyFacets.warm();
+    window.__ziglyFacets.read();
+  } catch (e) {}
 })();
 true;
 `;

@@ -180,6 +180,79 @@ describe('the sort sheet', () => {
   });
 });
 
+describe('the filter sheet with nothing in it yet', () => {
+  /*
+   * THE "NO FILTERS FOR THIS LISTING" BUG.
+   *
+   * The screen draws an empty group list one of two ways, and getting it wrong
+   * is what customers saw: a listing with plenty of filters announced that it
+   * had none. ../src/webview/facetBridge used to report ready:true when its
+   * poll timed out, and this screen took that as the site's answer.
+   *
+   * The bridge now withholds 'ready' unless the facets are genuinely there, so
+   * the two states this screen must keep apart are "still waiting" (skeleton)
+   * and "waited long enough" (the message).
+   */
+  const empty = {...facets, ready: false, groups: []};
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+  });
+
+  const open = (value: typeof empty) =>
+    render(
+      <FilterSheet
+        visible
+        facets={value}
+        busy={false}
+        onToggle={noop}
+        onClose={noop}
+      />,
+    );
+
+  it('waits rather than claiming the listing has no filters', () => {
+    const tree = open(empty);
+    expect(labels(tree)).not.toContain('No filters for this listing');
+  });
+
+  it('says so once it has waited, so nothing spins for ever', () => {
+    const tree = open(empty);
+    ReactTestRenderer.act(() => {
+      jest.advanceTimersByTime(9000);
+    });
+    expect(labels(tree)).toContain('No filters for this listing');
+  });
+
+  it('says so at once when the page itself reports there are none', () => {
+    // A real answer needs no wait: ready:true with no groups is the site's own
+    // word that this listing publishes nothing to filter on.
+    const tree = open({...empty, ready: true});
+    expect(labels(tree)).toContain('No filters for this listing');
+  });
+
+  it('never shows the message once facets have arrived', () => {
+    // The timer must not fire into a screen that has since filled in.
+    const tree = open(empty);
+    ReactTestRenderer.act(() => {
+      tree.update(
+        <FilterSheet
+          visible
+          facets={facets}
+          busy={false}
+          onToggle={noop}
+          onClose={noop}
+        />,
+      );
+      jest.advanceTimersByTime(9000);
+    });
+    const shown = labels(tree);
+    expect(shown).not.toContain('No filters for this listing');
+    expect(shown).toContain('cat (63)');
+  });
+});
+
 describe('the filter sheet', () => {
   it('draws every heading and every value with its count', () => {
     const tree = render(

@@ -32,7 +32,14 @@
  * screen runs ../webview/cartBridge inside the WebView.
  */
 import React from 'react';
-import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import {BUTTON_FILL, COLORS, FONT_FAMILY} from '../constants/appConstants';
 import {HeartOutline, HeartShape} from '../components/glyphs';
 import {money} from '../utils/money';
@@ -50,6 +57,22 @@ type Props = {
    * see ./ProductCard on why a null one must open the page instead.
    */
   onAdd: (variantId: number) => void;
+  /**
+   * This card's add is in flight, so its button spins.
+   *
+   * THE SAME SPINNER ./ProductCard CARRIES, and it is here for the reason that
+   * card's arrival on the dashboard was: the two cards are meant to differ only
+   * in the three things the grid needs (the border, the badge, the rating), and
+   * a button that acknowledged a press on a rail but not in a grid is drift of
+   * exactly the kind ../webview/productCard was written to end. A customer
+   * reaching the grid from the hamburger's menu got the card that did nothing
+   * visible.
+   *
+   * Owned by ../screens/ZiglyWebViewScreen rather than by this card, for the
+   * reason ./ProductRail's `addingHandle` records: the add is confirmed by a
+   * message from inside a WebView, so only the screen knows when it lands.
+   */
+  busy?: boolean;
 };
 
 /**
@@ -64,7 +87,7 @@ const Star = ({size = 12}: {size?: number}) => (
   <Text style={[styles.star, {fontSize: size}]}>★</Text>
 );
 
-const ListingCard = ({product, width, onOpen, onAdd}: Props) => {
+const ListingCard = ({product, width, onOpen, onAdd, busy = false}: Props) => {
   const {handles, toggle: onWish} = useWishlist();
   const saved = handles.has(product.handle);
 
@@ -179,23 +202,40 @@ const ListingCard = ({product, width, onOpen, onAdd}: Props) => {
             ? onOpen(product.path)
             : undefined
         }
-        disabled={!product.available}
+        /*
+         * Not tappable while it spins, which is the point of the spinner and
+         * not a side effect of it -- ./ProductCard's own note. The add is
+         * verified against /cart.js over up to ADD_VERIFY_BUDGET_MS, and a
+         * second press inside that window is a second line in the bag.
+         */
+        disabled={!product.available || busy}
         accessibilityRole="button"
         accessibilityLabel={`${label}, ${product.title}`}
-        accessibilityState={{disabled: !product.available}}
+        accessibilityState={{disabled: !product.available || busy, busy}}
         style={({pressed}) => [
           styles.button,
           !product.available && styles.buttonDisabled,
-          pressed && product.available && styles.buttonPressed,
+          busy && styles.buttonBusy,
+          pressed && product.available && !busy && styles.buttonPressed,
         ]}>
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.buttonLabel,
-            !product.available && styles.buttonLabelDisabled,
-          ]}>
-          {label}
-        </Text>
+        {busy ? (
+          /*
+           * Red on the pale fill, matching `buttonLabel` -- ./ProductCard's
+           * reasoning verbatim, because it is the same button in the same two
+           * colours. White would be an invisible spinner here, and an
+           * invisible spinner is the same bug as no spinner.
+           */
+          <ActivityIndicator size="small" color={COLORS.red} />
+        ) : (
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.buttonLabel,
+              !product.available && styles.buttonLabelDisabled,
+            ]}>
+            {label}
+          </Text>
+        )}
       </Pressable>
     </View>
   );
@@ -304,12 +344,29 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: BUTTON_FILL,
     borderRadius: 8,
-    minHeight: 40,
+    /*
+     * PINNED, so the swap to a spinner cannot reflow the grid -- and `height`
+     * rather than the `minHeight` that was here, for the reason ./ProductCard
+     * spells out at its own button: 40 was a floor the LABEL set, and an
+     * ActivityIndicator is a fixed 20dp that does not follow the device's font
+     * scale. At a large accessibility text size the label's line box exceeds 40
+     * and the spinner does not, so a card mid-add would change height. That
+     * matters more in two columns than on a rail: the grid is measured per
+     * card, so one shrinking button re-lays out its whole row.
+     */
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
   buttonPressed: {opacity: 0.75},
+  /*
+   * Held near the pressed opacity for the whole wait, so the card the customer
+   * touched stays the one that looks touched. Not dimmed to `buttonDisabled`'s
+   * grey: that is this card's Sold Out state, and a busy button must not be
+   * confused with an unavailable one. ./ProductCard's `buttonBusy` exactly.
+   */
+  buttonBusy: {opacity: 0.9},
   buttonDisabled: {backgroundColor: '#F2F4F7'},
   buttonLabel: {
     fontFamily: FONT_FAMILY,

@@ -21,6 +21,7 @@
  */
 import React, {useEffect, useRef, useState} from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -57,9 +58,17 @@ interface Props {
   /**
    * A submit or a resend is out and has not been answered.
    *
-   * Presses are ignored while it is true. Nothing is drawn for it beyond the
-   * press state the buttons already have: the reference screen carries no
-   * spinner, and the brief says not to add one.
+   * Presses are ignored while it is true, and Submit SPINS.
+   *
+   * It did not use to. This screen was drawn from the reference screenshot,
+   * which carries no spinner, and a note here said so -- but the screenshot is
+   * of a button at rest and says nothing about the second after a press. What
+   * is actually waited on is a round trip through the site's own widget (see
+   * ../webview/otpDriver), and the only thing that moved in that window was the
+   * press opacity, which ends with the finger. A correct code on a slow
+   * connection therefore looked like a Submit that had done nothing, and the
+   * customer pressed again -- which is the same misread the wishlist tiles, the
+   * rail cards and the product bar each grew a spinner to end.
    */
   busy?: boolean;
 }
@@ -243,14 +252,35 @@ const OtpScreen = ({
         onPress={submit}
         accessibilityRole="button"
         accessibilityLabel="Submit"
-        accessibilityState={{disabled: busy}}
+        accessibilityState={{disabled: busy, busy}}
         style={({pressed}) => [
           styles.submit,
           complete && styles.submitReady,
-          (pressed || busy) && styles.pressed,
+          /*
+           * No dimming while it SPINS, only while it is pressed. A spinner
+           * already says the button is working; fading it at the same time
+           * reads as disabled, which is the opposite message.
+           */
+          pressed && !busy && styles.pressed,
         ]}
       >
-        <Text style={styles.submitText}>Submit</Text>
+        {busy ? (
+          /*
+           * White, because this button is navy once the code is complete --
+           * and a submit is only ever in flight from that state, so the
+           * default dark spinner would be very nearly invisible on it.
+           *
+           * `small` is 20dp, inside the button's 34dp, and the label it
+           * replaces is a 15pt line -- so the two are close enough in height
+           * that the button does not resize under the customer's finger. The
+           * width is pinned by `submitBusy` for the same reason: "Submit" is
+           * wider than a disc, and a button that shrinks mid-press looks like
+           * a different button.
+           */
+          <ActivityIndicator size="small" color={COLORS.white} />
+        ) : (
+          <Text style={styles.submitText}>Submit</Text>
+        )}
       </Pressable>
 
       {secondsLeft > 0 ? (
@@ -349,6 +379,17 @@ const styles = StyleSheet.create({
     marginTop: 18,
     paddingHorizontal: 24,
     height: 34,
+    /*
+     * A FLOOR, so the spinner cannot shrink the button.
+     *
+     * The width is otherwise the label's, and an ActivityIndicator is a fixed
+     * 20dp -- narrower than "Submit" at 15pt with 24 of padding each side. So
+     * swapping one for the other would visibly contract the button at the
+     * moment of the press, which reads as the button being taken away rather
+     * than being waited on. Measured off the label's own box, so the resting
+     * button is unchanged and only the spinning one is held out to meet it.
+     */
+    minWidth: 108,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',

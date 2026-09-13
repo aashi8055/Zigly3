@@ -185,6 +185,7 @@ import {
   applySortScript,
   READ_FACETS_SCRIPT,
   toggleFacetScript,
+  WARM_FACETS_SCRIPT,
 } from '../webview/facetBridge';
 import {
   EMPTY_FACETS,
@@ -1769,8 +1770,22 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
 
   const openFilterSheet = useCallback(() => {
     setListingSheet('filter');
+    /*
+     * WARM, not just read, and that is the difference between a sheet with
+     * filters in it and one that says this listing has none.
+     *
+     * The sort sheet above re-reads because the sort is always in the page. The
+     * facets are not: SearchTap fetches them only when something asks, and if
+     * the bridge's warm-up did not land -- a late-hydrating bundle, a slow
+     * connection -- then re-reading returns the same nothing it found before.
+     * This asks again, at the one moment the answer is being looked at.
+     *
+     * Bounded and idempotent inside the page: it returns at once if the facets
+     * are already there, keeps its own spacing and attempt budget, and closes
+     * any drawer it opens. So it is free on a healthy listing.
+     */
     if (showing !== null) {
-      injectInto(showing.key, READ_FACETS_SCRIPT);
+      injectInto(showing.key, WARM_FACETS_SCRIPT);
     }
   }, [injectInto, showing]);
 
@@ -2287,6 +2302,52 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       if (dashboardAddTimer.current) {
         clearTimeout(dashboardAddTimer.current);
         dashboardAddTimer.current = null;
+      }
+    },
+    [],
+  );
+
+  /**
+   * Which native collection-grid card is adding, by product handle, or null.
+   *
+   * THE THIRD COPY OF THIS STATE, and it is a third rather than a share for
+   * the reason `dashboardAdding` is separate from `wishlistAdding`: each of
+   * these spins on a DIFFERENT WebView. The wishlist's and the rails' adds are
+   * injected into 'home' and confirm through the dashboard's onMessage; the
+   * grid's is injected into the visible page LAYER (see `addFromGrid`) and
+   * confirms through that layer's own handler. One shared string would mean a
+   * layer's report stopping a rail's spinner, or a grid keeping a failsafe
+   * armed for a screen that is gone.
+   *
+   * WHY THE GRID NEEDED ONE AT ALL. It is the surface a customer reaches from
+   * the hamburger menu, and its Add to Bag was the last one in the app with
+   * nothing to show for a press: the add goes into the layer's WebView, which
+   * clicks the theme's control and re-reads /cart.js to confirm, retrying for
+   * up to ADD_VERIFY_BUDGET_MS. Only the press opacity moved in that window,
+   * and that ends with the finger -- so on a slow connection the tap read as a
+   * tap that had failed and the customer pressed again. A second press is a
+   * second line in the bag.
+   */
+  const [gridAdding, setGridAdding] = useState<string | null>(null);
+
+  /** Its failsafe. Every path that ends this spin is a WebView message. */
+  const gridAddTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Stop the card's spinner and disarm its failsafe. Every exit comes here. */
+  const clearGridAdding = useCallback(() => {
+    if (gridAddTimer.current) {
+      clearTimeout(gridAddTimer.current);
+      gridAddTimer.current = null;
+    }
+    setGridAdding(null);
+  }, []);
+
+  /** As the other two: the timer must not outlive the screen. */
+  useEffect(
+    () => () => {
+      if (gridAddTimer.current) {
+        clearTimeout(gridAddTimer.current);
+        gridAddTimer.current = null;
       }
     },
     [],
@@ -3985,11 +4046,39 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    * through the same 'cart-added' path any other add does.
    */
   const addFromGrid = useCallback(
-    (variantId: number) => {
+    (variantId: number, handle: string) => {
       const layer = visibleLayer(stackRef.current);
-      if (layer) {
-        injectInto(layer.key, addToCartScript(variantId));
+      /*
+       * NO LAYER, NO SPIN. The injection is the only thing that can end this
+       * spinner by reporting back, so starting one when there is nothing to
+       * inject into would leave a card spinning until its failsafe fired --
+       * a card the customer cannot buy from, for no reason. Nothing to do
+       * here either way: the grid is drawn over a layer, so this is the
+       * unreachable case rather than a real one.
+       */
+      if (!layer) {
+        return;
       }
+      /*
+       * The spin starts BEFORE the injection, the same order
+       * `addFromDashboard` uses: `injectInto` is synchronous from here but the
+       * work it starts is not, and a customer who has to wait for a round trip
+       * to see that their tap registered is back to pressing twice.
+       *
+       * Armed with ADD_BUSY_CAP_MS, the product bar's own budget, because the
+       * work being waited on is identical -- the same click, the same verify
+       * schedule in ../webview/productActions.
+       */
+      if (gridAddTimer.current) {
+        clearTimeout(gridAddTimer.current);
+      }
+      setGridAdding(handle);
+      gridAddTimer.current = setTimeout(() => {
+        gridAddTimer.current = null;
+        setGridAdding(null);
+      }, ADD_BUSY_CAP_MS);
+
+      injectInto(layer.key, addToCartScript(variantId));
     },
     [injectInto],
   );
@@ -4922,6 +5011,25 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     gridHandleRef.current = gridHandle;
   }, [gridHandle]);
 
+  /**
+   * A spin belongs to the grid it was started on.
+   *
+   * ../native/CollectionScreen is keyed by handle, so walking from one
+   * collection to another REBUILDS it -- but `gridAdding` is this screen's
+   * state and would survive that, leaving a fresh grid with a disabled card
+   * wherever the new collection happens to carry the same handle, and the old
+   * grid's failsafe still armed. The same reasoning `closeWishlist` applies
+   * when its screen goes away.
+   *
+   * Keyed on the handle rather than on a card, because that is what the grid
+   * is keyed on: whenever it is a different grid, nothing on it is the card
+   * that was pressed. Leaving the grid entirely (`gridHandle` null) clears it
+   * too, which is the same statement.
+   */
+  useEffect(() => {
+    clearGridAdding();
+  }, [gridHandle, clearGridAdding]);
+
   /** Which sort that grid is showing. The site's default until changed. */
   const gridSort: SortId =
     (showing !== null ? gridSortByKey[showing.key] : undefined) ?? DEFAULT_SORT;
@@ -4937,12 +5045,36 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
       ? resultsByKey[showing.key]
       : null;
 
-  /** Whether either native collection screen is the thing on screen. */
+  /**
+   * Whether either native collection screen is the thing on screen.
+   *
+   * `!checkoutEmbedUp` ALONGSIDE `!inCheckout`, and that pair is the fix for
+   * "Checkout from the added-to-cart toast takes me back to the page I was
+   * on". Both flags mean a checkout is up, and they are not interchangeable:
+   * Shiprocket's embed arrives EITHER as a navigation to their own host, which
+   * `inCheckout` sees, OR as an iframe over the page the customer is already
+   * on, which changes no url and sets only `checkoutEmbedUp` (see that state's
+   * own note). The cart's Checkout is the second shape.
+   *
+   * So on a collection grid the sequence was: VIEW CART opens the cart, which
+   * unmounts this screen; Checkout injects into the layer underneath and
+   * Shiprocket paints there correctly; the hold releases and the cart closes
+   * -- and with `showCart` false again and `inCheckout` still false, this
+   * opaque native grid remounted straight over the live checkout. Nothing had
+   * failed; the checkout was simply behind a screen that had no reason to
+   * believe it was there. It looked like a redirect back to the page the
+   * customer came from because that is exactly what came back.
+   *
+   * The dashboard needed the same thing and got it as `checkoutOnDashboard`
+   * (a parked layer), because its WebView is covered unconditionally. These
+   * two are conditional already, so the condition is where it belongs.
+   */
   const onNativeCollection =
     (onCollectionsIndex || gridHandle !== null) &&
     !searchOpen &&
     !menuOpen &&
     !inCheckout &&
+    !checkoutEmbedUp &&
     !showCart &&
     !wishlistOpen &&
     !onAccountScreen &&
@@ -4957,6 +5089,11 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
    *
    * Only the index. A breed's own page stays the WebView's -- see
    * ../utils/urlUtils' `isBreedVerseUrl`.
+   *
+   * `!checkoutEmbedUp` for the reason the collection screens carry it: a
+   * checkout started from the cart mounts as an iframe over the layer under
+   * this screen and changes no url, so without it this index would paint back
+   * over a live payment page the moment the cart closed.
    */
   const onNativeBreedVerse =
     headerUrl !== null &&
@@ -4964,6 +5101,7 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !searchOpen &&
     !menuOpen &&
     !inCheckout &&
+    !checkoutEmbedUp &&
     !showCart &&
     !wishlistOpen &&
     !onAccountScreen &&
@@ -4985,6 +5123,18 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
     !searchOpen &&
     !menuOpen &&
     !inCheckout &&
+    /*
+     * And the iframe checkout, which is the shape BUY NOW produces -- the one
+     * that starts on this very bar. ../webview/productActions clicks
+     * Shiprocket's control on the product page, so their embed mounts over the
+     * page this bar belongs to and the url never changes: `inCheckout` alone
+     * stayed false, and Add to Bag / Buy Now sat across the foot of a payment
+     * page, offering to add another line to a basket already being paid for.
+     *
+     * The same pair the tab bar and the Sort / Filter bar already test, for
+     * the same reason each of them states.
+     */
+    !checkoutEmbedUp &&
     !showCart &&
     !wishlistOpen &&
     !onAccountScreen &&
@@ -6355,9 +6505,40 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                        * spinner that is not running is a no-op.
                        */
                       clearProductBusy();
+                      /*
+                       * And the grid card's, which is the spinner THIS
+                       * WebView owns: `addFromGrid` injects into the visible
+                       * layer, so a collection grid's add confirms through
+                       * here and not through the dashboard's handler.
+                       *
+                       * Cleared unconditionally and without checking the
+                       * handle, for the reason the dashboard's note gives --
+                       * an add reports itself up to three times and only one
+                       * card can be spinning, so the first report to arrive
+                       * is the right one to stop it.
+                       */
+                      clearGridAdding();
                       reportCartAdded(
                         typeof data.n === 'number' ? data.n : undefined,
                       );
+                    } else if (data && data.tag === 'cart-add-failed') {
+                      /*
+                       * The add did not land. Handled here as well as on the
+                       * dashboard because this handler owns the grid's
+                       * spinner, and until it did a failed add from a
+                       * collection card would have run to ADD_BUSY_CAP_MS and
+                       * then stopped with no explanation -- which reads as an
+                       * add that worked.
+                       *
+                       * The spin ends BEFORE the toast, as it does there: a
+                       * card still spinning under "couldn't add" contradicts
+                       * the message. The wording is the same sentence
+                       * deliberately, so one failure does not get two
+                       * different messages depending on the screen.
+                       */
+                      clearGridAdding();
+                      clearProductBusy();
+                      setToastMessage("Couldn't add to bag — please try again");
                     } else if (data && data.tag === BAND_TAP_TAG) {
                       // Shopping pages carry the band too; see the dashboard's
                       // handler above.
@@ -6420,6 +6601,28 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                       releaseCheckoutHold();
                       // And the furniture stands down, as above.
                       setCheckoutEmbedUp(true);
+                      /*
+                       * AND WHERE BACK GOES, which this handler never recorded
+                       * -- the dashboard's copy of this branch has always set
+                       * it and this one did not, so `checkoutCameFrom` stayed
+                       * null for every checkout that painted into a page
+                       * layer. That is BOTH of the routes a customer is most
+                       * likely to take: Buy Now on a product page, and the
+                       * cart's Checkout opened over any page at all.
+                       *
+                       * Null fell through to `leaveCheckoutEmbed`'s cart
+                       * branch, so Back out of Buy Now opened a cart the
+                       * customer had never been in, instead of returning them
+                       * to the product page the embed was mounted over.
+                       *
+                       * Read the same way round as the dashboard's: the cart
+                       * is the default for an unrecognised `via`, because it
+                       * is the route that closes something on the way in, so
+                       * guessing it wrong reopens a cart rather than
+                       * stranding the customer.
+                       */
+                      checkoutCameFrom.current =
+                        data.via === 'buy-now' ? 'buy-now' : 'cart';
                     } else if (data && data.tag === 'cart-checkout-unavailable') {
                       /*
                        * Nothing of Shiprocket's to press on this page -- see
@@ -6598,6 +6801,8 @@ const ZiglyWebViewScreen = ({onFirstLoad}: Props) => {
                   filteredHandles={gridResults}
                   onOpen={openFromDashboard}
                   onAdd={addFromGrid}
+                  // Which grid card is waiting on its add. See `gridAdding`.
+                  addingHandle={gridAdding}
                   // The injected band cannot be seen under this layer, so the
                   // band here is native -- see `nativeSearchBand`.
                   searchBand={nativeSearchBand}
