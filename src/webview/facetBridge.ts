@@ -454,6 +454,27 @@ ${LISTING_TEST_JS}
     return !!document.querySelector('.st-widget .st-widget-title');
   }
 
+  /*
+   * The Pinia instance, once it has been found.
+   *
+   * WHY THIS IS CACHED AND THE STORES ARE NOT. Finding Pinia means walking
+   * Vue's internals, and the last of the three routes below is
+   * querySelectorAll('div, searchtap, section, main') -- a sweep of the whole
+   * document. sorts() calls piniaStores() on every report(), and report() runs
+   * off a MutationObserver that SearchTap trips on every re-render, so on a
+   * page where the cheap routes miss that sweep was running many times a
+   * second while the customer scrolled.
+   *
+   * What is cached is the INSTANCE, not the store list: Pinia's _s Map is
+   * mutated in place as stores register, so re-reading it each call still sees
+   * stores that appeared after the first lookup. Nothing here goes stale.
+   *
+   * Dropped the moment it stops looking like Pinia, so a re-mount (SearchTap
+   * replaces its app when it takes over a collection grid) re-finds it rather
+   * than holding a dead reference.
+   */
+  var piniaCache = null;
+
   /**
    * SearchTap's own Pinia store, reached through the Vue app it is provided to.
    *
@@ -495,11 +516,23 @@ ${LISTING_TEST_JS}
     var out = [];
     var seen = false;
 
+    if (piniaCache) {
+      if (piniaCache._s && typeof piniaCache._s.forEach === 'function') {
+        piniaCache._s.forEach(function (store) {
+          if (store) { out.push(store); }
+        });
+        return out;
+      }
+      piniaCache = null;
+    }
+
     function collect(pinia) {
       if (!pinia || !pinia._s || typeof pinia._s.forEach !== 'function') {
         return;
       }
       seen = true;
+      // Found it: every later call skips the walk above. See piniaCache.
+      piniaCache = pinia;
       pinia._s.forEach(function (store) {
         if (store) { out.push(store); }
       });
@@ -589,9 +622,44 @@ ${LISTING_TEST_JS}
     return false;
   }
 
-  /** Ask SearchTap for its facets: the state change its own pill makes. */
+  /**
+   * Ask SearchTap for its facets: the state change its own pill makes.
+   *
+   * FALSE FIRST, AND THAT IS THE WHOLE FIX HERE.
+   *
+   * What this asks for is a Vue WATCHER, not a function call. SearchPage's,
+   * read out of assets/searchtap.js on 2026-09-13:
+   *
+   *     showMobileFilter(t) {
+   *       !0 === t && (this.isFirstLoad || (this.init(), this.isFirstLoad = !0))
+   *     }
+   *
+   * That init() is the only thing on a collection page that fetches facets at
+   * all -- it ends in setFilterArray(...) / setTotalHits(...), and
+   * InitialCollectionFilters renders its .st-sidebar only when totalCount is
+   * above zero. So: no watcher, no facets, and a filter sheet that opens empty.
+   *
+   * A Vue watcher fires on CHANGE. setMobileFilter(true) against a flag that
+   * is already true is not a change, so it fires nothing. The old code set the
+   * flag true and never put it back, which meant only the FIRST of the 18
+   * attempts could ever do anything: if that one landed before SearchTap had
+   * hydrated -- the normal case for a deferred bundle, and exactly what
+   * WARM_TRIES exists to survive -- every later attempt wrote true over true,
+   * woke no watcher, and the whole retry budget was spent on no-ops.
+   *
+   * Writing false immediately before true restores the edge. It is safe
+   * because false is this flag's own resting value: the app never opens the
+   * drawer (see closeSite), and the site's own Apply writes the same false
+   * every time it is tapped. The watcher ignores false outright, so the extra
+   * write costs one no-op tick.
+   *
+   * isFirstLoad inside the watcher still latches after a successful init, so
+   * this cannot make SearchTap fetch twice -- it only makes the retries reach
+   * the watcher at all.
+   */
   function storeWarm() {
     if (withStore('setMobileFilter', function (store) {
+      store.setMobileFilter(false);
       store.setMobileFilter(true);
     })) {
       return true;
@@ -600,7 +668,11 @@ ${LISTING_TEST_JS}
     var stores = piniaStores();
     for (var i = 0; i < stores.length; i++) {
       if (!('showMobileFilter' in stores[i])) { continue; }
-      try { stores[i].showMobileFilter = true; return true; } catch (e) {}
+      try {
+        stores[i].showMobileFilter = false;
+        stores[i].showMobileFilter = true;
+        return true;
+      } catch (e) {}
     }
     return false;
   }

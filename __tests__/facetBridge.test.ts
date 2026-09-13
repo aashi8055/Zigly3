@@ -206,6 +206,16 @@ interface Store {
   sortingValue: string;
   setMobileFilter: (on: boolean) => void;
   setSortingValue: (label: string) => void;
+  /**
+   * How many times SearchTap's own `showMobileFilter` watcher would have run.
+   *
+   * Counted rather than inferred, because the watcher is the whole point: it
+   * is what calls `init()`, and `init()` is the only thing on a collection
+   * page that fetches facets at all. Vue fires a watcher on CHANGE, so a write
+   * of `true` over `true` wakes nothing -- which is exactly the bug this
+   * records. See the note over `storeWarm` in ../src/webview/facetBridge.
+   */
+  watcherRuns: number;
 }
 
 interface Page {
@@ -218,6 +228,8 @@ interface Page {
   run: (script: string) => void;
   /** SearchTap's own store, to assert what the bridge wrote into it. */
   store: Store;
+  /** Every selector asked of the document, in order. */
+  selectors: string[];
   /** Every pill the page draws, in document order. */
   pills: El[];
   /** Move the fixture's clock, which is what lets the retry gate be tested. */
@@ -331,8 +343,15 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
   const store: Store = {
     showMobileFilter: false,
     sortingValue: '',
+    watcherRuns: 0,
     setMobileFilter(on: boolean) {
+      // Vue's own semantics: a watcher runs only when the value CHANGES, and
+      // SearchTap's ignores `false` outright ('!0 === t &&' guards its body).
+      const changed = this.showMobileFilter !== on;
       this.showMobileFilter = on;
+      if (changed && on) {
+        this.watcherRuns += 1;
+      }
     },
     setSortingValue(label: string) {
       this.sortingValue = label;
@@ -361,10 +380,24 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
   /** A clock the test drives, so the warm-up's retry gate is observable. */
   let now = 1_000_000;
 
+  /**
+   * Every selector the bridge asks the document for, in order.
+   *
+   * Recorded so the cost of a report can be asserted rather than guessed at:
+   * the last route into Pinia is a sweep of the whole document, and it used to
+   * run on every single report. See the caching test below.
+   */
+  const selectors: string[] = [];
   const document = {
     body,
-    querySelector: (selector: string) => body.querySelector(selector),
-    querySelectorAll: (selector: string) => body.querySelectorAll(selector),
+    querySelector: (selector: string) => {
+      selectors.push(selector);
+      return body.querySelector(selector);
+    },
+    querySelectorAll: (selector: string) => {
+      selectors.push(selector);
+      return body.querySelectorAll(selector);
+    },
   };
   const window: Record<string, unknown> = {
     location: {pathname: path},
@@ -418,6 +451,7 @@ const load = (withFacets: boolean, path = '/collections/wet-food'): Page => {
     tick: () => polls.forEach(poll => poll()),
     run,
     store,
+    selectors,
     pills: [drawerPill, fetchPill],
     advance: (ms: number) => {
       now += ms;
@@ -647,6 +681,94 @@ describe('reading the page', () => {
     page.run('window.__ziglyFacets.read();');
     expect(page.posted).toHaveLength(before);
   });
+
+  /**
+   * A REPORT DOES NOT SWEEP THE DOCUMENT.
+   *
+   * `sorts()` reads the applied sort out of SearchTap's store when neither the
+   * buttons nor the pill can supply it -- which is the normal state early on,
+   * because <initial-toolbox-bar> ships empty and its buttons are
+   * client-rendered. Reaching that store means walking Vue's internals, and
+   * the last of the three routes is
+   * querySelectorAll('div, searchtap, section, main'): every element on the
+   * page.
+   *
+   * `report()` runs off a MutationObserver, and SearchTap trips it on every
+   * re-render -- so an uncached lookup put a full-document sweep on a hot path
+   * that fires many times a second while the customer scrolls a grid.
+   *
+   * The instance is cached once found, so this asserts the sweep happens at
+   * most once across repeated reports. Pinia's own store Map is still re-read
+   * each call, so a store that registers later is still seen -- which is what
+   * the sort tests above cover.
+   */
+  it('does not walk into Vue on every report once it has found the store', () => {
+    /*
+     * THE COST OF A REPORT, ON THE PATH THAT ACTUALLY PAYS IT.
+     *
+     * `sorts()` falls back to SearchTap's store whenever neither the sort
+     * buttons nor the pill can name the applied sort -- the normal state early
+     * on, because <initial-toolbox-bar> ships empty and its buttons are
+     * client-rendered. Reaching that store means walking Vue's internals, and
+     * when the two cheap routes miss, the third is
+     * querySelectorAll('div, searchtap, section, main'): every element on the
+     * page.
+     *
+     * `report()` runs off a MutationObserver that SearchTap trips on every
+     * re-render, so that walk was happening many times a second while the
+     * customer scrolled a grid.
+     *
+     * A bare page is used rather than `load()`, deliberately: `load(true)`
+     * draws an active sort button, so `sorts()` answers from the DOM and never
+     * reaches the store -- a fixture that cannot exhibit the cost cannot test
+     * it. Here there is no sort UI at all and Pinia IS reachable, which is
+     * exactly the shape that used to re-walk on every read.
+     */
+    const seen: string[] = [];
+    const provides = Object.create(null) as Record<symbol, unknown>;
+    provides[Symbol()] = {
+      _s: new Map([['sidebarContent', {sortingValue: ''}]]),
+    };
+    const host = {
+      __vue_app__: {_context: {provides, config: {globalProperties: {}}}},
+    };
+    const hosts = '#collectionmodalcontainer, #searchModalContainer, searchtap';
+    const document = {
+      body: {className: '', querySelector: () => null, querySelectorAll: () => []},
+      querySelector: (selector: string) => {
+        seen.push(selector);
+        return null;
+      },
+      querySelectorAll: (selector: string) => {
+        seen.push(selector);
+        return selector === hosts ? [host] : [];
+      },
+    };
+    const window: Record<string, unknown> = {
+      location: {pathname: '/collections/wet-food'},
+      ReactNativeWebView: {postMessage: () => {}},
+      MutationObserver: undefined,
+    };
+    // eslint-disable-next-line no-new-func
+    new Function(
+      'window',
+      'document',
+      'setTimeout',
+      'setInterval',
+      'clearInterval',
+      'Date',
+      FACET_BRIDGE_SCRIPT,
+    )(window, document, () => 0, () => 0, () => {}, {now: () => 1_000_000});
+
+    // The install found it. What matters is that the reads after it do not.
+    seen.length = 0;
+    const bridge = window.__ziglyFacets as {read: () => void};
+    for (let i = 0; i < 5; i += 1) {
+      bridge.read();
+    }
+
+    expect(seen.filter(selector => selector === hosts)).toHaveLength(0);
+  });
 });
 
 /** WARM_GAP_MS in the bridge: the spacing between warm-up attempts. */
@@ -675,6 +797,42 @@ describe('asking the site for its facets', () => {
   it('asks the store directly, which is what the real pill does', () => {
     const page = load(false);
     expect(page.store.showMobileFilter).toBe(true);
+  });
+
+  /**
+   * EVERY RETRY REACHES THE WATCHER, not just the first one.
+   *
+   * The regression this pins, read out of assets/searchtap.js on 2026-09-13:
+   * SearchPage's watcher is
+   *
+   *     showMobileFilter(t) {
+   *       !0 === t && (this.isFirstLoad || (this.init(), this.isFirstLoad = !0))
+   *     }
+   *
+   * and `init()` is the only thing on a collection page that fetches facets --
+   * it ends in setFilterArray/setTotalHits, and InitialCollectionFilters draws
+   * its .st-sidebar only once totalCount is above zero.
+   *
+   * A Vue watcher fires on CHANGE. The bridge used to write `true` and never
+   * put it back, so attempts 2..18 wrote `true` over `true` and woke nothing.
+   * That made WARM_TRIES a fiction: if the first click landed before the
+   * deferred bundle had hydrated -- the case the whole retry budget exists for
+   * -- no later attempt could recover, and the sheet stayed empty for the life
+   * of the page.
+   *
+   * So this asserts the watcher RAN AGAIN, which the old code could not do:
+   * asserting `showMobileFilter === true` passes either way, which is how the
+   * bug survived a test that looked like it covered this.
+   */
+  it('wakes the fetch watcher again on a retry, not just on the first try', () => {
+    const page = load(false);
+    expect(page.store.watcherRuns).toBe(1);
+
+    // Past the gap, so the next poll is allowed to spend an attempt.
+    page.advance(2000);
+    page.tick();
+
+    expect(page.store.watcherRuns).toBe(2);
   });
 
   /**
