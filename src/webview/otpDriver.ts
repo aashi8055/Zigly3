@@ -1021,6 +1021,51 @@ export const driveSubmitOtp = (code: string): string => `
       var boxes = box.querySelectorAll('.otp-input-box');
       var button = box.querySelector('.verify-btn');
       if (boxes.length === 0 || !button) { return false; }
+
+      /*
+       * WATCH FOR THE WIDGET SUBMITTING ON ITS OWN.
+       *
+       * On the new popup design SimplyOTP binds an 'input' listener to every
+       * visible box which rebuilds the code, writes it into
+       * '.otp-input-main', and then presses Verify ITSELF as soon as that
+       * field is full (assets/otp-login.js):
+       *
+       *     otpInput.value = otpStr;
+       *     if (otpInput.value.length == otpLength) {
+       *       var verOtpBtn = parent.querySelector('.verify-btn');
+       *       verOtpBtn.click();
+       *     }
+       *
+       * ZO.write fires a bubbling 'input' per box, so filling the LAST box is
+       * already a submit -- and the unconditional click below then made it a
+       * second one. That is the reported fault: one press of the app's Submit
+       * sent two verifyOTP requests for the same code. The first succeeded;
+       * the second re-presented an OTP the server had just consumed, so it
+       * failed, and SimplyOTP's failure branch clears '.otp-input-main',
+       * blanks all six boxes and raises its wrong-code toast -- on a code that
+       * had just been accepted. The Submit button came back and the customer
+       * pressed it again.
+       *
+       * It also double-counted: verifyOtpHandler increments
+       * 'data-otp-total-attempt' per click, and the widget calls
+       * manageOTPBox(w, false) -- disabling Verify and walking back to the
+       * phone step -- once that reaches its limit. So every submit spent two
+       * of the customer's attempts.
+       *
+       * A listener rather than a template test: which design is being served
+       * cannot be read from the DOM with any confidence, and 'did this button
+       * get pressed' is the fact actually needed. Capture-phase and attached
+       * BEFORE the boxes are written, so it sees the widget's own press
+       * whatever else is bound to that button.
+       */
+      var pressed = false;
+      var watch = function () { pressed = true; };
+      var watched = false;
+      try {
+        button.addEventListener('click', watch, true);
+        watched = true;
+      } catch (e) {}
+
       for (var i = 0; i < boxes.length; i++) {
         var digit = i < CODE.length ? CODE.charAt(i) : '';
         ZO.write(boxes[i], digit, digit);
@@ -1049,8 +1094,26 @@ export const driveSubmitOtp = (code: string): string => `
        * additive either way -- the boxes are still filled exactly as before.
        */
       var main = box.querySelector('.otp-input-main');
-      if (main) { ZO.write(main, CODE); }
-      button.click();
+      /*
+       * Only when the widget has not already submitted. Writing this field
+       * fires another 'input', and on a template that auto-submits it is the
+       * box listeners -- not this write -- that have already done the job; the
+       * value they built is the same CODE.
+       */
+      if (main && !pressed) { ZO.write(main, CODE); }
+
+      /*
+       * The click the widget did not make for itself.
+       *
+       * 'watched' guards the case where the listener could not be attached at
+       * all: without it a failure to observe would be read as "never pressed"
+       * on a template that does auto-submit, which is the old double click
+       * back again. If nothing is watching, press once -- that is the
+       * behaviour every template had before, and it is right for the ones that
+       * do not submit themselves.
+       */
+      if (!watched || !pressed) { button.click(); }
+      try { button.removeEventListener('click', watch, true); } catch (e) {}
       // No ZO.sent here: a submit is not a send, and reporting one would
       // restart the resend countdown on the screen that is waiting for a
       // verdict. What it does need is the verdict, however often it repeats.

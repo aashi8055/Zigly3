@@ -106,6 +106,23 @@ class El {
     (this.listeners[type] = this.listeners[type] || []).push(fn);
   }
 
+  /**
+   * As the real one: removing a listener that is not there is a no-op, never
+   * an error. The capture flag is accepted and ignored -- this DOM has one
+   * listener list per type, and nothing under test depends on phase ordering,
+   * only on the listener being reached at all.
+   */
+  removeEventListener(type: string, fn: () => void) {
+    const list = this.listeners[type];
+    if (!list) {
+      return;
+    }
+    const at = list.indexOf(fn);
+    if (at !== -1) {
+      list.splice(at, 1);
+    }
+  }
+
   dispatchEvent(ev: {type: string}) {
     // eslint-disable-next-line consistent-this
     let node: El | null = this;
@@ -572,5 +589,123 @@ describe('issue 2b: a stale toast on a code that was accepted', () => {
 
     const errors = posted.filter(p => p.tag === 'otp-error');
     expect(errors.length).toBe(afterSubmit);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * issue 4: Submit has to be pressed twice
+ * -------------------------------------------------------------------------- */
+
+describe('issue 4: one press of Submit is one verify', () => {
+  /**
+   * The widget as the NEW POPUP DESIGN actually builds it.
+   *
+   * The difference from `verifyWidget` above, and the whole point of this
+   * fixture: the six visible boxes are presentation only, and SimplyOTP binds
+   * an 'input' listener to each of them which
+   *
+   *   - concatenates all six box values,
+   *   - writes the result into the hidden '.otp-input-main', and
+   *   - CLICKS '.verify-btn' ITSELF the moment that field is full.
+   *
+   * Read out of assets/otp-login.js:
+   *
+   *     otpInput.value = otpStr;
+   *     if (otpInput.value.length == otpLength) {
+   *       var verOtpBtn = parent.querySelector('.verify-btn');
+   *       verOtpBtn.click();
+   *     }
+   *
+   * So filling the last box is already a submit. The widget's own
+   * `verifyOtpHandler` then increments 'data-otp-total-attempt' and fires a
+   * verifyOTP request per click -- which is why a second click is not free.
+   */
+  const popupWidget = (code: string) => {
+    const body = new El('body');
+    const widget = new El('div', 'sotp-widget', {
+      'data-otp-total-attempt': '0',
+    });
+    const verify = new El('div', 'verify-box');
+    const main = new El('input', 'otp-input-main', {maxlength: '6'});
+    const container = new El('div', 'input-boxes-container');
+    const boxes: El[] = [];
+    for (let i = 0; i < 6; i++) {
+      boxes.push(new El('input', 'otp-input-box', {maxlength: '1'}));
+    }
+    container.add(...boxes);
+    const button = new El('button', 'verify-btn');
+
+    /** Every verifyOTP request the widget would send. */
+    const verifies: string[] = [];
+    button.addEventListener('click', () => {
+      const attempt = Number(widget.getAttribute('data-otp-total-attempt')) + 1;
+      widget.setAttribute('data-otp-total-attempt', String(attempt));
+      if (main.value.length >= 4) {
+        verifies.push(main.value);
+      }
+    });
+
+    boxes.forEach(box => {
+      box.addEventListener('input', () => {
+        let otpStr = '';
+        boxes.forEach(one => {
+          otpStr += one.value;
+        });
+        main.value = otpStr;
+        if (main.value.length === 6) {
+          button.click();
+        }
+      });
+    });
+
+    verify.add(main, container, button);
+    widget.add(verify);
+    body.add(widget);
+    return {body, widget, button, verifies, code};
+  };
+
+  /**
+   * THE REPORTED FAULT: Submit had to be pressed twice, and a correct code
+   * still put the button back.
+   *
+   * The driver filled all six boxes and then clicked '.verify-btn' itself. On
+   * this template the sixth box's own 'input' event had ALREADY clicked it --
+   * so one press of the app's Submit sent TWO verifyOTP requests for the same
+   * code.
+   *
+   * The first is the real one and it succeeds. The second re-presents an OTP
+   * the server has just consumed, so it comes back a failure, and SimplyOTP's
+   * failure branch clears '.otp-input-main', blanks all six boxes and toasts
+   * 'Please enter correct OTP' -- on a code that had just been accepted. That
+   * is the Submit button coming back, and the second press the customer had to
+   * make.
+   */
+  it('sends one verify for one submit, not two', () => {
+    const {body, button, verifies} = popupWidget('123456');
+    const {run, advance} = runner(body);
+
+    run(driveSubmitOtp('123456'));
+    advance(2000);
+
+    expect(verifies).toEqual(['123456']);
+    expect(button.clicks).toBe(1);
+  });
+
+  /**
+   * And the attempt counter moves once.
+   *
+   * Not decoration: SimplyOTP calls manageOTPBox(parent, false) once
+   * 'data-otp-total-attempt' reaches its limit, which DISABLES the verify
+   * button and walks the widget back to its phone step. Double-counting every
+   * submit halved the attempts the customer actually had.
+   */
+  it('counts one attempt for one submit', () => {
+    const {body, widget} = popupWidget('123456');
+    const {run, advance} = runner(body);
+
+    run(driveSubmitOtp('123456'));
+    advance(2000);
+
+    expect(widget.getAttribute('data-otp-total-attempt')).toBe('1');
   });
 });
